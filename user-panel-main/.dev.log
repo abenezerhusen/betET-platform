@@ -1,0 +1,31 @@
+
+> nextjs-shadcn@0.1.0 dev
+> next dev -H 0.0.0.0 --turbopack
+
+   ▲ Next.js 15.3.7 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://0.0.0.0:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.7s
+ ○ Compiling / ...
+ ✓ Compiled / in 15.6s
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ GET / 200 in 17865ms
+ ○ Compiling /aviator ...
+ ✓ Compiled /aviator in 1527ms
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /aviator. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ GET /aviator 200 in 2436ms
+ ○ Compiling /fast-keno ...
+ ✓ Compiled /fast-keno in 1773ms
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /fast-keno. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ GET /fast-keno 200 in 2920ms
+ ○ Compiling /jetx ...
+ ✓ Compiled /jetx in 1655ms
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /jetx. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ GET /jetx 200 in 3335ms

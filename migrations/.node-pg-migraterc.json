@@ -1,0 +1,8 @@
+{
+  "migrations-dir": ".",
+  "migrations-table": "pgmigrations",
+  "schema": "public",
+  "verbose": true,
+  "check-order": true,
+  "single-transaction": true
+}

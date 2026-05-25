@@ -1,0 +1,4 @@
+## Example — copy to `android/local.properties` and fix paths.
+
+sdk.dir=C:\\Users\\YOU\\AppData\\Local\\Android\\Sdk
+flutter.sdk=C:\\src\\flutter

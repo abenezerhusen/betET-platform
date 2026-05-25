@@ -1,0 +1,419 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --mezzo-bg-primary: #0f0f23;
+  --mezzo-bg-secondary: #1a1a2e;
+  --mezzo-bg-tertiary: #16213e;
+  --mezzo-accent-green: #a8e063;
+  --mezzo-accent-yellow: #ffc107;
+  --mezzo-border: #2a2a3e;
+  --mezzo-hover: #252540;
+}
+
+/* Left-sidebar row: flag/icon → name (truncated) → chevron, all on one line */
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.375rem;
+  line-height: 1.2;
+  min-height: 32px;
+  background: transparent;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  text-align: left;
+}
+
+.sidebar-item:hover {
+  background: var(--mezzo-hover);
+}
+
+.sidebar-item > img,
+.sidebar-item > svg {
+  flex-shrink: 0;
+}
+
+.sidebar-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body {
+  background-color: var(--mezzo-bg-primary);
+  color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  /* Prevent horizontal overflow if a descendant has wider content on
+     narrow screens (the mobile breakpoint gets extra safeguards below). */
+  overflow-x: hidden;
+}
+
+/* Global guardrail: nothing on the page should push the viewport wider
+   than the screen. Individual scrollable areas opt back in with their
+   own overflow rules. */
+html,
+body,
+#__next,
+main {
+  max-width: 100%;
+}
+
+/* Responsive Utilities */
+@layer utilities {
+  /* Touch-friendly tap targets */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Safe area padding for mobile devices */
+  .safe-area-inset {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Smooth scrolling for mobile */
+  .smooth-scroll {
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+  }
+
+  /* Prevent text selection on buttons */
+  .no-select {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  /* Custom scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: var(--mezzo-bg-tertiary);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--mezzo-accent-green);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #96d04f;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Responsive odds button */
+.odds-btn {
+  @apply px-2 py-1.5 sm:px-3 sm:py-2 rounded text-xs sm:text-sm;
+  @apply bg-[var(--mezzo-bg-tertiary)] text-white;
+  @apply transition-all duration-200;
+  @apply hover:bg-[var(--mezzo-accent-green)] hover:text-black;
+  @apply active:scale-95;
+}
+
+.odds-btn.active {
+  @apply bg-[var(--mezzo-accent-green)] text-black;
+  @apply ring-2 ring-[var(--mezzo-accent-yellow)];
+}
+
+/* ---------------------------------------------------------------------------
+ * Unified "lemon" selected indicator for odds buttons rendered through the
+ * shared <OddsButton /> component (home detailed view, match-details page,
+ * side-bet markets, etc.). MatchCard's odds buttons already use the
+ * `.odds-btn.active` rule above; this rule mirrors the same visual so users
+ * see the SAME selected state on every page.
+ *
+ * - Background: `--mezzo-accent-green` (lemon)
+ * - Border:     `--mezzo-accent-yellow` ring
+ * - Foreground: black, including descendant labels/odds — needed because
+ *               consumers often style the inner odds value with the same
+ *               accent-green text colour, which would be invisible on the
+ *               lemon background without this override.
+ * ------------------------------------------------------------------------- */
+.is-selected-odd {
+  background: var(--mezzo-accent-green) !important;
+  color: #000 !important;
+  box-shadow: inset 0 0 0 2px var(--mezzo-accent-yellow) !important;
+}
+.is-selected-odd * {
+  color: #000 !important;
+}
+
+/* Mobile-first breakpoints */
+@media (max-width: 640px) {
+  /* Reduce font sizes on mobile */
+  body {
+    font-size: 14px;
+  }
+
+  /* Stack elements vertically on mobile */
+  .mobile-stack {
+    flex-direction: column !important;
+  }
+
+  /* Full width buttons on mobile */
+  .mobile-full-width {
+    width: 100% !important;
+  }
+
+  /* Compact padding on mobile */
+  .mobile-compact {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+  }
+
+  /* Keep odds buttons large enough to tap comfortably on small screens. */
+  .odds-btn {
+    min-height: 40px;
+  }
+}
+
+/* Phones (<768px): reserve room below the fixed MobileBottomNav so the
+   last row of content, the footer and any sticky CTAs remain fully
+   visible above the 64px tab bar + device safe-area. Applied on `body`
+   so that both `main` and `footer` are pushed clear of the nav. */
+@media (max-width: 767px) {
+  body {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Tablet & small-desktop (768 – 1279px): no bottom-nav here, but the
+   floating Betslip cart button still floats above content. Reserve
+   space so the last row of the match list doesn't disappear behind it.
+   Disappears at 1280+ because the Betslip is rendered inline. */
+@media (min-width: 768px) and (max-width: 1279px) {
+  main {
+    padding-bottom: 96px;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .tablet-grid-2 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .tablet-text-base {
+    font-size: 1rem !important;
+  }
+}
+
+/* Desktop optimizations */
+@media (min-width: 1025px) {
+  .desktop-grid-3 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .desktop-grid-4 {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Print styles — optimised for 80 mm thermal receipt printers on Windows
+ * (POS80, Epson TM-T20/T88, Star, Citizen, generic ESC/POS via the standard
+ * Windows driver). The PRIMARY print path is the dedicated iframe spawned by
+ * `printThermalTicket()` (see `src/lib/printThermalTicket.ts`) — that guarantees
+ * a single-page receipt every time. These rules are the SAFETY NET for users
+ * who hit Ctrl+P while a ticket dialog is open: they collapse the document
+ * down to just the ticket so the printer still receives a single 80 mm page
+ * instead of the whole 5000-px-tall app surface.
+ * ------------------------------------------------------------------------- */
+@page {
+  size: 80mm auto;
+  margin: 0;
+}
+
+@media print {
+  /* Force a clean monochrome canvas, height auto so the page paginates by
+     content (the ticket) rather than by the host page's huge layout. */
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 80mm !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Hide every direct body child except the Dialog portal that contains the
+     ticket. Using `display: none` (not `visibility: hidden`) is critical —
+     it removes the elements from layout, which is what stops the printer
+     from spitting out blank trailing pages. */
+  body > *:not([data-pc-print-root]) {
+    display: none !important;
+  }
+
+  /* The dialog portal becomes a transparent passthrough so the ticket can
+     sit directly on the 80 mm page. */
+  body > [data-pc-print-root] {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  /* Strip the dialog content shell (border, shadow, dark background, max
+     widths, scroll containers) so only the ticket renders. */
+  body > [data-pc-print-root] > * {
+    position: static !important;
+    inset: auto !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    border: none !important;
+    box-shadow: none !important;
+    max-width: 80mm !important;
+    width: 80mm !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* Action buttons / close / share / done / footer / success-banner inside
+     the dialog all carry the `.no-print` marker — fully removed from the
+     printout. */
+  .no-print {
+    display: none !important;
+  }
+
+  /* The ticket itself: pinned at the top of the 80 mm page in plain black
+     on white. Padding stays in mm so the result is identical at 180 dpi or
+     203 dpi (the two common thermal head densities). */
+  .thermal-ticket {
+    display: block !important;
+    position: static !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 3mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    font-family: "Courier New", Courier, monospace !important;
+    font-size: 10.5px !important;
+    line-height: 1.25 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Logo: do NOT invert. Drivers halftone the colour image to a clean
+     monochrome bitmap on their own and the result is sharp on POS80. */
+  .thermal-ticket img {
+    filter: none !important;
+    max-width: 64px !important;
+    max-height: 64px !important;
+  }
+}
+
+/* Animations */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.slide-in-right {
+  animation: slideInRight 0.3s ease-out;
+}
+
+.slide-out-right {
+  animation: slideOutRight 0.3s ease-out;
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Loading spinner */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid var(--mezzo-accent-yellow);
+  outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --mezzo-bg-primary: #000000;
+    --mezzo-bg-secondary: #1a1a1a;
+    --mezzo-bg-tertiary: #2a2a2a;
+  }
+
+  .odds-btn {
+    border: 1px solid currentColor;
+  }
+}

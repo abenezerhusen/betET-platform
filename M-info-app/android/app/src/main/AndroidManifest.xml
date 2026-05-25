@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ============================================================ -->
+    <!-- Permissions                                                    -->
+    <!-- ============================================================ -->
+    <!-- SMS reading (the whole reason this app exists). RECEIVE_SMS  -->
+    <!-- is the broadcast permission, READ_SMS is required by         -->
+    <!-- another_telephony to look up message bodies on Android 11+.  -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <!-- Boot completed: BootReceiver re-launches PayService on boot   -->
+    <!-- so a phone unattended in a closet still pages the backend     -->
+    <!-- after a power cut.                                            -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Foreground service: persistent notification + wake-lock.       -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Android 13+ requires runtime permission to post notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Network: backend HTTPS requests + connectivity_plus polling.  -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Battery optimisation exemption — the operator should grant     -->
+    <!-- this manually so the OS never freezes the SMS listener.       -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- AlarmManager-driven watchdog: re-pings the service every 15m  -->
+    <!-- in case the OS killed it.                                      -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Cleartext HTTP allowed so you can hit http://YOUR_PC_IP:PORT from a real phone
+         on Wi‑Fi during development. Remove or use networkSecurityConfig for production HTTPS. -->
+    <application
+        android:label="Telebirr Pay"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="false"
+        android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="true">
+
+        <!-- Standard Flutter MainActivity. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+            <meta-data
+                android:name="flutterEmbedding"
+                android:value="2" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ======================================================== -->
+        <!-- BootReceiver                                              -->
+        <!-- ======================================================== -->
+        <!-- Boots PayService (the foreground service) when the phone -->
+        <!-- finishes booting, IFF the operator has previously logged -->
+        <!-- in (autostart=true in AppConfig).                         -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ======================================================== -->
+        <!-- ServiceAlarmReceiver                                      -->
+        <!-- ======================================================== -->
+        <!-- Watchdog scheduled by AlarmManager. Fires every 15 min;  -->
+        <!-- if the foreground service died (OS kill, crash) it       -->
+        <!-- re-launches it. The service itself re-arms the alarm    -->
+        <!-- on every successful tick so a fully-dead app eventually  -->
+        <!-- stops pinging.                                            -->
+        <receiver
+            android:name=".ServiceAlarmReceiver"
+            android:exported="false" />
+
+        <!-- ======================================================== -->
+        <!-- SMS broadcast receiver                                    -->
+        <!-- ======================================================== -->
+        <!-- another_telephony's plugin registers its own receiver     -->
+        <!-- programmatically so we don't need to declare one here     -->
+        <!-- explicitly. Leaving this comment as a marker — if the     -->
+        <!-- plugin is ever swapped, an explicit                       -->
+        <!-- <receiver android:name=".SmsReceiver" ...> goes here.    -->
+
+    </application>
+
+    <!-- Required so Telephony package can resolve sender info.         -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+    </queries>
+</manifest>

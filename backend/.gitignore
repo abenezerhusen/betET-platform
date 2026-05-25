@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.env
+.env.local
+.env.staging
+.env.production
+*.env
+.env.*.local
+keys
+*.pem
+*.log
+.npm
+.cache
+.DS_Store

@@ -1,0 +1,456 @@
+
+> my-project@0.1.0 dev
+> next dev -p 3001 -p 3002
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3002
+- Network:       http://172.26.96.1:3002
+- Environments: .env.local
+- Experiments (use with caution):
+  · optimizePackageImports
+
+✓ Starting...
+✓ Ready in 17.9s
+○ Compiling / ...
+ GET / 200 in 7.9s (compile: 7.5s, render: 339ms)
+ GET /games/aviator 200 in 798ms (compile: 582ms, render: 216ms)
+ GET /games/fast-keno 200 in 772ms (compile: 655ms, render: 117ms)
+ GET /games/multi-hot-5 200 in 182ms (compile: 122ms, render: 60ms)
+ GET / 200 in 93ms (compile: 5ms, render: 89ms)
+ GET /games/aviator 200 in 60ms (compile: 3ms, render: 58ms)
+ GET /games/fast-keno 200 in 58ms (compile: 7ms, render: 51ms)
+ GET /games/multi-hot-5 200 in 40ms (compile: 3ms, render: 37ms)
+ GET / 200 in 181ms (compile: 7ms, render: 174ms)
+ GET /games/gold-star.jpg 404 in 449ms (compile: 366ms, render: 82ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET / 200 in 118ms (compile: 9ms, render: 110ms)
+ GET /games/gold-star.jpg 404 in 145ms (compile: 23ms, render: 121ms)
+ GET /games/big-bass.jpg 404 in 147ms (compile: 60ms, render: 87ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 79ms (compile: 25ms, render: 55ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 149ms (compile: 28ms, render: 121ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 154ms (compile: 57ms, render: 97ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 172ms (compile: 83ms, render: 89ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /icon.svg 404 in 556ms (compile: 23ms, render: 533ms)
+ GET /games/coin-flip.jpg 404 in 144ms (compile: 33ms, render: 111ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 140ms (compile: 60ms, render: 80ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 185ms (compile: 21ms, render: 164ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 215ms (compile: 73ms, render: 143ms)
+ GET /games/sweet-bonanza.jpg 404 in 211ms (compile: 87ms, render: 124ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 148ms (compile: 66ms, render: 82ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /icon-light-32x32.png 404 in 103ms (compile: 51ms, render: 51ms)
+ GET /games/multi-hot-5 200 in 78ms (compile: 40ms, render: 37ms)
+ GET /?session_expired=true 200 in 115ms (compile: 4ms, render: 111ms)
+ GET /games/big-bass.jpg 404 in 196ms (compile: 29ms, render: 168ms)
+ GET /games/diamond-bomb.jpg 404 in 195ms (compile: 61ms, render: 134ms)
+ GET /games/gold-star.jpg 404 in 195ms (compile: 78ms, render: 116ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/bingo-star.jpg 404 in 340ms (compile: 37ms, render: 302ms)
+ GET /games/chicken-air.jpg 404 in 343ms (compile: 59ms, render: 284ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 358ms (compile: 138ms, render: 220ms)
+ GET /games/coin-flip.jpg 404 in 358ms (compile: 173ms, render: 185ms)
+ GET /games/cash-strike.jpg 404 in 350ms (compile: 201ms, render: 148ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 252ms (compile: 36ms, render: 216ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 259ms (compile: 86ms, render: 173ms)
+ GET /games/sweet-bonanza.jpg 404 in 259ms (compile: 114ms, render: 145ms)
+ GET /games/wolf-gold.jpg 404 in 259ms (compile: 145ms, render: 115ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /games/multi-hot-5 200 in 31ms (compile: 5ms, render: 26ms)
+ GET /?session_expired=true 200 in 99ms (compile: 4ms, render: 96ms)
+ GET /games/big-bass.jpg 404 in 193ms (compile: 40ms, render: 154ms)
+ GET /games/gold-star.jpg 404 in 191ms (compile: 62ms, render: 129ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 197ms (compile: 114ms, render: 82ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 241ms (compile: 21ms, render: 219ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 303ms (compile: 68ms, render: 236ms)
+ GET /games/aztec-gems.jpg 404 in 302ms (compile: 93ms, render: 210ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 274ms (compile: 124ms, render: 150ms)
+ GET /games/cash-strike.jpg 404 in 276ms (compile: 148ms, render: 129ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 311ms (compile: 33ms, render: 279ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 332ms (compile: 150ms, render: 182ms)
+ GET /games/sweet-bonanza.jpg 404 in 324ms (compile: 181ms, render: 143ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 161ms (compile: 90ms, render: 70ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /games/fast-keno 200 in 66ms (compile: 21ms, render: 45ms)
+ GET /?session_expired=true 200 in 110ms (compile: 5ms, render: 105ms)
+ GET /games/diamond-bomb.jpg 404 in 225ms (compile: 24ms, render: 201ms)
+ GET /games/big-bass.jpg 404 in 225ms (compile: 55ms, render: 170ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/gold-star.jpg 404 in 234ms (compile: 118ms, render: 116ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/bingo-star.jpg 404 in 231ms (compile: 21ms, render: 210ms)
+ GET /games/chicken-air.jpg 404 in 239ms (compile: 60ms, render: 180ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 243ms (compile: 44ms, render: 199ms)
+ GET /games/coin-flip.jpg 404 in 241ms (compile: 69ms, render: 173ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 225ms (compile: 128ms, render: 96ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 168ms (compile: 26ms, render: 143ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 224ms (compile: 72ms, render: 151ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 146ms (compile: 38ms, render: 108ms)
+ GET /games/wolf-gold.jpg 404 in 141ms (compile: 54ms, render: 87ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /games/aviator 200 in 35ms (compile: 10ms, render: 24ms)
+ GET /icon-light-32x32.png 404 in 49ms (compile: 9ms, render: 39ms)
+ GET / 200 in 69ms (compile: 6ms, render: 63ms)
+ GET /games/big-bass.jpg 404 in 141ms (compile: 37ms, render: 104ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/gold-star.jpg 404 in 164ms (compile: 72ms, render: 92ms)
+ GET /games/diamond-bomb.jpg 404 in 159ms (compile: 80ms, render: 78ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 158ms (compile: 55ms, render: 103ms)
+ GET /games/chicken-air.jpg 404 in 160ms (compile: 71ms, render: 89ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 151ms (compile: 94ms, render: 57ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 144ms (compile: 28ms, render: 116ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 148ms (compile: 58ms, render: 90ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 148ms (compile: 84ms, render: 64ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 130ms (compile: 23ms, render: 107ms)
+ GET /games/sweet-bonanza.jpg 404 in 130ms (compile: 40ms, render: 90ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 119ms (compile: 75ms, render: 44ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 103ms (compile: 12ms, render: 91ms)
+ GET / 200 in 61ms (compile: 11ms, render: 50ms)
+✓ Compiled in 1105ms
+ GET /games/aviator 200 in 273ms (compile: 125ms, render: 148ms)
+ GET /games/fast-keno 200 in 288ms (compile: 150ms, render: 138ms)
+ GET /games/multi-hot-5 200 in 348ms (compile: 192ms, render: 156ms)
+ GET / 200 in 91ms (compile: 5ms, render: 87ms)
+ GET /games/gold-star.jpg 404 in 133ms (compile: 36ms, render: 96ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/big-bass.jpg 404 in 173ms (compile: 62ms, render: 110ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 174ms (compile: 22ms, render: 152ms)
+ GET /games/bingo-star.jpg 404 in 176ms (compile: 39ms, render: 136ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 178ms (compile: 91ms, render: 87ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 130ms (compile: 26ms, render: 104ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 146ms (compile: 53ms, render: 93ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 147ms (compile: 49ms, render: 99ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 206ms (compile: 23ms, render: 183ms)
+ GET /games/rabbit-road.jpg 404 in 206ms (compile: 36ms, render: 170ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 210ms (compile: 89ms, render: 121ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 59ms (compile: 11ms, render: 48ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 215ms (compile: 10ms, render: 205ms)
+ GET /games/gold-star.jpg 404 in 174ms (compile: 25ms, render: 149ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/big-bass.jpg 404 in 192ms (compile: 61ms, render: 132ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 204ms (compile: 85ms, render: 119ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 190ms (compile: 94ms, render: 97ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 115ms (compile: 55ms, render: 61ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 152ms (compile: 19ms, render: 132ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 221ms (compile: 51ms, render: 171ms)
+ GET /games/cash-strike.jpg 404 in 222ms (compile: 66ms, render: 156ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 206ms (compile: 72ms, render: 133ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 190ms (compile: 95ms, render: 95ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 181ms (compile: 53ms, render: 128ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 53ms (compile: 16ms, render: 37ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 203ms (compile: 35ms, render: 167ms)
+ GET /games/gold-star.jpg 404 in 173ms (compile: 27ms, render: 146ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/big-bass.jpg 404 in 181ms (compile: 63ms, render: 118ms)
+ GET /games/diamond-bomb.jpg 404 in 181ms (compile: 77ms, render: 104ms)
+ GET /games/bingo-star.jpg 404 in 173ms (compile: 84ms, render: 90ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 107ms (compile: 25ms, render: 82ms)
+ GET /games/aztec-gems.jpg 404 in 107ms (compile: 41ms, render: 66ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 148ms (compile: 19ms, render: 129ms)
+ GET /games/cash-strike.jpg 404 in 148ms (compile: 32ms, render: 116ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 157ms (compile: 74ms, render: 83ms)
+ GET /games/rabbit-road.jpg 404 in 158ms (compile: 88ms, render: 70ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 85ms (compile: 20ms, render: 65ms)
+ GET /games/wolf-gold.jpg 404 in 85ms (compile: 34ms, render: 52ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /icon.svg 404 in 42ms (compile: 7ms, render: 35ms)
+ GET /icon-light-32x32.png 404 in 49ms (compile: 9ms, render: 40ms)
+ GET / 200 in 79ms (compile: 3ms, render: 76ms)
+ GET /games/diamond-bomb.jpg 404 in 63ms (compile: 21ms, render: 42ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/big-bass.jpg 404 in 173ms (compile: 24ms, render: 149ms)
+ GET /games/gold-star.jpg 404 in 174ms (compile: 45ms, render: 129ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/bingo-star.jpg 404 in 178ms (compile: 91ms, render: 87ms)
+ GET /games/chicken-air.jpg 404 in 177ms (compile: 104ms, render: 73ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 97ms (compile: 14ms, render: 83ms)
+ GET /games/coin-flip.jpg 404 in 98ms (compile: 34ms, render: 64ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 189ms (compile: 85ms, render: 105ms)
+ GET /games/avia-masters.jpg 404 in 191ms (compile: 102ms, render: 88ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 82ms (compile: 22ms, render: 60ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 83ms (compile: 15ms, render: 68ms)
+ GET /games/wolf-gold.jpg 404 in 83ms (compile: 31ms, render: 52ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 312ms (compile: 15ms, render: 297ms)
+ GET /games/diamond-bomb.jpg 404 in 292ms (compile: 36ms, render: 256ms)
+ GET /games/aztec-gems.jpg 404 in 284ms (compile: 62ms, render: 221ms)
+ GET /games/gold-star.jpg 404 in 338ms (compile: 168ms, render: 170ms)
+ GET /games/big-bass.jpg 404 in 345ms (compile: 193ms, render: 152ms)
+ GET /games/chicken-air.jpg 404 in 296ms (compile: 163ms, render: 133ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/bingo-star.jpg 404 in 307ms (compile: 243ms, render: 64ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/coin-flip.jpg 404 in 131ms (compile: 29ms, render: 101ms)
+ GET /games/cash-strike.jpg 404 in 131ms (compile: 47ms, render: 84ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 242ms (compile: 56ms, render: 186ms)
+ GET /games/rabbit-road.jpg 404 in 242ms (compile: 75ms, render: 167ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 257ms (compile: 164ms, render: 93ms)
+ GET / 200 in 462ms (compile: 5ms, render: 457ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 72ms (compile: 30ms, render: 42ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 288ms (compile: 21ms, render: 267ms)
+ GET /games/diamond-bomb.jpg 404 in 103ms (compile: 22ms, render: 81ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/big-bass.jpg 404 in 108ms (compile: 55ms, render: 53ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/gold-star.jpg 404 in 101ms (compile: 19ms, render: 83ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/bingo-star.jpg 404 in 123ms (compile: 50ms, render: 73ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 139ms (compile: 19ms, render: 120ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 170ms (compile: 55ms, render: 116ms)
+ GET /games/coin-flip.jpg 404 in 172ms (compile: 71ms, render: 100ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 102ms (compile: 43ms, render: 59ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 97ms (compile: 21ms, render: 76ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 120ms (compile: 48ms, render: 72ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 170ms (compile: 21ms, render: 150ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 171ms (compile: 117ms, render: 55ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET / 200 in 182ms (compile: 45ms, render: 137ms)
+ GET /games/diamond-bomb.jpg 404 in 137ms (compile: 32ms, render: 105ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/big-bass.jpg 404 in 156ms (compile: 70ms, render: 86ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/gold-star.jpg 404 in 117ms (compile: 24ms, render: 93ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/bingo-star.jpg 404 in 177ms (compile: 36ms, render: 141ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 184ms (compile: 36ms, render: 148ms)
+ GET /games/aztec-gems.jpg 404 in 182ms (compile: 57ms, render: 125ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 199ms (compile: 105ms, render: 94ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 162ms (compile: 30ms, render: 132ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 169ms (compile: 61ms, render: 108ms)
+ GET /games/rabbit-road.jpg 404 in 171ms (compile: 79ms, render: 92ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET / 200 in 599ms (compile: 11ms, render: 589ms)
+ GET / 200 in 141ms (compile: 7ms, render: 134ms)
+ GET /games/gold-star.jpg 404 in 108ms (compile: 23ms, render: 85ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 300ms (compile: 26ms, render: 274ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/big-bass.jpg 404 in 192ms (compile: 27ms, render: 165ms)
+ GET /games/bingo-star.jpg 404 in 187ms (compile: 44ms, render: 143ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 127ms (compile: 21ms, render: 106ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET / 200 in 591ms (compile: 73ms, render: 518ms)
+ GET / 200 in 327ms (compile: 17ms, render: 311ms)
+ GET / 200 in 146ms (compile: 4ms, render: 142ms)
+ GET /games/diamond-bomb.jpg 404 in 231ms (compile: 54ms, render: 177ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/big-bass.jpg 404 in 80ms (compile: 28ms, render: 52ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/gold-star.jpg 404 in 113ms (compile: 20ms, render: 93ms)
+ GET /games/bingo-star.jpg 404 in 115ms (compile: 42ms, render: 72ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET / 200 in 424ms (compile: 11ms, render: 412ms)
+ GET /games/gold-star.jpg 404 in 244ms (compile: 37ms, render: 207ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 256ms (compile: 79ms, render: 177ms)
+ GET /games/big-bass.jpg 404 in 253ms (compile: 104ms, render: 149ms)
+ GET /games/bingo-star.jpg 404 in 251ms (compile: 125ms, render: 126ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/chicken-air.jpg 404 in 122ms (compile: 39ms, render: 83ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 296ms (compile: 24ms, render: 272ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 326ms (compile: 70ms, render: 256ms)
+ GET /games/cash-strike.jpg 404 in 327ms (compile: 92ms, render: 234ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+ GET /games/avia-masters.jpg 404 in 340ms (compile: 184ms, render: 155ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 302ms (compile: 188ms, render: 114ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 97ms (compile: 33ms, render: 63ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 70ms (compile: 16ms, render: 54ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /icon.svg 404 in 66ms (compile: 11ms, render: 55ms)
+ GET /icon-light-32x32.png 404 in 56ms (compile: 9ms, render: 47ms)
+ GET /games/fast-keno 200 in 27ms (compile: 4ms, render: 23ms)
+ GET / 200 in 30ms (compile: 5ms, render: 25ms)
+ GET /games/gold-star.jpg 404 in 60ms (compile: 10ms, render: 50ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+ GET /games/big-bass.jpg 404 in 144ms (compile: 25ms, render: 120ms)
+ GET /games/diamond-bomb.jpg 404 in 145ms (compile: 41ms, render: 105ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 154ms (compile: 76ms, render: 78ms)
+ GET /games/chicken-air.jpg 404 in 159ms (compile: 91ms, render: 68ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+ GET /games/aztec-gems.jpg 404 in 124ms (compile: 33ms, render: 92ms)
+ GET /games/coin-flip.jpg 404 in 126ms (compile: 53ms, render: 72ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 181ms (compile: 26ms, render: 156ms)
+ GET /games/avia-masters.jpg 404 in 174ms (compile: 39ms, render: 135ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 177ms (compile: 75ms, render: 101ms)
+ GET /games/sweet-bonanza.jpg 404 in 178ms (compile: 91ms, render: 87ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 40ms (compile: 9ms, render: 30ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /games/multi-hot-5 200 in 28ms (compile: 4ms, render: 24ms)
+ GET /icon-light-32x32.png 404 in 51ms (compile: 9ms, render: 42ms)
+ GET / 200 in 33ms (compile: 6ms, render: 27ms)
+ GET /games/gold-star.jpg 404 in 134ms (compile: 25ms, render: 109ms)
+ GET /games/big-bass.jpg 404 in 133ms (compile: 37ms, render: 96ms)
+ GET /games/diamond-bomb.jpg 404 in 134ms (compile: 52ms, render: 83ms)
+⨯ The requested resource isn't a valid image for /games/gold-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/bingo-star.jpg 404 in 269ms (compile: 33ms, render: 236ms)
+ GET /games/chicken-air.jpg 404 in 270ms (compile: 51ms, render: 219ms)
+ GET /games/aztec-gems.jpg 404 in 272ms (compile: 68ms, render: 204ms)
+ GET /games/coin-flip.jpg 404 in 275ms (compile: 82ms, render: 193ms)
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/cash-strike.jpg 404 in 282ms (compile: 150ms, render: 132ms)
+ GET /games/avia-masters.jpg 404 in 281ms (compile: 164ms, render: 116ms)
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+ GET /games/rabbit-road.jpg 404 in 131ms (compile: 25ms, render: 106ms)
+⨯ The requested resource isn't a valid image for /games/rabbit-road.jpg received null
+ GET /games/sweet-bonanza.jpg 404 in 126ms (compile: 48ms, render: 77ms)
+⨯ The requested resource isn't a valid image for /games/sweet-bonanza.jpg received null
+ GET /games/wolf-gold.jpg 404 in 125ms (compile: 79ms, render: 46ms)
+⨯ The requested resource isn't a valid image for /games/wolf-gold.jpg received null
+ GET /games/big-bass.jpg 404 in 77ms (compile: 11ms, render: 66ms)
+⨯ The requested resource isn't a valid image for /games/big-bass.jpg received null
+ GET /games/diamond-bomb.jpg 404 in 79ms (compile: 38ms, render: 41ms)
+⨯ The requested resource isn't a valid image for /games/diamond-bomb.jpg received null
+ GET /games/chicken-air.jpg 404 in 76ms (compile: 6ms, render: 70ms)
+ GET /games/bingo-star.jpg 404 in 81ms (compile: 24ms, render: 57ms)
+⨯ The requested resource isn't a valid image for /games/chicken-air.jpg received null
+⨯ The requested resource isn't a valid image for /games/bingo-star.jpg received null
+ GET /games/aztec-gems.jpg 404 in 51ms (compile: 10ms, render: 41ms)
+⨯ The requested resource isn't a valid image for /games/aztec-gems.jpg received null
+ GET /games/coin-flip.jpg 404 in 46ms (compile: 12ms, render: 34ms)
+⨯ The requested resource isn't a valid image for /games/coin-flip.jpg received null
+ GET /games/avia-masters.jpg 404 in 89ms (compile: 8ms, render: 82ms)
+ GET /games/cash-strike.jpg 404 in 94ms (compile: 28ms, render: 66ms)
+⨯ The requested resource isn't a valid image for /games/avia-masters.jpg received null
+⨯ The requested resource isn't a valid image for /games/cash-strike.jpg received null

@@ -1,0 +1,74 @@
+name: m_info_app
+description: >-
+  Telebirr SMS Pay Client. A Flutter app that runs as a background service on
+  a phone paired to a Telebirr agent number, reads incoming Telebirr payment
+  SMS, and reports confirmed payments to the betET platform backend.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Routing
+  go_router: ^14.6.2
+
+  # Network
+  dio: ^5.7.0
+  retry: ^3.1.2
+
+  # Local persistence
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.3
+
+  # Telebirr device features
+  # SMS read on Android (iOS unsupported by platform; we no-op on iOS).
+  another_telephony: ^0.4.1
+  # Foreground service so the SMS listener survives screen-off.
+  flutter_background_service: ^5.1.0
+  # Runtime permission prompts (READ_SMS, POST_NOTIFICATIONS, etc.)
+  permission_handler: ^11.3.1
+  # Local notifications (foreground-service notification + alerts).
+  flutter_local_notifications: ^17.2.4
+
+  # Helpers
+  logger: ^2.4.0
+  intl: ^0.19.0
+  equatable: ^2.0.5
+  uuid: ^4.5.1
+  device_info_plus: ^11.1.1
+  package_info_plus: ^8.1.1
+  connectivity_plus: ^6.1.0
+  # SHA-256 hashing for the SMS dedup_hash sent on /api/agent/sms/batch.
+  # Must match the algorithm the backend expects (sha256(smsBody|receivedAt|sender)).
+  crypto: ^3.0.5
+
+  # Local SQLite database used for the offline SMS-report queue. We
+  # use sqflite over flat-file persistence because the queue must
+  # survive force-close, OS-killed background services, and reboots
+  # without dropping a single payment SMS.
+  sqflite: ^2.3.3+2
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.4.3
+  custom_lint: ^0.7.0
+  riverpod_lint: ^2.3.13
+
+flutter:
+  uses-material-design: true

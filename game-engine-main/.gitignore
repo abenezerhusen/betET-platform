@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build files
+dist/
+build/
+.next/
+
+# environment
+.env
+.env.local
+.env.staging
+.env.production
+*.env
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# system
+.DS_Store
+Thumbs.db

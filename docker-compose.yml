@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: playcore_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: playcore
+      POSTGRES_USER: playcore
+      POSTGRES_PASSWORD: playcore_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playcore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: playcore_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://playcore:playcore_dev_password@postgres:5432/playcore
+      JWT_SECRET: dev_jwt_secret_change_in_production_min_32_chars
+      PORT: 4000
+      FRONTEND_URL: http://localhost:3000
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./migrations:/migrations:ro
+    command: npm run dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: playcore_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

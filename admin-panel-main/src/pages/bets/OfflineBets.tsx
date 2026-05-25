@@ -1,0 +1,576 @@
+/**
+ * /bets/offline-bets — Section 4 page.
+ *
+ * Same shape as Online Bets but for `channel = 'offline'`. Adds Branch
+ * and Cashier columns sourced from joined user metadata on the backend.
+ */
+import React, { useEffect, useMemo, useState } from 'react';
+import { DataTable } from '../../components/DataTable';
+import { FilterBar } from '../../components/FilterBar';
+import { Eye, FileText, Slash, X } from 'lucide-react';
+import { downloadCsv, todayStamp } from '../../lib/csv';
+import { toast } from '../../lib/toast';
+import * as betsApi from '../../lib/api/bets';
+import { useAuthStore } from '../../store/auth';
+
+interface OfflineBetRow {
+  id: string;
+  fullName: string;
+  phoneNumber: string;
+  stake: number;
+  won: number;
+  bonus: number;
+  netWin: number;
+  betId: string;
+  paid: string;
+  status: string;
+  paymentType: string;
+  paidAmount: number;
+  paidAt: string;
+  date: string;
+  branch: string;
+  cashier: string;
+  raw: betsApi.AdminBet;
+}
+
+const STATUS_TO_LABEL: Record<string, string> = {
+  pending: 'Pending',
+  won: 'Won',
+  lost: 'Lost',
+  void: 'Cancelled',
+  cancelled: 'Cancelled',
+  cashout: 'Cashout',
+  partial: 'Partial',
+};
+
+const LABEL_TO_STATUS: Record<string, string> = {
+  Pending: 'pending',
+  Won: 'won',
+  Lost: 'lost',
+  Cancelled: 'cancelled',
+  Cashout: 'cashout',
+  Partial: 'partial',
+};
+
+const num = (s: string | number | null | undefined): number =>
+  typeof s === 'number' ? s : Number(s ?? 0);
+
+function toRow(b: betsApi.AdminBet): OfflineBetRow {
+  const stake = num(b.stake);
+  const payout = num(b.actual_payout);
+  const won = b.status === 'won' ? payout : 0;
+  const bonus = num((b.metadata?.bonus_used as number | string | undefined) ?? 0);
+  const netWin = won - bonus;
+  return {
+    id: b.id,
+    fullName: String(
+      (b.metadata?.full_name as string | undefined) ?? b.user_name ?? '—'
+    ),
+    phoneNumber: b.bet_for_user_phone ?? b.user_phone ?? '—',
+    stake,
+    won,
+    bonus,
+    netWin: Number.isFinite(netWin) ? netWin : 0,
+    betId: b.id.slice(0, 8),
+    paid: b.status === 'won' && payout > 0 ? 'Yes' : 'No',
+    status: STATUS_TO_LABEL[b.status] ?? b.status,
+    paymentType: String(
+      (b.metadata?.payment_type as string | undefined) ?? 'Cash'
+    ),
+    paidAmount: b.status === 'won' ? payout : 0,
+    paidAt: b.settled_at ? new Date(b.settled_at).toLocaleString() : '—',
+    date: b.placed_at ? new Date(b.placed_at).toLocaleString() : '—',
+    branch:
+      b.branch_name ??
+      String((b.metadata?.branch_name as string | undefined) ?? b.branch_id ?? '—'),
+    cashier:
+      b.cashier_name ??
+      b.cashier_email ??
+      String((b.metadata?.cashier_name as string | undefined) ?? '—'),
+    raw: b,
+  };
+}
+
+interface SlipDetail {
+  bet: betsApi.AdminBetDetail | null;
+  loading: boolean;
+}
+
+const SlipModal = ({
+  data,
+  onClose,
+}: {
+  data: SlipDetail;
+  onClose: () => void;
+}) => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+    <div className="bg-white rounded-lg w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+      <div className="p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-semibold">Offline Slip</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {data.loading || !data.bet ? (
+          <div className="py-10 text-center text-sm text-gray-500">
+            Loading slip…
+          </div>
+        ) : (
+          <SlipBody bet={data.bet} />
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const Field = ({ label, value }: { label: string; value: string }) => (
+  <div>
+    <p className="text-sm text-gray-500">{label}</p>
+    <p className="font-medium break-all">{value}</p>
+  </div>
+);
+
+const SlipBody = ({ bet }: { bet: betsApi.AdminBetDetail }) => {
+  const stake = num(bet.stake);
+  const totalOdds =
+    bet.legs.reduce(
+      (acc, leg) => acc * (Number(leg.odds_at_placement ?? leg.current_odds ?? 1) || 1),
+      1
+    ) || 1;
+  const tax = num(bet.metadata?.tax) || 0;
+  const winningTax = num(bet.metadata?.winning_tax) || 0;
+  const netPay = num(bet.actual_payout) - winningTax;
+  const matchHash = String(
+    bet.metadata?.match_hash ??
+      (bet.legs.length ? bet.legs.map((l) => l.id.slice(0, 6)).join('-') : '—')
+  );
+  const slipHash = String(bet.metadata?.slip_hash ?? bet.id.slice(0, 12));
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <Field label="Bet ID" value={bet.id} />
+        <Field
+          label="Cashier"
+          value={String(
+            bet.cashier_name ?? bet.cashier_email ?? '—'
+          )}
+        />
+        <Field
+          label="Branch"
+          value={String(
+            bet.branch_name ??
+              (bet.metadata?.branch_name as string | undefined) ??
+              '—'
+          )}
+        />
+        <Field label="Status" value={bet.status} />
+        <Field label="Match Hash" value={matchHash} />
+        <Field label="Slip Hash" value={slipHash} />
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              {[
+                'Match',
+                'League',
+                'Sport',
+                'Market',
+                'Selection',
+                'Odds',
+                'Result',
+              ].map((h) => (
+                <th
+                  key={h}
+                  className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase"
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {bet.legs.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={7}
+                  className="px-4 py-3 text-sm text-gray-500 text-center"
+                >
+                  No legs recorded for this bet.
+                </td>
+              </tr>
+            ) : (
+              bet.legs.map((leg) => (
+                <tr key={leg.id}>
+                  <td className="px-4 py-2 text-sm">
+                    {leg.home_team && leg.away_team
+                      ? `${leg.home_team} vs ${leg.away_team}`
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-2 text-sm">{leg.league ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm">{leg.sport ?? '—'}</td>
+                  <td className="px-4 py-2 text-sm">
+                    {leg.market_label ?? leg.market_type ?? '—'}
+                  </td>
+                  <td className="px-4 py-2 text-sm">
+                    {leg.selection_label ?? '—'}
+                  </td>
+                  <td className="px-4 py-2 text-sm">
+                    {Number(leg.odds_at_placement ?? leg.current_odds ?? 0).toFixed(
+                      2
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-sm">{leg.result ?? leg.status}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 bg-gray-50 p-4 rounded-lg">
+        <Field label="Stake" value={stake.toFixed(2)} />
+        <Field label="Tax" value={tax.toFixed(2)} />
+        <Field label="Number of Bets" value={String(bet.legs.length)} />
+        <Field label="Total Odds" value={totalOdds.toFixed(2)} />
+        <Field label="Winning Tax" value={winningTax.toFixed(2)} />
+        <Field label="Net Pay" value={netPay.toFixed(2)} />
+      </div>
+    </div>
+  );
+};
+
+export function OfflineBets() {
+  const isAuth = useAuthStore((s) => s.isAuthenticated);
+  const role = useAuthStore((s) => s.user?.role);
+  const canView = role === 'admin' || role === 'superadmin';
+
+  const [startDate, setStartDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d;
+  });
+  const [endDate, setEndDate] = useState<Date>(() => new Date());
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [betIdFilter, setBetIdFilter] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedPaidStatus, setSelectedPaidStatus] = useState('');
+  const [selectedPaymentType, setSelectedPaymentType] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [cashierFilter, setCashierFilter] = useState('');
+  const [minStake, setMinStake] = useState('');
+  const [maxStake, setMaxStake] = useState('');
+
+  const [rows, setRows] = useState<OfflineBetRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const [slip, setSlip] = useState<SlipDetail | null>(null);
+  const [busyCancel, setBusyCancel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAuth || !canView) return;
+    let cancelled = false;
+    setLoading(true);
+    betsApi
+      .listBets({
+        type: 'offline',
+        from: startDate.toISOString(),
+        to: endDate.toISOString(),
+        phone: phoneNumber || undefined,
+        status:
+          (LABEL_TO_STATUS[selectedStatus] as betsApi.BetStatus | undefined) ||
+          undefined,
+        payment_type: selectedPaymentType || undefined,
+        paid:
+          selectedPaidStatus === 'Paid'
+            ? true
+            : selectedPaidStatus === 'Not Paid'
+            ? false
+            : undefined,
+        limit: 200,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setRows((res.items ?? []).map(toRow));
+      })
+      .catch((err: Error) =>
+        toast(`Failed to load offline bets: ${err.message}`, 'error')
+      )
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isAuth,
+    canView,
+    startDate,
+    endDate,
+    phoneNumber,
+    selectedStatus,
+    selectedPaidStatus,
+    selectedPaymentType,
+    reloadTick,
+  ]);
+
+  const filteredData = useMemo(() => {
+    return rows.filter((row) => {
+      if (
+        betIdFilter &&
+        !row.betId.toLowerCase().includes(betIdFilter.toLowerCase()) &&
+        !row.id.toLowerCase().includes(betIdFilter.toLowerCase())
+      )
+        return false;
+      if (minStake && row.stake < Number(minStake)) return false;
+      if (maxStake && row.stake > Number(maxStake)) return false;
+      if (branchFilter && !row.branch.toLowerCase().includes(branchFilter.toLowerCase()))
+        return false;
+      if (cashierFilter && !row.cashier.toLowerCase().includes(cashierFilter.toLowerCase()))
+        return false;
+      return true;
+    });
+  }, [rows, betIdFilter, minStake, maxStake, branchFilter, cashierFilter]);
+
+  const handleViewSlip = async (id: string) => {
+    setSlip({ bet: null, loading: true });
+    try {
+      const detail = await betsApi.getBet(id);
+      setSlip({ bet: detail, loading: false });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load slip';
+      toast(msg, 'error');
+      setSlip(null);
+    }
+  };
+
+  const handleCancel = async (row: OfflineBetRow) => {
+    if (row.raw.status !== 'pending') {
+      toast('Only pending bets can be cancelled.', 'error');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Cancel offline bet ${row.id.slice(0, 8)}? The stake of ${row.stake.toFixed(
+          2
+        )} ${row.raw.currency} will be refunded.`
+      )
+    ) {
+      return;
+    }
+    setBusyCancel(row.id);
+    try {
+      await betsApi.cancelBet(row.id, 'Cancelled from admin offline bets page');
+      toast('Bet cancelled and stake refunded.');
+      setReloadTick((t) => t + 1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to cancel bet';
+      toast(msg, 'error');
+    } finally {
+      setBusyCancel(null);
+    }
+  };
+
+  const handleExport = () => {
+    if (filteredData.length === 0) {
+      toast('No bets to export.', 'error');
+      return;
+    }
+    const exportColumns = [
+      { header: 'Full Name', accessor: 'fullName' as const },
+      { header: 'Phone', accessor: 'phoneNumber' as const },
+      { header: 'Branch', accessor: 'branch' as const },
+      { header: 'Cashier', accessor: 'cashier' as const },
+      { header: 'Stake', accessor: 'stake' as const },
+      { header: 'Won', accessor: 'won' as const },
+      { header: 'Bonus Used', accessor: 'bonus' as const },
+      { header: 'Net Win', accessor: 'netWin' as const },
+      { header: 'Bet ID', accessor: 'betId' as const },
+      { header: 'Paid', accessor: 'paid' as const },
+      { header: 'Status', accessor: 'status' as const },
+      { header: 'Payment Type', accessor: 'paymentType' as const },
+      { header: 'Paid Amount', accessor: 'paidAmount' as const },
+      { header: 'Paid At', accessor: 'paidAt' as const },
+      { header: 'Date', accessor: 'date' as const },
+    ];
+    downloadCsv(exportColumns, filteredData, `offline-bets-${todayStamp()}`);
+    toast(`Exported ${filteredData.length} bets.`);
+  };
+
+  const filters = [
+    {
+      label: 'Bet ID',
+      options: [] as string[],
+      value: betIdFilter,
+      onChange: setBetIdFilter,
+      type: 'text' as const,
+    },
+    {
+      label: 'Phone',
+      options: [] as string[],
+      value: phoneNumber,
+      onChange: setPhoneNumber,
+      type: 'text' as const,
+    },
+    {
+      label: 'Branch',
+      options: [] as string[],
+      value: branchFilter,
+      onChange: setBranchFilter,
+      type: 'text' as const,
+    },
+    {
+      label: 'Cashier',
+      options: [] as string[],
+      value: cashierFilter,
+      onChange: setCashierFilter,
+      type: 'text' as const,
+    },
+    {
+      label: 'Status',
+      options: ['Pending', 'Won', 'Lost', 'Cancelled', 'Cashout'],
+      value: selectedStatus,
+      onChange: setSelectedStatus,
+    },
+    {
+      label: 'Paid Status',
+      options: ['Paid', 'Not Paid'],
+      value: selectedPaidStatus,
+      onChange: setSelectedPaidStatus,
+    },
+    {
+      label: 'Payment Type',
+      options: ['Cash', 'Voucher', 'Cashback'],
+      value: selectedPaymentType,
+      onChange: setSelectedPaymentType,
+    },
+    {
+      label: 'Min Stake',
+      options: [] as string[],
+      value: minStake,
+      onChange: setMinStake,
+      type: 'number' as const,
+    },
+    {
+      label: 'Max Stake',
+      options: [] as string[],
+      value: maxStake,
+      onChange: setMaxStake,
+      type: 'number' as const,
+    },
+  ];
+
+  const columns = [
+    { header: 'Full Name', accessor: 'fullName' as const },
+    { header: 'Phone', accessor: 'phoneNumber' as const },
+    { header: 'Branch', accessor: 'branch' as const },
+    { header: 'Cashier', accessor: 'cashier' as const },
+    { header: 'Stake', accessor: 'stake' as const, render: (v: number) => v.toFixed(2) },
+    { header: 'Won Amount', accessor: 'won' as const, render: (v: number) => v.toFixed(2) },
+    { header: 'Bonus Used', accessor: 'bonus' as const, render: (v: number) => v.toFixed(2) },
+    { header: 'Net Win', accessor: 'netWin' as const, render: (v: number) => v.toFixed(2) },
+    { header: 'Bet ID', accessor: 'betId' as const },
+    { header: 'Paid', accessor: 'paid' as const },
+    {
+      header: 'Status',
+      accessor: 'status' as const,
+      render: (s: string) => {
+        const cls =
+          s === 'Won'
+            ? 'bg-green-100 text-green-800'
+            : s === 'Lost'
+            ? 'bg-gray-100 text-gray-800'
+            : s === 'Cancelled'
+            ? 'bg-red-100 text-red-800'
+            : 'bg-yellow-100 text-yellow-800';
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs font-medium ${cls}`}>
+            {s}
+          </span>
+        );
+      },
+    },
+    { header: 'Payment Type', accessor: 'paymentType' as const },
+    {
+      header: 'Paid Amount',
+      accessor: 'paidAmount' as const,
+      render: (v: number) => v.toFixed(2),
+    },
+    { header: 'Paid At', accessor: 'paidAt' as const },
+    { header: 'Date', accessor: 'date' as const },
+    {
+      header: 'Actions',
+      accessor: 'id' as const,
+      render: (id: string, row: OfflineBetRow) => (
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => handleViewSlip(id)}
+            className="text-blue-600 hover:text-blue-800"
+            title="View Slip"
+          >
+            <Eye className="h-4 w-4" />
+          </button>
+          {row.raw.status === 'pending' && (
+            <button
+              onClick={() => handleCancel(row)}
+              className="text-red-600 hover:text-red-800 disabled:opacity-50"
+              disabled={busyCancel === id}
+              title="Cancel Ticket"
+            >
+              <Slash className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  if (!canView) {
+    return (
+      <div className="bg-white p-8 rounded-lg shadow text-center text-gray-600">
+        Restricted page — Admin / Super Admin only.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-semibold text-gray-900">Offline Bets</h1>
+        <button
+          onClick={handleExport}
+          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          Export CSV
+        </button>
+      </div>
+
+      <FilterBar
+        startDate={startDate}
+        endDate={endDate}
+        onStartDateChange={setStartDate}
+        onEndDateChange={setEndDate}
+        filters={filters}
+      />
+
+      <div className="bg-white rounded-lg shadow">
+        <DataTable columns={columns} data={filteredData} />
+        {loading && (
+          <div className="px-6 pb-6 text-sm text-gray-500">
+            Loading offline bets…
+          </div>
+        )}
+      </div>
+
+      {slip && <SlipModal data={slip} onClose={() => setSlip(null)} />}
+    </div>
+  );
+}
