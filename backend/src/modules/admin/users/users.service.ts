@@ -24,6 +24,7 @@ import type {
   KycRejectInput,
   ListUsersQuery,
   SuspendUserInput,
+  UpdatePermissionsInput,
   UpdateUserInput,
   UserActivityQuery,
   UserStatusInput,
@@ -770,4 +771,115 @@ export async function assignRole(req: Request, id: string, body: AssignRoleInput
   );
 
   return result.after;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Update permissions (Section 23 — RoleSettingsModal)                       */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Replace the user's per-user permission override list. The new list is
+ * stored on `users.metadata.permissions`; the auth service reads it back
+ * via `loadEffectivePermissionsForUser` at every login / refresh so the
+ * JWT immediately reflects the change after the user re-authenticates.
+ *
+ *   PUT /api/admin/users/:id/permissions
+ *   body: { permissions: string[] }
+ */
+export async function updatePermissions(
+  req: Request,
+  id: string,
+  body: UpdatePermissionsInput
+) {
+  const scope = getAdminScope(req);
+
+  const result = await withTenantClient(
+    { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      const before = await repo.findUserById(client, id);
+      if (!before) throw new NotFoundError('User not found');
+      if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
+        throw new ForbiddenError('User belongs to a different tenant');
+      }
+      // Tenant-admins may not rewrite a superadmin's permissions.
+      if (before.role === 'superadmin' && !scope.isSuperadmin) {
+        throw new ForbiddenError('Cannot change permissions of a Super Admin');
+      }
+
+      // De-duplicate while preserving order; tolerates `[]` as the
+      // intentional "no permissions" override.
+      const deduped = Array.from(new Set(body.permissions.map((p) => p.trim())));
+
+      const md = { ...((before.metadata ?? {}) as Record<string, unknown>) };
+      md.permissions = deduped;
+
+      const after = await repo.updateUser(client, id, { metadata: md });
+      if (!after) throw new NotFoundError('User not found');
+
+      return { before, after, permissions: deduped };
+    }
+  );
+
+  await tryAudit(
+    {
+      tenantId: result.after.tenant_id,
+      actorId: scope.actorId,
+      actorType: scope.actorType,
+      action: 'admin.user.update_permissions',
+      resource: 'user',
+      resourceId: id,
+      payload: {
+        before: {
+          permissions:
+            ((result.before.metadata as Record<string, unknown>)?.permissions as
+              | string[]
+              | undefined) ?? null,
+        },
+        after: { permissions: result.permissions },
+      },
+      ip: getIp(req),
+      userAgent: getUa(req),
+      status: 'success',
+    },
+    { bypassRls: true }
+  );
+
+  return {
+    id: result.after.id,
+    permissions: result.permissions,
+    user: result.after,
+  };
+}
+
+/* ------------------------------------------------------------------------- */
+/* User details (Section 23 — UserDetailsModal)                              */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Aggregated profile + recent activity for the admin "View Details" modal.
+ *
+ *   GET /api/admin/users/:id/details
+ *
+ * Always returns the four datasets the modal needs in one round trip:
+ *   - Profile (the canonical `users` row).
+ *   - Aggregates: lifetime totals for deposits, withdrawals, stakes, wins.
+ *   - Per-currency wallet balances.
+ *   - Most recent 20 bets / deposits / withdrawals.
+ */
+export async function getUserDetails(req: Request, id: string) {
+  const scope = getAdminScope(req);
+
+  const data = await withTenantClient(
+    { tenantId: scope.tenantId, bypassRls: scope.bypassRls, readOnly: true },
+    async (client) => {
+      const bundle = await repo.getUserDetails(client, id, 20);
+      if (!bundle) throw new NotFoundError('User not found');
+      if (!scope.isSuperadmin && bundle.user.tenant_id !== scope.tenantId) {
+        throw new ForbiddenError('User belongs to a different tenant');
+      }
+      return bundle;
+    }
+  );
+
+  return data;
 }

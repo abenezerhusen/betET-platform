@@ -38,8 +38,13 @@ exports.up = async (pgm) => {
       ADD COLUMN IF NOT EXISTS cashback_amount        numeric(20,4) NOT NULL DEFAULT 0
   `);
 
-  // ticket_code: generated column. Concat is IMMUTABLE; substr/to_char are
-  // IMMUTABLE on (uuid, text) and (timestamptz, text) respectively.
+  // ticket_code: generated column. Postgres only accepts IMMUTABLE
+  // expressions inside STORED generated columns, and `to_char(timestamptz,
+  // text)` is STABLE (depends on the session's lc_time / TimeZone). The
+  // human-readable customer-facing code with the date + branch + sequence
+  // is built in application code (printed_ticket_code, Section 24 Step 10),
+  // so this generated column only needs to give us a stable per-bet alias
+  // derived from the UUID itself.
   pgm.sql(`
     DO $$
     BEGIN
@@ -50,10 +55,7 @@ exports.up = async (pgm) => {
         ALTER TABLE bets
           ADD COLUMN ticket_code text
           GENERATED ALWAYS AS (
-            'TKT-' ||
-            to_char(placed_at, 'YYMMDD') ||
-            '-' ||
-            upper(substr(id::text, 1, 8))
+            'TKT-' || upper(substr(id::text, 1, 8))
           ) STORED;
       END IF;
     END$$;
@@ -98,10 +100,7 @@ exports.up = async (pgm) => {
         ALTER TABLE sportsbook_bets
           ADD COLUMN ticket_code text
           GENERATED ALWAYS AS (
-            'TKT-' ||
-            to_char(placed_at, 'YYMMDD') ||
-            '-' ||
-            upper(substr(id::text, 1, 8))
+            'TKT-' || upper(substr(id::text, 1, 8))
           ) STORED;
       END IF;
     END$$;

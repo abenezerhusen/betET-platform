@@ -9,6 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "keys:generate": "node scripts/generate-jwt-keys.js",
     "migrate": "node-pg-migrate up -m \"/migrations/*.js\" --use-glob",
     "migrate:rollback": "node-pg-migrate down -m \"/migrations/*.js\" --use-glob",
@@ -50,6 +52,7 @@
     "@types/pg": "^8.11.6",
     "node-pg-migrate": "^8.0.3",
     "tsx": "^4.7.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.7"
   }
 }

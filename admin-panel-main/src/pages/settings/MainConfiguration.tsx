@@ -59,7 +59,7 @@ export function MainConfiguration() {
       settingsApi.getSetting('main.slip').catch(() => null),
       settingsApi.getSetting('main.virtual_casino').catch(() => null),
       settingsApi.getSetting('main.loyalty').catch(() => null),
-      tournamentsApi.getStreakSettings().catch(() => null),
+      tournamentsApi.getStreakConfig().catch(() => null),
       settingsApi.getMainConfig().catch(() => ({} as settingsApi.MainConfig)),
       settingsApi.getSetting('ticket_expiry_days').catch(() => null),
     ])
@@ -72,7 +72,7 @@ export function MainConfiguration() {
         setSlipConfig((slip?.value as JsonObj) ?? {});
         setVirtualCasinoConfig((vc?.value as JsonObj) ?? {});
         setLoyaltyConfig((loyalty?.value as JsonObj) ?? {});
-        setStreakConfig((streak as JsonObj) ?? {});
+        setStreakConfig((streak as unknown as JsonObj) ?? {});
         setBettingRules({ ...defaultBettingRules, ...(rules ?? {}) });
         const raw = expiry?.value;
         const days = typeof raw === 'number' ? raw : Number(raw ?? 7);
@@ -92,10 +92,9 @@ export function MainConfiguration() {
     setSaving(true);
     try {
       if (selectedConfig === 'streak') {
-        await tournamentsApi.updateStreakSettings({
-          enabled: Boolean(streakConfig.enabled ?? true),
-          config: (streakConfig.config as JsonObj | undefined) ?? streakConfig,
-        });
+        await tournamentsApi.updateStreakConfig(
+          streakConfig as Partial<tournamentsApi.StreakConfig>
+        );
       } else {
         const keyMap: Record<string, string> = {
           transaction: 'main.transaction',

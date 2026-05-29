@@ -237,7 +237,7 @@ export function Agents() {
   const submitRoleAssign = async (permissions: string[]) => {
     if (!selectedAgent) return;
     try {
-      await usersApi.updateUser(selectedAgent.id, { metadata: { permissions } });
+      await usersApi.assignPermissions(selectedAgent.id, permissions);
       toast(`Agent permissions updated (${permissions.length} enabled).`);
       reload();
     } catch (err) {
@@ -478,10 +478,10 @@ export function Agents() {
       <PasswordChangeModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onSubmit={(data) => {
-          console.log('Password changed:', data);
-          toast('Password updated.');
-          setIsPasswordModalOpen(false);
+        onSubmit={async (data) => {
+          if (!selectedAgent) return;
+          await usersApi.changeUserPassword(selectedAgent.id, data.password);
+          toast('Password updated; agent must log in again.');
         }}
         userId={selectedAgent?.id || ''}
       />
@@ -499,17 +499,31 @@ export function Agents() {
         onClose={() => setIsRoleModalOpen(false)}
         onSave={(permissions) => void submitRoleAssign(permissions)}
         userType="Agent"
-        currentPermissions={[]}
+        currentPermissions={
+          selectedAgent
+            ? (((backend.find((u) => u.id === selectedAgent.id)?.metadata ?? {}) as Record<
+                string,
+                unknown
+              >).permissions as string[] | undefined) ?? []
+            : []
+        }
       />
 
       <AgentWalletModal
         isOpen={isWalletModalOpen}
         onClose={() => setIsWalletModalOpen(false)}
-        agentData={selectedAgent ? {
-          name: `${selectedAgent.firstName} ${selectedAgent.lastName}`,
-          balance: selectedAgent.prepaidWallet,
-          branch: selectedAgent.branch
-        } : undefined}
+        agentData={
+          selectedAgent
+            ? {
+                userId: selectedAgent.id,
+                name: `${selectedAgent.firstName} ${selectedAgent.lastName}`.trim() ||
+                  selectedAgent.username,
+                balance: selectedAgent.prepaidWallet,
+                branch: selectedAgent.branch,
+              }
+            : undefined
+        }
+        onSuccess={reload}
       />
     </div>
   );

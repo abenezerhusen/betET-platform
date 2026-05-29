@@ -43,13 +43,17 @@ exports.up = async (pgm) => {
         SELECT 1 FROM information_schema.columns
          WHERE table_name = 'sportsbook_bets' AND column_name = 'coupon_code'
       ) THEN
+        -- Postgres only accepts IMMUTABLE expressions inside STORED
+        -- generated columns; to_char(timestamptz, text) is STABLE
+        -- (depends on lc_time / TimeZone) and would be rejected. The
+        -- date-prefixed customer-facing receipt code is built in
+        -- application code (printed_ticket_code, Section 24 Step 10),
+        -- so this column only needs a stable per-bet alias derived
+        -- from the UUID itself.
         ALTER TABLE sportsbook_bets
           ADD COLUMN coupon_code text
           GENERATED ALWAYS AS (
-            'SBK-'
-            || to_char(placed_at, 'YYMMDD')
-            || '-'
-            || upper(substr(id::text, 1, 8))
+            'SBK-' || upper(substr(id::text, 1, 8))
           ) STORED;
       END IF;
     END $$;

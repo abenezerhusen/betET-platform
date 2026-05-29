@@ -24,7 +24,7 @@ import {
   sendEmailBestEffort,
   sendSmsBestEffort,
 } from '../notifications/notifications.service';
-import { loadPermissionsForRole } from './permissions.helper';
+import { loadEffectivePermissionsForUser } from './permissions.helper';
 
 /* ------------------------------------------------------------------------- *
  * Types
@@ -394,9 +394,14 @@ export async function login(tenantId: string, input: LoginInput): Promise<TokenP
     const refreshJti = crypto.randomUUID();
     const accessJti = crypto.randomUUID();
 
-    // Section 22 — resolve permissions from the `roles` row before
-    // issuing the access token so the JWT carries them inline.
-    const permissions = await loadPermissionsForRole(client, tenantId, user.role);
+    // Section 22 + Section 23 — resolve permissions before issuing the
+    // access token. The effective list honours any per-user override that
+    // was saved through the Role Settings modal; otherwise we fall back
+    // to the role-level defaults from the `roles` table.
+    const permissions = await loadEffectivePermissionsForUser(client, tenantId, {
+      role: user.role,
+      metadata: (user.metadata ?? null) as Record<string, unknown> | null,
+    });
 
     const refreshOut = signRefreshToken({
       sub: user.id,
@@ -758,10 +763,13 @@ export async function refresh(
     const newRefreshJti = crypto.randomUUID();
     const newAccessJti = crypto.randomUUID();
 
-    // Section 22 — re-resolve permissions on refresh so admins
-    // immediately pick up any role permission edits made while their
-    // session was active.
-    const permissions = await loadPermissionsForRole(client, tenantId, user.role);
+    // Section 22 + Section 23 — re-resolve permissions on refresh so any
+    // role-level OR per-user permission edits made while the session was
+    // active are picked up immediately on the next token rotation.
+    const permissions = await loadEffectivePermissionsForUser(client, tenantId, {
+      role: user.role,
+      metadata: (user.metadata ?? null) as Record<string, unknown> | null,
+    });
 
     const refreshOut = signRefreshToken({
       sub: user.id,

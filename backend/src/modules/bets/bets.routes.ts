@@ -50,6 +50,8 @@ import {
   isWithinOperationHours,
   loadGeneralConfig,
 } from '../admin/settings/general-config';
+import { updateUserStreakProgress } from '../admin/streaks/streaks.module';
+import { applyBetWageringProgress } from '../promotions/bet-hooks';
 
 /* -------------------------------------------------------------------------- */
 /* DTOs                                                                       */
@@ -520,6 +522,24 @@ async function placeSlip(
         ip: getIp(req),
         userAgent: getUa(req),
         status: 'success',
+      });
+
+      // Section 24 Step 4 — every placed sportsbook bet advances the user
+      // streak (today vs yesterday accounting + reward emission inside the
+      // streak module) and progresses any active bonus wagering assignment.
+      // Both calls are detached so a failure in promotions can never reverse
+      // an already-committed bet.
+      void updateUserStreakProgress({
+        tenantId: scope.tenantId,
+        userId: scope.userId,
+        betAmount: stake,
+      });
+      void applyBetWageringProgress({
+        tenantId: scope.tenantId,
+        userId: scope.userId,
+        betId,
+        stake,
+        odds: totalOdds,
       });
 
       return outcome;

@@ -249,7 +249,7 @@ export function Branches() {
   const submitRoleAssign = async (permissions: string[]) => {
     if (!selectedBranch) return;
     try {
-      await usersApi.updateUser(selectedBranch.id, { metadata: { permissions } });
+      await usersApi.assignPermissions(selectedBranch.id, permissions);
       toast(`Branch permissions updated (${permissions.length} enabled).`);
       reload();
     } catch (err) {
@@ -482,6 +482,7 @@ export function Branches() {
       <BranchWalletModal
         isOpen={isWalletModalOpen}
         onClose={() => setIsWalletModalOpen(false)}
+        branchId={selectedBranch?.id}
         branchData={selectedBranch ? {
           name: selectedBranch.branchId,
           balance: selectedBranch.balance,
@@ -490,9 +491,11 @@ export function Branches() {
             duplicateBetStake: selectedBranch.duplicateBetLimit,
             deposit: selectedBranch.depositLimit,
             offlineBet: selectedBranch.offlineBetLimit,
+            minimumStake: selectedBranch.minStake,
           },
           status: selectedBranch.status
         } : undefined}
+        onSuccess={reload}
       />
 
       <EditUserModal
@@ -505,10 +508,10 @@ export function Branches() {
       <PasswordChangeModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onSubmit={(data) => {
-          console.log('Password changed:', data);
-          toast('Password updated.');
-          setIsPasswordModalOpen(false);
+        onSubmit={async (data) => {
+          if (!selectedBranch) return;
+          await usersApi.changeUserPassword(selectedBranch.id, data.password);
+          toast('Password updated; branch must log in again.');
         }}
         userId={selectedBranch?.id || ''}
       />
@@ -526,7 +529,14 @@ export function Branches() {
         onClose={() => setIsRoleModalOpen(false)}
         onSave={(permissions) => void submitRoleAssign(permissions)}
         userType="Branch"
-        currentPermissions={[]}
+        currentPermissions={
+          selectedBranch
+            ? (((backend.find((u) => u.id === selectedBranch.id)?.metadata ?? {}) as Record<
+                string,
+                unknown
+              >).permissions as string[] | undefined) ?? []
+            : []
+        }
       />
     </div>
   );

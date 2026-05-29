@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { TabGroup } from '../../components/TabGroup';
-import { BarChart2, TrendingUp, Users, Timer } from 'lucide-react';
+import { BarChart2, TrendingUp, Users, Timer, CheckSquare } from 'lucide-react';
 import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import * as opsApi from '../../lib/api/ops';
 import { useAuthStore } from '../../store/auth';
+import { SettleMatchModal } from '../../components/SettleMatchModal';
 
 interface MatchStatData {
   id: string;
@@ -68,6 +69,9 @@ export function MatchStats() {
     avg_win_rate_today: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [settleMatchId, setSettleMatchId] = useState<string | null>(null);
+  const [settleMatchLabel, setSettleMatchLabel] = useState<string>('');
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!isAuth) return;
@@ -105,7 +109,7 @@ export function MatchStats() {
     return () => {
       cancelled = true;
     };
-  }, [isAuth, startDate, endDate, activeTab]);
+  }, [isAuth, startDate, endDate, activeTab, reloadTick]);
 
   const filters = [
     { label: 'League', options: Array.from(new Set(rows.map((r) => r.league))).filter(Boolean), value: selectedLeague, onChange: setSelectedLeague },
@@ -218,11 +222,36 @@ export function MatchStats() {
             { header: 'Avg Odds', accessor: 'avgOdds' as const },
             { header: 'Win Rate %', accessor: 'winRate' as const },
             { header: 'Status', accessor: 'status' as const },
+            {
+              header: 'Actions',
+              accessor: 'id' as const,
+              render: (_value, row) => (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettleMatchId(row.id);
+                    setSettleMatchLabel(`${row.match} · ${row.league}`);
+                  }}
+                  className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md border border-orange-200 text-orange-700 bg-orange-50 hover:bg-orange-100"
+                >
+                  <CheckSquare className="h-3.5 w-3.5 mr-1.5" />
+                  Settle
+                </button>
+              ),
+            },
           ]}
           data={data}
         />
         {loading && <div className="px-6 pb-6 text-sm text-gray-500">Loading match statistics…</div>}
       </div>
+
+      <SettleMatchModal
+        isOpen={settleMatchId !== null}
+        onClose={() => setSettleMatchId(null)}
+        matchId={settleMatchId}
+        matchLabel={settleMatchLabel}
+        onSettled={() => setReloadTick((t) => t + 1)}
+      />
     </div>
   );
 }

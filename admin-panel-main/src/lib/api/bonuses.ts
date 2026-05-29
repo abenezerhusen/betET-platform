@@ -138,6 +138,37 @@ export function assignBonus(
 /* Bonus settings (Tab 2)                                              */
 /* ------------------------------------------------------------------ */
 
+export interface CashbackTier {
+  min_odds: number;
+  max_odds: number | null;
+  pct: number;
+}
+
+export interface CashbackLossSlot {
+  enabled: boolean;
+  min_legs: number;
+  min_leg_odds: number;
+  min_stake: number;
+  max_cashback: number;
+  tiers: CashbackTier[];
+}
+
+export interface CashbackRuleConfig {
+  loss_one: CashbackLossSlot;
+  loss_two: CashbackLossSlot;
+  loss_three?: CashbackLossSlot;
+}
+
+export interface PerTicketCashbackConfig {
+  enabled: boolean;
+  active_rule: 'rule_one' | 'rule_two';
+  payout_as: 'bonus' | 'cash';
+  exclude_live: boolean;
+  exclude_virtual: boolean;
+  rule_one: CashbackRuleConfig;
+  rule_two: CashbackRuleConfig;
+}
+
 export interface BonusSettings {
   global_enabled: boolean;
   default_wagering_multiplier: number;
@@ -148,6 +179,7 @@ export interface BonusSettings {
     payout_as: 'bonus' | 'cash';
     min_loss?: number;
     pct?: number;
+    per_ticket?: PerTicketCashbackConfig;
   };
   deposit_match: { stack_with_promo: boolean };
 }

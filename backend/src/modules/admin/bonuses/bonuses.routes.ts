@@ -1,6 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import * as service from './bonuses.service';
+// Section 25 — per-ticket loss cashback defaults shared with the
+// promotions/loss-cashback evaluator so admin settings stay in lockstep.
+import { DEFAULT_PER_TICKET_CASHBACK } from '../../promotions/loss-cashback';
 import {
   assignBonusSchema,
   createBonusSchema,
@@ -24,14 +27,50 @@ import { tryAudit } from '../../audit/audit.service';
 const router = Router();
 
 const BONUS_SETTINGS_KEY = 'promotions.bonus_settings';
+
 const DEFAULT_BONUS_SETTINGS = {
   global_enabled: true,
   default_wagering_multiplier: 5,
   default_expiry_days: 7,
   default_min_odds: 1.5,
-  cashback: { schedule: 'weekly', payout_as: 'bonus' },
+  cashback: {
+    schedule: 'weekly',
+    payout_as: 'bonus',
+    per_ticket: DEFAULT_PER_TICKET_CASHBACK,
+  },
   deposit_match: { stack_with_promo: false },
 };
+
+const cashbackTierSchema = z.object({
+  min_odds: z.number().nonnegative(),
+  max_odds: z.number().nonnegative().nullable(),
+  pct: z.number().nonnegative(),
+});
+
+const lossSlotSchema = z.object({
+  enabled: z.boolean().default(true),
+  min_legs: z.number().int().nonnegative().default(0),
+  min_leg_odds: z.number().nonnegative().default(0),
+  min_stake: z.number().nonnegative().default(0),
+  max_cashback: z.number().nonnegative().default(0),
+  tiers: z.array(cashbackTierSchema).default([]),
+});
+
+const ruleConfigSchema = z.object({
+  loss_one: lossSlotSchema,
+  loss_two: lossSlotSchema,
+  loss_three: lossSlotSchema.optional(),
+});
+
+const perTicketCashbackSchema = z.object({
+  enabled: z.boolean().default(false),
+  active_rule: z.enum(['rule_one', 'rule_two']).default('rule_one'),
+  payout_as: z.enum(['bonus', 'cash']).default('bonus'),
+  exclude_live: z.boolean().default(true),
+  exclude_virtual: z.boolean().default(true),
+  rule_one: ruleConfigSchema,
+  rule_two: ruleConfigSchema,
+});
 
 const bonusSettingsSchema = z.object({
   global_enabled: z.boolean().default(true),
@@ -44,6 +83,7 @@ const bonusSettingsSchema = z.object({
       payout_as: z.enum(['bonus', 'cash']).default('bonus'),
       min_loss: z.number().nonnegative().default(100),
       pct: z.number().min(0).max(100).default(10),
+      per_ticket: perTicketCashbackSchema.default(DEFAULT_PER_TICKET_CASHBACK),
     })
     .default({}),
   deposit_match: z

@@ -256,13 +256,7 @@ export function SuperAdmin() {
   const submitRoleAssign = async (permissions: string[]) => {
     if (!selectedUser) return;
     try {
-      const md = (backend.find((u) => u.id === selectedUser.id)?.metadata ?? {}) as Record<
-        string,
-        unknown
-      >;
-      await usersApi.updateUser(selectedUser.id, {
-        metadata: { ...md, permissions },
-      });
+      await usersApi.assignPermissions(selectedUser.id, permissions);
       toast(`Super Admin permissions updated (${permissions.length} enabled).`);
       reload();
     } catch (err) {

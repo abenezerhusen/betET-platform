@@ -285,7 +285,7 @@ export function Sales() {
   const submitRoleAssign = async (permissions: string[]) => {
     if (!selectedUser) return;
     try {
-      await usersApi.updateUser(selectedUser.id, { metadata: { permissions } });
+      await usersApi.assignPermissions(selectedUser.id, permissions);
       toast(`Sales staff permissions updated (${permissions.length} enabled).`);
       reload();
     } catch (err) {
@@ -558,10 +558,10 @@ export function Sales() {
       <PasswordChangeModal
         isOpen={isPasswordModalOpen}
         onClose={() => setIsPasswordModalOpen(false)}
-        onSubmit={(data) => {
-          console.log('Password changed:', data);
-          toast('Password updated.');
-          setIsPasswordModalOpen(false);
+        onSubmit={async (data) => {
+          if (!selectedUser) return;
+          await usersApi.changeUserPassword(selectedUser.id, data.password);
+          toast('Password updated; sales staff must log in again.');
         }}
         userId={selectedUser?.id || ''}
       />
@@ -579,7 +579,14 @@ export function Sales() {
         onClose={() => setIsRoleModalOpen(false)}
         onSave={(permissions) => void submitRoleAssign(permissions)}
         userType="Sales Staff"
-        currentPermissions={[]}
+        currentPermissions={
+          selectedUser
+            ? (((backend.find((u) => u.id === selectedUser.id)?.metadata ?? {}) as Record<
+                string,
+                unknown
+              >).permissions as string[] | undefined) ?? []
+            : []
+        }
       />
     </div>
   );

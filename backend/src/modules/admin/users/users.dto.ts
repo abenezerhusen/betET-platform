@@ -173,6 +173,22 @@ export const assignRoleSchema = z.object({
   role: z.enum(ROLE_VALUES),
 });
 
+/**
+ * Section 23 — Role Settings modal payload.
+ *
+ *   PUT /api/admin/users/:id/permissions
+ *   { "permissions": ["dashboard.view", "bets.online.view", ...] }
+ *
+ * The permission IDs are validated as plain strings; the admin panel owns
+ * the catalog. Server simply stores the list in `users.metadata.permissions`
+ * and the auth service reads it back at login / refresh time.
+ */
+export const updatePermissionsSchema = z.object({
+  permissions: z
+    .array(z.string().trim().min(1).max(120))
+    .max(500, 'Too many permissions in one request'),
+});
+
 export type ListUsersQuery = z.infer<typeof listUsersSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
@@ -182,3 +198,4 @@ export type ChangeUserPasswordInput = z.infer<typeof changeUserPasswordSchema>;
 export type KycRejectInput = z.infer<typeof kycRejectSchema>;
 export type UserActivityQuery = z.infer<typeof userActivitySchema>;
 export type AssignRoleInput = z.infer<typeof assignRoleSchema>;
+export type UpdatePermissionsInput = z.infer<typeof updatePermissionsSchema>;

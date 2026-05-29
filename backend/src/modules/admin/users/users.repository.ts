@@ -346,6 +346,181 @@ export async function setUserKyc(
   return r.rows[0] ?? null;
 }
 
+/* ------------------------------------------------------------------------- */
+/* User details (Section 23 — UserDetailsModal)                              */
+/* ------------------------------------------------------------------------- */
+
+export interface UserDetailsAggregates {
+  total_deposits: string;
+  total_withdrawals: string;
+  total_bets: string;
+  total_won: string;
+  bet_count: string;
+}
+
+export interface UserDetailsBet {
+  id: string;
+  source: 'sportsbook' | 'bets';
+  stake: string;
+  potential_payout: string | null;
+  actual_payout: string | null;
+  status: string;
+  placed_at: Date;
+}
+
+export interface UserDetailsTransaction {
+  id: string;
+  amount: string;
+  status: string;
+  reference: string | null;
+  created_at: Date;
+  metadata: Record<string, unknown>;
+}
+
+export interface UserDetailsBalance {
+  currency: string;
+  balance: string;
+  bonus_balance: string;
+  locked_balance: string;
+}
+
+export interface UserDetailsBundle {
+  user: AdminUserRow;
+  aggregates: UserDetailsAggregates;
+  balances: UserDetailsBalance[];
+  recent_bets: UserDetailsBet[];
+  recent_deposits: UserDetailsTransaction[];
+  recent_withdrawals: UserDetailsTransaction[];
+}
+
+/**
+ * Section 23 — fetch every dataset the UserDetailsModal needs in a single
+ * round trip. Reading from `bets` + `sportsbook_bets` and `transactions`
+ * to keep parity with the rest of the admin panel.
+ */
+export async function getUserDetails(
+  client: PoolClient,
+  userId: string,
+  recentLimit: number
+): Promise<UserDetailsBundle | null> {
+  const user = await findUserById(client, userId);
+  if (!user) return null;
+
+  const aggSql = `
+    WITH agg AS (
+      SELECT
+        COALESCE((SELECT SUM(amount)::text FROM transactions
+          WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'), '0')
+            AS total_deposits,
+        COALESCE((SELECT SUM(amount)::text FROM transactions
+          WHERE user_id = $1 AND type = 'withdrawal' AND status = 'completed'), '0')
+            AS total_withdrawals,
+        COALESCE(
+          (SELECT (
+            COALESCE((SELECT SUM(stake) FROM bets             WHERE user_id = $1), 0) +
+            COALESCE((SELECT SUM(stake) FROM sportsbook_bets  WHERE user_id = $1), 0)
+          )::text), '0'
+        ) AS total_bets,
+        COALESCE(
+          (SELECT (
+            COALESCE((SELECT SUM(payout) FROM bets            WHERE user_id = $1 AND status = 'won'), 0) +
+            COALESCE((SELECT SUM(actual_payout) FROM sportsbook_bets WHERE user_id = $1 AND status = 'won'), 0)
+          )::text), '0'
+        ) AS total_won,
+        COALESCE(
+          (SELECT (
+            COALESCE((SELECT COUNT(*) FROM bets            WHERE user_id = $1), 0) +
+            COALESCE((SELECT COUNT(*) FROM sportsbook_bets WHERE user_id = $1), 0)
+          )::text), '0'
+        ) AS bet_count
+    )
+    SELECT * FROM agg
+  `;
+  const aggRes = await client.query<UserDetailsAggregates>(aggSql, [userId]);
+  const aggregates: UserDetailsAggregates = aggRes.rows[0] ?? {
+    total_deposits: '0',
+    total_withdrawals: '0',
+    total_bets: '0',
+    total_won: '0',
+    bet_count: '0',
+  };
+
+  const balancesRes = await client.query<UserDetailsBalance>(
+    `SELECT currency,
+            COALESCE(balance, 0)::text         AS balance,
+            COALESCE(bonus_balance, 0)::text   AS bonus_balance,
+            COALESCE(locked_balance, 0)::text  AS locked_balance
+       FROM wallets
+      WHERE user_id = $1 AND status = 'active'
+      ORDER BY currency`,
+    [userId]
+  );
+
+  const betsRes = await client.query<UserDetailsBet>(
+    `SELECT id::text                                          AS id,
+            'sportsbook'::text                                AS source,
+            stake::text                                       AS stake,
+            potential_payout::text                            AS potential_payout,
+            actual_payout::text                               AS actual_payout,
+            status::text                                      AS status,
+            placed_at
+       FROM sportsbook_bets
+      WHERE user_id = $1
+      UNION ALL
+     SELECT id::text                                          AS id,
+            'bets'::text                                      AS source,
+            stake::text                                       AS stake,
+            potential_win::text                               AS potential_payout,
+            payout::text                                      AS actual_payout,
+            status::text                                      AS status,
+            placed_at
+       FROM bets
+      WHERE user_id = $1
+      ORDER BY placed_at DESC
+      LIMIT $2`,
+    [userId, recentLimit]
+  );
+
+  const depositsRes = await client.query<UserDetailsTransaction>(
+    `SELECT id::text         AS id,
+            amount::text      AS amount,
+            status,
+            reference,
+            created_at,
+            metadata
+       FROM transactions
+      WHERE user_id = $1
+        AND type = 'deposit'
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [userId, recentLimit]
+  );
+
+  const withdrawalsRes = await client.query<UserDetailsTransaction>(
+    `SELECT id::text         AS id,
+            amount::text      AS amount,
+            status,
+            reference,
+            created_at,
+            metadata
+       FROM transactions
+      WHERE user_id = $1
+        AND type = 'withdrawal'
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [userId, recentLimit]
+  );
+
+  return {
+    user,
+    aggregates,
+    balances: balancesRes.rows,
+    recent_bets: betsRes.rows,
+    recent_deposits: depositsRes.rows,
+    recent_withdrawals: withdrawalsRes.rows,
+  };
+}
+
 export interface ActivityRow {
   type: 'bet' | 'transaction';
   id: string;

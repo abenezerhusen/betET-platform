@@ -7,6 +7,7 @@ import {
   kycRejectSchema,
   listUsersSchema,
   suspendUserSchema,
+  updatePermissionsSchema,
   updateUserSchema,
   userActivitySchema,
   userStatusSchema,
@@ -360,6 +361,79 @@ router.post(
     try {
       const body = assignRoleSchema.parse(req.body);
       const out = await service.assignRole(req, req.params.id, body);
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ------------------------------------------------------------------ */
+/* Section 23 — Role Settings Modal: per-user permission override     */
+/* ------------------------------------------------------------------ */
+
+swagger.registerPath({
+  method: 'put',
+  path: '/api/admin/users/{id}/permissions',
+  summary: 'Replace a user\u2019s per-user permission override list',
+  tags: ['Admin Users'],
+  security: [{ bearerAuth: [] }],
+  requestBody: {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['permissions'],
+          properties: {
+            permissions: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+  responses: {
+    '200': { description: 'Permissions updated; reflected in JWT on next login' },
+  },
+});
+
+router.put(
+  '/:id/permissions',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const body = updatePermissionsSchema.parse(req.body);
+      const out = await service.updatePermissions(req, req.params.id, body);
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* ------------------------------------------------------------------ */
+/* Section 23 — UserDetailsModal: aggregated profile + recent items    */
+/* ------------------------------------------------------------------ */
+
+swagger.registerPath({
+  method: 'get',
+  path: '/api/admin/users/{id}/details',
+  summary: 'Aggregated user profile + recent bets / deposits / withdrawals',
+  tags: ['Admin Users'],
+  security: [{ bearerAuth: [] }],
+  responses: {
+    '200': { description: 'Profile + aggregates + recent activity' },
+    '404': { description: 'User not found' },
+  },
+});
+
+router.get(
+  '/:id/details',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const out = await service.getUserDetails(req, req.params.id);
       res.json(out);
     } catch (err) {
       next(err);

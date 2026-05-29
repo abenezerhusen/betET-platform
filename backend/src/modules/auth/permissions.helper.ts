@@ -68,6 +68,42 @@ export async function loadPermissionsForRole(
   return row.permissions.filter((p): p is string => typeof p === 'string');
 }
 
+/**
+ * Section 23 — Role Settings Modal.
+ *
+ * Resolve the *effective* permissions for a given user. Order of precedence:
+ *
+ *   1. Hard-coded super-admin wildcard.
+ *   2. Per-user override stored in `users.metadata.permissions` (admin panel
+ *      writes this through `PUT /api/admin/users/:id/permissions`).
+ *   3. Role-level defaults from the `roles` table (legacy behaviour).
+ *
+ * This lets a Super Admin tighten or loosen any individual admin's surface
+ * area without needing to maintain a full row in `roles`.
+ */
+export async function loadEffectivePermissionsForUser(
+  client: PoolClient,
+  tenantId: string,
+  user: { role: string; metadata: Record<string, unknown> | null }
+): Promise<string[]> {
+  // Super admin shortcut.
+  if (ROLE_FALLBACKS[user.role]) return ROLE_FALLBACKS[user.role];
+
+  const md = (user.metadata ?? {}) as Record<string, unknown>;
+  const override = md.permissions;
+  if (Array.isArray(override)) {
+    const filtered = override.filter((p): p is string => typeof p === 'string');
+    // An explicit empty array is also a valid override — it means "this
+    // user has no admin-panel surface area". We only fall back to the
+    // role row when the override is absent altogether.
+    if (filtered.length > 0 || md.permissions !== undefined) {
+      return filtered;
+    }
+  }
+
+  return loadPermissionsForRole(client, tenantId, user.role);
+}
+
 /** Returns true if the JWT-embedded permission list covers `required`. */
 export function hasPermission(
   permissions: string[] | undefined | null,

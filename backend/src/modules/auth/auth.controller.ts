@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { env } from '../../config/env';
 import { BadRequestError } from '../../http/errors/http-error';
 import {
+  cashierLoginSchema,
   changePasswordSchema,
   forgotPasswordSchema,
   loginSchema,
@@ -91,13 +92,17 @@ export async function cashierLogin(
   next: NextFunction
 ) {
   try {
-    const body = loginSchema.parse(req.body);
+    // Section 16 — cashier panel pins each session to a branch, so we
+    // use the stricter `cashierLoginSchema` which marks `branch_id` as
+    // required. The service layer then cross-checks the value against
+    // the user's `metadata.branch_*` fields.
+    const body = cashierLoginSchema.parse(req.body);
     const tenantId = requireTenantId(req);
     const out = await service.login(tenantId, {
       email: body.email ?? null,
       phone: body.phone ?? null,
       username: body.username ?? null,
-      branchId: body.branch_id ?? null,
+      branchId: body.branch_id,
       password: body.password,
       ip: getIp(req),
       userAgent: getUa(req),

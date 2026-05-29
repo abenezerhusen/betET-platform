@@ -11,6 +11,7 @@ import {
   sendEmailBestEffort,
   sendSmsBestEffort,
 } from '../../notifications/notifications.service';
+import { runPostDepositPromotions } from '../../promotions/deposit-hooks';
 import type {
   AddSubAccountInput,
   ApproveDepositInput,
@@ -694,6 +695,22 @@ export async function approveDepositInQueue(
         message: `ETB ${p2p.amount} has been credited to your wallet.`,
         type: 'success',
       });
+
+      // Section 24 Step 3 — bonus rule evaluation, raffle ticket awards and
+      // referral promotion run as detached best-effort tasks so a failure in
+      // one path never reverses a credited deposit.
+      void runPostDepositPromotions({
+        tenantId: resolvedTenantId,
+        userId: targetUserId,
+        amount: p2p.amount,
+        source: 'p2p_admin_approve',
+        metadata: {
+          p2p_deposit_id: p2p.id,
+          telebirr_ref: p2p.telebirr_ref,
+          approved_by: scope.actorId,
+        },
+      });
+
       return { ok: true, deposit_id: p2p.id, wallet_transaction_id: ledger.id };
     }
   );

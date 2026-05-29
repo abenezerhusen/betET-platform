@@ -7,6 +7,10 @@ import { toast } from '../../lib/toast';
 import { Gift, Plus, RefreshCw, Users, DollarSign, Target, X, Save, Ticket } from 'lucide-react';
 import * as bonusesApi from '../../lib/api/bonuses';
 import { useAuthStore } from '../../store/auth';
+import {
+  LossCashbackEditor,
+  DEFAULT_PER_TICKET_CASHBACK,
+} from './LossCashbackEditor';
 
 interface RuleFormState {
   name: string;
@@ -329,7 +333,13 @@ const DEFAULT_BONUS_SETTINGS: bonusesApi.BonusSettings = {
   default_wagering_multiplier: 5,
   default_expiry_days: 7,
   default_min_odds: 1.5,
-  cashback: { schedule: 'weekly', payout_as: 'bonus', min_loss: 100, pct: 10 },
+  cashback: {
+    schedule: 'weekly',
+    payout_as: 'bonus',
+    min_loss: 100,
+    pct: 10,
+    per_ticket: DEFAULT_PER_TICKET_CASHBACK,
+  },
   deposit_match: { stack_with_promo: false },
 };
 
@@ -890,6 +900,17 @@ export function BonusEngine() {
               <span className="text-sm text-gray-700">Allow deposit match to stack with other promos</span>
             </label>
           </div>
+
+          <LossCashbackEditor
+            value={settings.cashback.per_ticket ?? DEFAULT_PER_TICKET_CASHBACK}
+            onChange={(next) =>
+              setSettings({
+                ...settings,
+                cashback: { ...settings.cashback, per_ticket: next },
+              })
+            }
+          />
+
           <div className="flex justify-end">
             <button
               type="button"

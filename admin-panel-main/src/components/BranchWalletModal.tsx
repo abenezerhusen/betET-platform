@@ -1,11 +1,22 @@
-import React, { useState } from 'react';
-import { X, DollarSign, Clock, FileText, Plus, Minus, Settings, Percent } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  X,
+  DollarSign,
+  Clock,
+  Plus,
+  Minus,
+  Settings,
+  Percent,
+} from 'lucide-react';
 import { z } from 'zod';
 import { toast } from '../lib/toast';
+import * as walletsApi from '../lib/api/wallets';
+import * as usersApi from '../lib/api/users';
 
 interface BranchWalletModalProps {
   isOpen: boolean;
   onClose: () => void;
+  branchId?: string;
   branchData?: {
     name: string;
     balance: number;
@@ -17,19 +28,11 @@ interface BranchWalletModalProps {
       duplicateBetStake: number;
       deposit: number;
       offlineBet: number;
-      minimumStake: number;
+      minimumStake?: number;
     };
     status: string;
   };
-}
-
-interface CashbackRule {
-  id: string;
-  name: string;
-  description: string;
-  percentage: number;
-  condition: string;
-  status: string;
+  onSuccess?: () => void;
 }
 
 const branchWalletOpSchema = z.object({
@@ -46,55 +49,109 @@ const branchSettingsSchema = z.object({
   offlineBet: z.number().min(0),
 });
 
-const cashbackRuleSchema = z.object({
-  name: z.string().trim().min(2, 'Rule name is required'),
-  description: z.string().trim().min(2, 'Description is required'),
-  percentage: z.number().min(0).max(100),
-  condition: z.string().trim().min(2, 'Condition is required'),
-});
-
-export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletModalProps) {
-  const cashbackRules: CashbackRule[] = [];
+export function BranchWalletModal({
+  isOpen,
+  onClose,
+  branchId,
+  branchData,
+  onSuccess,
+}: BranchWalletModalProps) {
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [activeTab, setActiveTab] = useState<'deposit' | 'settings' | 'cashback'>('deposit');
-  const [operatingHours, setOperatingHours] = useState(branchData?.operatingHours || { start: '09:00', end: '17:00' });
-  const [limits, setLimits] = useState(branchData?.limits || {
-    duplicateBetStake: 1000,
-    deposit: 5000,
-    offlineBet: 2000,
-    minimumStake: 10,
-  });
+  const initialHours = useMemo(
+    () => branchData?.operatingHours ?? { start: '09:00', end: '17:00' },
+    [branchData?.operatingHours]
+  );
+  const initialLimits = useMemo(
+    () => ({
+      duplicateBetStake: branchData?.limits?.duplicateBetStake ?? 1000,
+      deposit: branchData?.limits?.deposit ?? 5000,
+      offlineBet: branchData?.limits?.offlineBet ?? 2000,
+      minimumStake: branchData?.limits?.minimumStake ?? 10,
+    }),
+    [branchData?.limits]
+  );
+  const [operatingHours, setOperatingHours] = useState(initialHours);
+  const [limits, setLimits] = useState(initialLimits);
   const [branchStatus, setBranchStatus] = useState(branchData?.status || 'Active');
-  const [isAddingRule, setIsAddingRule] = useState(false);
-  const [newRule, setNewRule] = useState({
-    name: '',
-    description: '',
-    percentage: 0,
-    condition: '',
-  });
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setOperatingHours(initialHours);
+      setLimits(initialLimits);
+      setBranchStatus(branchData?.status || 'Active');
+      setError('');
+      setAmount('');
+      setReason('');
+    }
+  }, [isOpen, initialHours, initialLimits, branchData?.status]);
 
   if (!isOpen || !branchData) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const requireBranchId = (): string | null => {
+    if (!branchId) {
+      setError('Branch identifier is missing.');
+      return null;
+    }
+    return branchId;
+  };
+
+  const submitWalletOp = async (op: 'credit' | 'debit') => {
+    const id = requireBranchId();
+    if (!id) return;
     const parsed = branchWalletOpSchema.safeParse({
       amount: Number(amount),
       reason,
     });
     if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Invalid branch wallet operation');
+      const msg = parsed.error.issues[0]?.message ?? 'Invalid branch wallet operation';
+      setError(msg);
       return;
     }
     setError('');
-    console.log('Processing deposit:', parsed.data);
-    toast(amount ? `Deposit of ${amount} processed.` : 'Deposit processed.');
-    setAmount('');
-    setReason('');
+    setSubmitting(true);
+    try {
+      const payload: walletsApi.AdjustWalletInput = {
+        amount: parsed.data.amount,
+        reason: parsed.data.reason,
+        metadata: {
+          source: 'branch_wallet_modal',
+          branch_id: branchData.name,
+          target: 'branch_prepaid_wallet',
+        },
+      };
+      if (op === 'credit') {
+        await walletsApi.creditWallet(id, payload);
+        toast(`Branch credited with ${parsed.data.amount}.`);
+      } else {
+        await walletsApi.debitWallet(id, payload);
+        toast(`Branch debited by ${parsed.data.amount}.`);
+      }
+      setAmount('');
+      setReason('');
+      onSuccess?.();
+    } catch (err) {
+      toast(`Failed: ${(err as Error)?.message ?? err}`, 'error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleSaveSettings = () => {
+  const handleDeposit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void submitWalletOp('credit');
+  };
+
+  const handleWithdraw = () => {
+    void submitWalletOp('debit');
+  };
+
+  const handleSaveSettings = async () => {
+    const id = requireBranchId();
+    if (!id) return;
     const parsed = branchSettingsSchema.safeParse({
       start: operatingHours.start,
       end: operatingHours.end,
@@ -110,32 +167,30 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
       return;
     }
     setError('');
-    console.log('Saving settings:', {
-      operatingHours,
-      limits,
-      branchStatus,
-    });
-    toast('Branch settings saved.');
-  };
-
-  const handleAddRule = (e: React.FormEvent) => {
-    e.preventDefault();
-    const parsed = cashbackRuleSchema.safeParse(newRule);
-    if (!parsed.success) {
-      const msg = parsed.error.issues[0]?.message ?? 'Invalid cashback rule';
-      setError(msg);
-      return;
+    setSubmitting(true);
+    try {
+      await usersApi.updateUser(id, {
+        status: branchStatus.toLowerCase() === 'active' ? 'active' : 'suspended',
+        metadata: {
+          operating_hours: {
+            start: parsed.data.start,
+            end: parsed.data.end,
+          },
+          limits: {
+            offline_bet: parsed.data.offlineBet,
+            deposit: parsed.data.deposit,
+            duplicate_bet: parsed.data.duplicateBetStake,
+          },
+          min_stake: parsed.data.minimumStake,
+        },
+      } as usersApi.UpdateUserInput);
+      toast('Branch settings saved.');
+      onSuccess?.();
+    } catch (err) {
+      toast(`Failed to save settings: ${(err as Error)?.message ?? err}`, 'error');
+    } finally {
+      setSubmitting(false);
     }
-    setError('');
-    console.log('Adding new cashback rule:', parsed.data);
-    toast('Cashback rule added.');
-    setIsAddingRule(false);
-    setNewRule({
-      name: '',
-      description: '',
-      percentage: 0,
-      condition: '',
-    });
   };
 
   return (
@@ -148,7 +203,6 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
           </button>
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex space-x-4 mb-6">
           <button
             onClick={() => setActiveTab('deposit')}
@@ -182,7 +236,6 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
           </button>
         </div>
 
-        {/* Wallet Tab */}
         {activeTab === 'deposit' && (
           <div className="space-y-6">
             {error && <p className="text-sm text-red-600">{error}</p>}
@@ -209,7 +262,7 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
               </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleDeposit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Amount</label>
                 <div className="mt-1 relative rounded-md shadow-sm">
@@ -241,29 +294,32 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
               <div className="flex space-x-4">
                 <button
                   type="submit"
-                  className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                  disabled={submitting}
+                  className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  Add Money
+                  {submitting ? 'Processing…' : 'Add Money'}
                 </button>
                 <button
                   type="button"
-                  className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
+                  onClick={handleWithdraw}
+                  disabled={submitting}
+                  className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
                 >
                   <Minus className="h-4 w-4 mr-2" />
-                  Withdraw
+                  {submitting ? 'Processing…' : 'Withdraw'}
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div className="space-y-6">
+            {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="bg-gray-50 p-4 rounded-lg">
               <h3 className="text-lg font-medium text-gray-900 mb-4">Branch Settings</h3>
-              
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Operating Hours</label>
@@ -348,11 +404,12 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
 
                 <div className="flex justify-end">
                   <button
-                    onClick={handleSaveSettings}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                    onClick={() => void handleSaveSettings()}
+                    disabled={submitting}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                   >
                     <Settings className="h-4 w-4 mr-2" />
-                    Save Settings
+                    {submitting ? 'Saving…' : 'Save Settings'}
                   </button>
                 </div>
               </div>
@@ -360,117 +417,19 @@ export function BranchWalletModal({ isOpen, onClose, branchData }: BranchWalletM
           </div>
         )}
 
-        {/* Cashback Rules Tab */}
         {activeTab === 'cashback' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Percent className="h-5 w-5 text-purple-600" />
               <h3 className="text-lg font-medium text-gray-900">Cashback Rules</h3>
-              <button
-                onClick={() => setIsAddingRule(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Rule
-              </button>
             </div>
-
-            {isAddingRule ? (
-              <form onSubmit={handleAddRule} className="bg-gray-50 p-4 rounded-lg space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Rule Name</label>
-                  <input
-                    type="text"
-                    value={newRule.name}
-                    onChange={(e) => setNewRule({ ...newRule, name: e.target.value })}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Description</label>
-                  <input
-                    type="text"
-                    value={newRule.description}
-                    onChange={(e) => setNewRule({ ...newRule, description: e.target.value })}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Percentage</label>
-                  <input
-                    type="number"
-                    value={newRule.percentage}
-                    onChange={(e) => setNewRule({ ...newRule, percentage: Number(e.target.value) })}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Condition</label>
-                  <input
-                    type="text"
-                    value={newRule.condition}
-                    onChange={(e) => setNewRule({ ...newRule, condition: e.target.value })}
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div className="flex justify-end space-x-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingRule(false)}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    Add Rule
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="space-y-4">
-                {cashbackRules.map((rule) => (
-                  <div key={rule.id} className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-purple-100 rounded-lg">
-                          <Percent className="h-5 w-5 text-purple-600" />
-                        </div>
-                        <div>
-                          <h4 className="font-medium text-gray-900">{rule.name}</h4>
-                          <p className="text-sm text-gray-500">{rule.description}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-3">
-                        <span className="text-sm font-medium text-purple-600">{rule.percentage}%</span>
-                        <button
-                          type="button"
-                          aria-label={`Configure ${rule.name}`}
-                          title={`Configure ${rule.name}`}
-                          onClick={() => toast(`Opening settings for ${rule.name}…`, 'info')}
-                          className="text-gray-400 hover:text-gray-500"
-                        >
-                          <Settings className="h-5 w-5" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-sm">
-                      <span className="text-gray-500">{rule.condition}</span>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        rule.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                      }`}>
-                        {rule.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="bg-amber-50 border border-amber-200 rounded-md p-4 text-sm text-amber-800">
+              Cashback rules are now managed globally under{' '}
+              <span className="font-medium">Settings → Bonus Settings → Cashback</span>.
+              Configure schedule (weekly/monthly), payout type and minimum loss
+              there; the cashback worker will apply them to every branch's
+              eligible users automatically.
+            </div>
           </div>
         )}
       </div>

@@ -328,12 +328,12 @@ export function OnlineUsers() {
   const handleExportTemplate = () => {
     const template = [
       {
-        name: 'John Doe',
-        email: 'john@example.com',
+        name: 'Member Name',
+        email: 'member@example.com',
         phone: '+1234567890',
         memberType: 'Regular',
-        city: 'New York',
-        address: '123 Main St',
+        city: 'City',
+        address: 'Street address',
         password: 'ChangeMe1!',
       },
     ];
@@ -367,15 +367,18 @@ export function OnlineUsers() {
 
   const handleAddMember = async (memberData: any) => {
     try {
+      const desiredStatus = (memberData.status as string | undefined)?.toLowerCase();
       await usersApi.createUser({
         email: memberData.email || undefined,
         phone: memberData.phone || undefined,
         password: memberData.password,
         role: 'user',
+        status: desiredStatus === 'suspended' ? 'suspended' : 'active',
         metadata: {
           full_name: `${memberData.firstName ?? ''} ${memberData.lastName ?? ''}`.trim(),
           first_name: memberData.firstName ?? null,
           last_name: memberData.lastName ?? null,
+          username: memberData.username ?? null,
           member_type: String(memberData.memberType ?? 'Regular').toLowerCase(),
           city: memberData.city ?? null,
           address: memberData.address ?? null,

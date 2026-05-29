@@ -270,14 +270,9 @@ export function Administrators() {
   const submitRoleAssign = async (permissions: string[]) => {
     if (!selectedUser) return;
     try {
-      // Preserve all other metadata while updating the permissions list.
-      const md = (backendAdmins.find((u) => u.id === selectedUser.id)?.metadata ?? {}) as Record<
-        string,
-        unknown
-      >;
-      await usersApi.updateUser(selectedUser.id, {
-        metadata: { ...md, permissions },
-      });
+      // Server now owns metadata preservation — the dedicated permissions
+      // endpoint merges `permissions` into the existing metadata blob.
+      await usersApi.assignPermissions(selectedUser.id, permissions);
       toast(`Permissions updated (${permissions.length} enabled).`);
       reload();
     } catch (err) {

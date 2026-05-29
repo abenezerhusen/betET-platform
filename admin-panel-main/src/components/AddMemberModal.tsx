@@ -12,9 +12,11 @@ const addMemberSchema = z
   .object({
     firstName: z.string().trim().min(2, 'First name is required'),
     lastName: z.string().trim().min(2, 'Last name is required'),
+    username: z.string().trim().min(2, 'Username is required').max(64),
     email: z.string().trim().email('Valid email is required'),
     phone: z.string().trim().min(8, 'Valid phone is required'),
     memberType: z.enum(['Regular', 'VIP', 'Premium']),
+    status: z.enum(['Active', 'Suspended']),
     city: z.string().trim().min(2, 'City is required'),
     address: z.string().trim().min(3, 'Address is required'),
     password: z
@@ -33,9 +35,11 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
+    username: '',
     email: '',
     phone: '',
     memberType: 'Regular',
+    status: 'Active',
     city: '',
     address: '',
     password: '',
@@ -107,6 +111,18 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-gray-700">Username</label>
+            <input
+              type="text"
+              name="username"
+              value={formData.username}
+              onChange={handleChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              required
+            />
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700">Email</label>
             <input
               type="email"
@@ -130,18 +146,32 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Member Type</label>
-            <select
-              name="memberType"
-              value={formData.memberType}
-              onChange={handleChange}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            >
-              <option value="Regular">Regular</option>
-              <option value="VIP">VIP</option>
-              <option value="Premium">Premium</option>
-            </select>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Member Type</label>
+              <select
+                name="memberType"
+                value={formData.memberType}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="Regular">Regular</option>
+                <option value="VIP">VIP</option>
+                <option value="Premium">Premium</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Status</label>
+              <select
+                name="status"
+                value={formData.status}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="Active">Active</option>
+                <option value="Suspended">Suspended</option>
+              </select>
+            </div>
           </div>
 
           <div>

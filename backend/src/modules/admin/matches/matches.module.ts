@@ -44,6 +44,8 @@ import {
   emitWalletUpdated,
 } from '../../../realtime/socket';
 import { resetUserStreak } from '../streaks/streaks.module';
+import { accrueAffiliateOnBetSettle } from '../../promotions/affiliate-hooks';
+import { applyLossCashback } from '../../promotions/loss-cashback';
 import {
   getAdminScope,
   getIp,
@@ -652,6 +654,32 @@ async function setMatchResult(
             tenantId,
             userId: r.user_id,
             reason: 'loss',
+          });
+        }
+
+        // Section 24 Step 1 — affiliate revenue-share accrual: bumps the
+        // referrer's earnings_total by commission_pct × (stake − payout).
+        // Detached so a stuck affiliate update never blocks bet settlement.
+        void accrueAffiliateOnBetSettle({
+          tenantId,
+          userId: r.user_id,
+          betId: r.bet_id,
+          stake,
+          payout: status === 'won' ? credit : status === 'void' ? credit : 0,
+        });
+
+        // Section 25 — per-ticket "Cashback for Losses" engine. Only
+        // losing bets are evaluated; the cashback module re-loads the
+        // active rule (Rule One vs Rule Two) and decides eligibility
+        // inside its own transaction so it never blocks settlement.
+        if (status === 'lost') {
+          void applyLossCashback({
+            tenantId,
+            betId: r.bet_id,
+            userId: r.user_id,
+            stake,
+            currency: r.currency,
+            walletId: r.wallet_id,
           });
         }
 

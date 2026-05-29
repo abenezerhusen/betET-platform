@@ -123,3 +123,71 @@ export function userActivity(id: string, query: UserActivityQuery = {}) {
 export function assignRole(id: string, role: string) {
   return http.post<AdminUser>(`/api/admin/users/${id}/assign-role`, { role });
 }
+
+/**
+ * Section 23 — Role Settings Modal.
+ *
+ *   PUT /api/admin/users/:id/permissions
+ *   { "permissions": ["dashboard.view", ...] }
+ *
+ * The backend stores the list on `users.metadata.permissions` and the auth
+ * layer reads it back so the next JWT this user receives carries the new
+ * set inline. Other metadata is preserved server-side.
+ */
+export function assignPermissions(id: string, permissions: string[]) {
+  return http.put<{ id: string; permissions: string[]; user: AdminUser }>(
+    `/api/admin/users/${id}/permissions`,
+    { permissions }
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* Section 23 — UserDetailsModal                                             */
+/* ------------------------------------------------------------------------- */
+
+export interface UserDetailsAggregates {
+  total_deposits: string;
+  total_withdrawals: string;
+  total_bets: string;
+  total_won: string;
+  bet_count: string;
+}
+
+export interface UserDetailsBalance {
+  currency: string;
+  balance: string;
+  bonus_balance: string;
+  locked_balance: string;
+}
+
+export interface UserDetailsBet {
+  id: string;
+  source: 'sportsbook' | 'bets';
+  stake: string;
+  potential_payout: string | null;
+  actual_payout: string | null;
+  status: string;
+  placed_at: string;
+}
+
+export interface UserDetailsTransaction {
+  id: string;
+  amount: string;
+  status: string;
+  reference: string | null;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface UserDetailsBundle {
+  user: AdminUser;
+  aggregates: UserDetailsAggregates;
+  balances: UserDetailsBalance[];
+  recent_bets: UserDetailsBet[];
+  recent_deposits: UserDetailsTransaction[];
+  recent_withdrawals: UserDetailsTransaction[];
+}
+
+export function getUserDetails(id: string) {
+  return http.get<UserDetailsBundle>(`/api/admin/users/${id}/details`);
+}

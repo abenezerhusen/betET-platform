@@ -12,6 +12,7 @@ import { shutdownRedis } from './infrastructure/redis';
 import { startAviatorLoop, stopAviatorLoop } from './workers/aviator-loop';
 import { startKenoLoop, stopKenoLoop } from './workers/keno-loop';
 import { startJetxLoop, stopJetxLoop } from './workers/jetx-loop';
+import { startCashbackLoop, stopCashbackLoop } from './workers/cashback-loop';
 
 async function main(): Promise<void> {
   // Preload tenant CORS origins at boot so the first request isn't blocked.
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
   startAviatorLoop();
   startKenoLoop();
   startJetxLoop();
+  startCashbackLoop();
 
   startTenantOriginsRefresh();
 
@@ -45,6 +47,7 @@ async function main(): Promise<void> {
       stopAviatorLoop();
       stopKenoLoop();
       stopJetxLoop();
+      stopCashbackLoop();
       await shutdownSocketServer();
       logger.info('socket.io server closed');
     } catch (err) {

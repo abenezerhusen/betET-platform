@@ -233,12 +233,18 @@ swagger.registerPath({
       'application/json': {
         schema: {
           type: 'object',
-          required: ['password'],
+          required: ['branch_id', 'password'],
           properties: {
             email: { type: 'string', format: 'email' },
             phone: { type: 'string' },
             username: { type: 'string' },
-            branch_id: { type: 'string' },
+            branch_id: {
+              type: 'string',
+              description:
+                'Branch identifier the cashier is pinned to. Required; validated against the user.metadata.branch_* fields.',
+              minLength: 2,
+              maxLength: 128,
+            },
             password: { type: 'string' },
           },
         },
@@ -247,8 +253,9 @@ swagger.registerPath({
   },
   responses: {
     '200': { description: 'Login successful + branch info' },
+    '400': { description: 'Missing or malformed branch_id / credentials' },
     '401': { description: 'Invalid credentials' },
-    '403': { description: 'Account role is not allowed in the cashier panel' },
+    '403': { description: 'Account role is not allowed in the cashier panel, or branch_id does not match' },
   },
 });
 swagger.registerPath({

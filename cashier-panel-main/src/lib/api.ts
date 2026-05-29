@@ -444,6 +444,25 @@ export type CashierTicketStatus =
 
 export interface CashierTicket {
   ticket_id: string;
+  /**
+   * Auto-generated TKT-XXXXXXXX code (always present, derived from
+   * the underlying bet UUID by the database).
+   */
+  ticket_code?: string;
+  /** Printed receipt code (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}); null until sold. */
+  printed_ticket_code?: string | null;
+  /**
+   * Sportsbook user-panel coupon code (SBK-XXXXXXXX). Populated only
+   * when the ticket originated as a sportsbook slip; null for casino
+   * and internal-game tickets.
+   */
+  coupon_code?: string | null;
+  /**
+   * Which underlying table the ticket lives in. Useful for the UI to
+   * surface "Sports slip" vs "Game ticket" badges, but optional so
+   * older deployments without this field keep working.
+   */
+  source?: "bets" | "sportsbook_bets";
   bet_id: string;
   user_id: string;
   user_phone: string | null;

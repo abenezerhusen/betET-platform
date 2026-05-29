@@ -13,9 +13,16 @@
  *   GET    /                              list today's tickets for this cashier
  *
  * Ticket identifier:
- *   The frontend accepts either the human-readable `ticket_code`
- *   (TKT-YYMMDD-XXXXXXXX, surfaced on the printed receipt) or the raw
- *   UUID. Both are resolved against the `bets` table.
+ *   The frontend accepts ANY of the following codes, in any case:
+ *     - `printed_ticket_code` (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}, on receipts)
+ *     - `ticket_code`          (TKT-XXXXXXXX, auto-generated)
+ *     - `coupon_code`          (SBK-XXXXXXXX, shown to user-panel bettors
+ *                               for sportsbook slips)
+ *     - the raw bet UUID
+ *   The lookup spans BOTH the internal-game `bets` table and the
+ *   sportsbook `sportsbook_bets` table so a user can place a multi-leg
+ *   slip on the user panel ("Launch Fixtures" from the cashier kiosk)
+ *   and the cashier can sell / pay / cancel it by pasting the code.
  *
  * Status mapping (DB → spec):
  *   pending / accepted             → "pending"
@@ -53,11 +60,21 @@ const router = Router();
 /* Shared types and helpers                                                */
 /* ----------------------------------------------------------------------- */
 
+/**
+ * Tagged source so downstream UPDATE statements know which table to
+ * touch. `bets` holds internal-game/casino tickets, `sportsbook_bets`
+ * holds user-panel + cashier-kiosk multi-leg sports slips.
+ */
+type TicketSource = 'bets' | 'sportsbook_bets';
+
 interface BetRow {
+  source: TicketSource;
   id: string;
   tenant_id: string;
   user_id: string;
   ticket_code: string;
+  printed_ticket_code: string | null;
+  coupon_code: string | null;
   stake: string;
   potential_win: string;
   payout: string | null;
@@ -79,8 +96,11 @@ interface BetRow {
   user_email: string | null;
 }
 
-const BET_COLS = `
-  b.id, b.tenant_id, b.user_id, b.ticket_code,
+/** Column list for the internal `bets` table (casino, internal games). */
+const BET_COLS_INTERNAL = `
+  'bets'::text AS source,
+  b.id, b.tenant_id, b.user_id, b.ticket_code, b.printed_ticket_code,
+  NULL::text             AS coupon_code,
   b.stake::text          AS stake,
   b.potential_win::text  AS potential_win,
   b.payout::text         AS payout,
@@ -94,9 +114,43 @@ const BET_COLS = `
 `;
 
 /**
- * Resolve a ticket by ticket_code OR by raw UUID. `bets` carries both
- * the auto-generated `ticket_code` and the canonical `id`; cashiers
- * may scan/type either, so we try both.
+ * Column list for `sportsbook_bets` (multi-leg sports slips). Columns
+ * are aliased into the same shape as `bets` so downstream code stays
+ * uniform:
+ *   - `potential_payout`  → `potential_win`
+ *   - `actual_payout`     → `payout`
+ *   - no `result` column  → NULL
+ *   - additionally exposes `coupon_code` (SBK-XXXXXXXX) since that's
+ *     the identifier the user-panel UI surfaces to bettors.
+ */
+const BET_COLS_SPORTSBOOK = `
+  'sportsbook_bets'::text AS source,
+  b.id, b.tenant_id, b.user_id, b.ticket_code, b.printed_ticket_code,
+  b.coupon_code,
+  b.stake::text             AS stake,
+  b.potential_payout::text  AS potential_win,
+  b.actual_payout::text     AS payout,
+  b.cashback_amount::text   AS cashback_amount,
+  b.currency, b.status,
+  b.placed_at, b.settled_at,
+  b.sold_at, b.sold_by_cashier_id, b.sold_branch_id,
+  b.paid_at, b.paid_by_cashier_id, b.paid_branch_id,
+  b.cancelled_at, b.metadata, NULL::jsonb AS result,
+  u.phone AS user_phone, u.email AS user_email
+`;
+
+/**
+ * Try to match an identifier against any of the human-readable codes
+ * we surface to cashiers:
+ *   - bare UUID (canonical bet id)
+ *   - printed_ticket_code (TKT-{BRANCH}-{YYYYMMDD}-{SEQ})
+ *   - ticket_code         (TKT-XXXXXXXX)
+ *   - coupon_code         (SBK-XXXXXXXX, sportsbook only)
+ *
+ * Lookups are tried in both the `bets` and `sportsbook_bets` tables —
+ * the user-panel "Launch Fixtures" path inserts into the latter and
+ * the cashier MUST be able to find those tickets to sell / pay / void
+ * them.
  */
 async function loadTicket(
   client: PoolClient,
@@ -108,9 +162,10 @@ async function loadTicket(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       trimmed
     );
+
   if (isUuid) {
     const r = await client.query<BetRow>(
-      `SELECT ${BET_COLS}
+      `SELECT ${BET_COLS_INTERNAL}
          FROM bets b
          LEFT JOIN users u ON u.id = b.user_id
         WHERE b.tenant_id = $1 AND b.id = $2
@@ -118,16 +173,113 @@ async function loadTicket(
       [tenantId, trimmed]
     );
     if (r.rows[0]) return r.rows[0];
+
+    const r2 = await client.query<BetRow>(
+      `SELECT ${BET_COLS_SPORTSBOOK}
+         FROM sportsbook_bets b
+         LEFT JOIN users u ON u.id = b.user_id
+        WHERE b.tenant_id = $1 AND b.id = $2
+        LIMIT 1`,
+      [tenantId, trimmed]
+    );
+    return r2.rows[0] ?? null;
   }
-  const r2 = await client.query<BetRow>(
-    `SELECT ${BET_COLS}
+
+  // String identifier — normalize case once and try every code column
+  // on both tables. printed_ticket_code (the customer receipt code) is
+  // preferred when it matches; ticket_code / coupon_code are the
+  // fallbacks for tickets that haven't been "sold" through a cashier
+  // yet (so no printed code exists).
+  const upper = trimmed.toUpperCase();
+
+  const internal = await client.query<BetRow>(
+    `SELECT ${BET_COLS_INTERNAL}
        FROM bets b
        LEFT JOIN users u ON u.id = b.user_id
-      WHERE b.tenant_id = $1 AND b.ticket_code = $2
+      WHERE b.tenant_id = $1
+        AND (
+          b.printed_ticket_code = $2
+          OR b.ticket_code = $2
+        )
       LIMIT 1`,
-    [tenantId, trimmed.toUpperCase()]
+    [tenantId, upper]
   );
-  return r2.rows[0] ?? null;
+  if (internal.rows[0]) return internal.rows[0];
+
+  const sportsbook = await client.query<BetRow>(
+    `SELECT ${BET_COLS_SPORTSBOOK}
+       FROM sportsbook_bets b
+       LEFT JOIN users u ON u.id = b.user_id
+      WHERE b.tenant_id = $1
+        AND (
+          b.printed_ticket_code = $2
+          OR b.ticket_code = $2
+          OR b.coupon_code = $2
+        )
+      LIMIT 1`,
+    [tenantId, upper]
+  );
+  return sportsbook.rows[0] ?? null;
+}
+
+/**
+ * Build the spec-format printed ticket code
+ * (`TKT-{BRANCH}-{YYYYMMDD}-{SEQ}`) for a cashier sale.
+ *
+ *   - BRANCH defaults to `users.metadata.branch_id` (the human label
+ *     like "PC001"). If absent we fall back to the first 6 chars of the
+ *     branch UUID, or the literal "OFFLINE" if no branch is known.
+ *   - YYYYMMDD is the sell date in UTC (matches the dedupe key the
+ *     dashboard uses for "today's tickets").
+ *   - SEQ is the count of tickets already sold by this branch on that
+ *     UTC day plus one, zero-padded to four characters.
+ */
+async function generatePrintedTicketCode(
+  client: PoolClient,
+  params: {
+    tenantId: string;
+    branchId: string | null;
+    branchLabel: string | null;
+    soldAt: Date;
+  }
+): Promise<string> {
+  const datePart = `${params.soldAt.getUTCFullYear()}${String(
+    params.soldAt.getUTCMonth() + 1
+  ).padStart(2, '0')}${String(params.soldAt.getUTCDate()).padStart(2, '0')}`;
+
+  const branchCode = (
+    params.branchLabel?.trim() ||
+    params.branchId?.slice(0, 6).toUpperCase() ||
+    'OFFLINE'
+  )
+    .replace(/[^A-Z0-9]/gi, '')
+    .toUpperCase()
+    .slice(0, 12) || 'OFFLINE';
+
+  // Section 24 Step 10 — the daily sequence is shared across BOTH
+  // ticket sources (internal-game `bets` and sportsbook `sportsbook_bets`)
+  // because a single branch sells from one queue regardless of stack.
+  const countQ = await client.query<{ c: string }>(
+    `SELECT (
+        SELECT COUNT(*) FROM bets
+         WHERE tenant_id = $1
+           AND printed_ticket_code IS NOT NULL
+           AND ($2::uuid IS NULL OR sold_branch_id = $2::uuid)
+           AND ($2::uuid IS NOT NULL OR sold_branch_id IS NULL)
+           AND sold_at::date = $3::date
+      ) + (
+        SELECT COUNT(*) FROM sportsbook_bets
+         WHERE tenant_id = $1
+           AND printed_ticket_code IS NOT NULL
+           AND ($2::uuid IS NULL OR sold_branch_id = $2::uuid)
+           AND ($2::uuid IS NOT NULL OR sold_branch_id IS NULL)
+           AND sold_at::date = $3::date
+      ) AS c`,
+    [params.tenantId, params.branchId, params.soldAt.toISOString().slice(0, 10)]
+  );
+  const next = Number(countQ.rows[0]?.c ?? 0) + 1;
+  const seq = String(next).padStart(4, '0');
+  return `TKT-${branchCode}-${datePart}-${seq}`;
 }
 
 type PayoutStatus =
@@ -254,7 +406,14 @@ function presentTicket(bet: BetRow, evaluation: PayoutEvaluation) {
   const meta = bet.metadata ?? {};
   const result = bet.result ?? {};
   return {
-    ticket_id: bet.ticket_code,
+    // The printed receipt code (Section 24) takes precedence when set;
+    // online tickets that were never sold via a cashier still surface
+    // the auto-generated ticket_code so receipts and UI keep working.
+    ticket_id: bet.printed_ticket_code ?? bet.ticket_code,
+    ticket_code: bet.ticket_code,
+    printed_ticket_code: bet.printed_ticket_code,
+    coupon_code: bet.coupon_code,
+    source: bet.source,
     bet_id: bet.id,
     user_id: bet.user_id,
     user_phone: bet.user_phone,
@@ -332,7 +491,9 @@ router.get(
           );
           const evaluation = evaluatePayout(bet, expiryDays);
           return {
-            ticket_id: bet.ticket_code,
+            ticket_id: bet.printed_ticket_code ?? bet.ticket_code,
+            ticket_code: bet.ticket_code,
+            printed_ticket_code: bet.printed_ticket_code,
             bet_id: bet.id,
             status: evaluation.status,
             payout_amount: evaluation.payout_amount,
@@ -420,21 +581,62 @@ router.post(
             `SELECT metadata FROM users WHERE id = $1`,
             [scope.cashierId]
           );
-          const branchId =
-            (meta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-            null;
+          const branchMeta = meta.rows[0]?.metadata ?? {};
+          const branchIdRaw = (branchMeta?.['branch_id'] as string | undefined) ?? null;
+          // Validate UUID — the metadata.branch_id field can hold either
+          // a UUID FK (newer admin flow) or a human label like "PC001"
+          // (legacy seed data); we only persist the UUID to
+          // sold_branch_id and keep the label for the printed code.
+          const branchUuid =
+            branchIdRaw &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+              branchIdRaw
+            )
+              ? branchIdRaw
+              : null;
+          const branchLabel =
+            (branchMeta?.['branch_label'] as string | undefined) ??
+            (branchMeta?.['branch_code'] as string | undefined) ??
+            (branchUuid ? null : branchIdRaw);
 
-          const upd = await client.query<BetRow>(
-            `UPDATE bets b
-                SET sold_at = now(),
-                    sold_by_cashier_id = $2,
-                    sold_branch_id = $3
-              FROM users u
-             WHERE u.id = b.user_id
-               AND b.id = $1
-             RETURNING ${BET_COLS}`,
-            [bet.id, scope.cashierId, branchId]
-          );
+          // Section 24 Step 10 — generate the printed receipt code
+          // (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}) and stamp it onto the bet so
+          // future lookups (and reprints) resolve to the same string.
+          const now = new Date();
+          const printedCode = await generatePrintedTicketCode(client, {
+            tenantId: scope.tenantId,
+            branchId: branchUuid,
+            branchLabel,
+            soldAt: now,
+          });
+
+          const upd =
+            bet.source === 'sportsbook_bets'
+              ? await client.query<BetRow>(
+                  `UPDATE sportsbook_bets b
+                      SET sold_at = $4,
+                          sold_by_cashier_id = $2,
+                          sold_branch_id = $3,
+                          printed_ticket_code = $5
+                    FROM users u
+                   WHERE u.id = b.user_id
+                     AND b.id = $1
+                   RETURNING ${BET_COLS_SPORTSBOOK}`,
+                  [bet.id, scope.cashierId, branchUuid, now, printedCode]
+                )
+              : await client.query<BetRow>(
+                  `UPDATE bets b
+                      SET sold_at = $4,
+                          sold_by_cashier_id = $2,
+                          sold_branch_id = $3,
+                          printed_ticket_code = $5
+                    FROM users u
+                   WHERE u.id = b.user_id
+                     AND b.id = $1
+                   RETURNING ${BET_COLS_INTERNAL}`,
+                  [bet.id, scope.cashierId, branchUuid, now, printedCode]
+                );
+          const branchId = branchUuid;
           const expiryDays = await getTicketExpiryDays(client, scope.tenantId);
 
           // Log a cashier_transactions row so the dashboard counts it.
@@ -523,16 +725,31 @@ router.post(
         async (client) => {
           await client.query('BEGIN');
           try {
-            // Re-load FOR UPDATE so concurrent payouts don't double-pay.
-            const lockRes = await client.query<BetRow>(
-              `SELECT ${BET_COLS}
-                 FROM bets b
-                 LEFT JOIN users u ON u.id = b.user_id
-                WHERE b.tenant_id = $1
-                  AND (b.id::text = $2 OR b.ticket_code = $3)
-                FOR UPDATE OF b`,
-              [scope.tenantId, ticketId, ticketId.toUpperCase()]
-            );
+            // Resolve the ticket first (across both tables) so we can
+            // route the FOR UPDATE lock to the correct one. The
+            // identifier accepts UUIDs, printed codes, ticket_code and
+            // sportsbook coupon_code (SBK-...).
+            const preload = await loadTicket(client, scope.tenantId, ticketId);
+            if (!preload) throw new NotFoundError('Ticket not found');
+
+            const lockRes =
+              preload.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `SELECT ${BET_COLS_SPORTSBOOK}
+                       FROM sportsbook_bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  )
+                : await client.query<BetRow>(
+                    `SELECT ${BET_COLS_INTERNAL}
+                       FROM bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  );
             const bet = lockRes.rows[0];
             if (!bet) throw new NotFoundError('Ticket not found');
 
@@ -575,19 +792,37 @@ router.post(
               null;
 
             // Mark the ticket paid (idempotent guard at the DB level).
-            const upd = await client.query<BetRow>(
-              `UPDATE bets b
-                  SET paid_at = now(),
-                      paid_by_cashier_id = $2,
-                      paid_branch_id = $3,
-                      payout = COALESCE(payout, $4::numeric)
-                FROM users u
-                WHERE u.id = b.user_id
-                  AND b.id = $1
-                  AND b.paid_at IS NULL
-                RETURNING ${BET_COLS}`,
-              [bet.id, scope.cashierId, branchId, evaluation.payout_amount]
-            );
+            // sportsbook_bets stores the paid amount in `actual_payout`
+            // rather than `payout`, so the UPDATE target depends on
+            // which table the ticket came from.
+            const upd =
+              bet.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `UPDATE sportsbook_bets b
+                        SET paid_at = now(),
+                            paid_by_cashier_id = $2,
+                            paid_branch_id = $3,
+                            actual_payout = COALESCE(actual_payout, $4::numeric)
+                      FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                        AND b.paid_at IS NULL
+                      RETURNING ${BET_COLS_SPORTSBOOK}`,
+                    [bet.id, scope.cashierId, branchId, evaluation.payout_amount]
+                  )
+                : await client.query<BetRow>(
+                    `UPDATE bets b
+                        SET paid_at = now(),
+                            paid_by_cashier_id = $2,
+                            paid_branch_id = $3,
+                            payout = COALESCE(payout, $4::numeric)
+                      FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                        AND b.paid_at IS NULL
+                      RETURNING ${BET_COLS_INTERNAL}`,
+                    [bet.id, scope.cashierId, branchId, evaluation.payout_amount]
+                  );
             if (upd.rowCount === 0) {
               throw new ConflictError(
                 'Ticket was paid by another session — refresh and retry.',
@@ -680,15 +915,29 @@ router.post(
         async (client) => {
           await client.query('BEGIN');
           try {
-            const lockRes = await client.query<BetRow>(
-              `SELECT ${BET_COLS}
-                 FROM bets b
-                 LEFT JOIN users u ON u.id = b.user_id
-                WHERE b.tenant_id = $1
-                  AND (b.id::text = $2 OR b.ticket_code = $3)
-                FOR UPDATE OF b`,
-              [scope.tenantId, ticketId, ticketId.toUpperCase()]
-            );
+            // Resolve across both ticket sources, then lock the row in
+            // its origin table.
+            const preload = await loadTicket(client, scope.tenantId, ticketId);
+            if (!preload) throw new NotFoundError('Ticket not found');
+
+            const lockRes =
+              preload.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `SELECT ${BET_COLS_SPORTSBOOK}
+                       FROM sportsbook_bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  )
+                : await client.query<BetRow>(
+                    `SELECT ${BET_COLS_INTERNAL}
+                       FROM bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  );
             const bet = lockRes.rows[0];
             if (!bet) throw new NotFoundError('Ticket not found');
             if (bet.paid_at) {
@@ -738,18 +987,32 @@ router.post(
               cfg.cashier_max_daily_cancel_count > 0 ||
               cfg.cashier_max_daily_cancel_volume > 0
             ) {
+              // Cancel quotas span both ticket sources because they
+              // apply to the cashier, not to the table the ticket
+              // happens to live in.
               const todayStats = await client.query<{
                 cancelled_count: string;
                 cancelled_volume: string;
               }>(
-                `SELECT
-                    COUNT(*)::text                                       AS cancelled_count,
-                    COALESCE(SUM(stake), 0)::text                         AS cancelled_volume
-                   FROM bets
-                  WHERE tenant_id = $1
-                    AND cancelled_by_cashier_id = $2
-                    AND cancelled_at >= date_trunc('day', now())
-                    AND status = 'cancelled'`,
+                // `bets` uses status='cancelled', sportsbook_bets uses
+                // status='void' for the same lifecycle event, so we
+                // match by the cashier+timestamp instead of the
+                // status string to keep counts table-agnostic.
+                `WITH all_cancels AS (
+                   SELECT stake FROM bets
+                    WHERE tenant_id = $1
+                      AND cancelled_by_cashier_id = $2
+                      AND cancelled_at >= date_trunc('day', now())
+                   UNION ALL
+                   SELECT stake FROM sportsbook_bets
+                    WHERE tenant_id = $1
+                      AND cancelled_by_cashier_id = $2
+                      AND cancelled_at >= date_trunc('day', now())
+                 )
+                 SELECT
+                    COUNT(*)::text                  AS cancelled_count,
+                    COALESCE(SUM(stake), 0)::text   AS cancelled_volume
+                   FROM all_cancels`,
                 [scope.tenantId, scope.cashierId]
               );
               const stats = todayStats.rows[0];
@@ -785,18 +1048,39 @@ router.post(
               (meta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
               null;
 
-            const upd = await client.query<BetRow>(
-              `UPDATE bets b
-                  SET status = 'cancelled',
-                      cancelled_at = now(),
-                      cancelled_by_cashier_id = $2,
-                      settled_at = now()
-                FROM users u
-                WHERE u.id = b.user_id
-                  AND b.id = $1
-                RETURNING ${BET_COLS}`,
-              [bet.id, scope.cashierId]
-            );
+            // Status string differs per table:
+            //   `bets`            allows 'cancelled' (internal-game flow)
+            //   `sportsbook_bets` only allows 'void'  (sportsbook flow)
+            // Both are treated identically by evaluatePayout's
+            // voidStates set, so the cashier-side semantics stay
+            // consistent — refund the stake, mark settled, lock out
+            // further mutations.
+            const upd =
+              bet.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `UPDATE sportsbook_bets b
+                        SET status = 'void',
+                            cancelled_at = now(),
+                            cancelled_by_cashier_id = $2,
+                            settled_at = now()
+                      FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                      RETURNING ${BET_COLS_SPORTSBOOK}`,
+                    [bet.id, scope.cashierId]
+                  )
+                : await client.query<BetRow>(
+                    `UPDATE bets b
+                        SET status = 'cancelled',
+                            cancelled_at = now(),
+                            cancelled_by_cashier_id = $2,
+                            settled_at = now()
+                      FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                      RETURNING ${BET_COLS_INTERNAL}`,
+                    [bet.id, scope.cashierId]
+                  );
 
             // Refund the stake to the user's wallet (best-effort: if no
             // wallet exists we still cancel; admin can adjust manually).
@@ -920,12 +1204,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const out = await withTenantClient(
       { tenantId: scope.tenantId },
       async (client) => {
+        // Build a shared filter expression that works against `b.*` for
+        // either source table. Param order matters because pg binds by
+        // position — we use the exact same parameter array for both
+        // halves of the UNION below.
         const filters: string[] = ['b.tenant_id = $1'];
         const values: unknown[] = [scope.tenantId];
         let i = 2;
 
         if (q.mine) {
-          // Either sold or paid by this cashier appears in their "today" list.
           filters.push(
             `(b.sold_by_cashier_id = $${i} OR b.paid_by_cashier_id = $${i})`
           );
@@ -947,16 +1234,28 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         }
         const where = `WHERE ${filters.join(' AND ')}`;
 
+        // Single UNION ALL across both ticket sources so the cashier
+        // sees a unified ledger (internal-game tickets + sportsbook
+        // slips). The ordering and pagination apply to the merged set.
+        const unionSql = `
+          (SELECT ${BET_COLS_INTERNAL}
+             FROM bets b
+             LEFT JOIN users u ON u.id = b.user_id
+             ${where})
+          UNION ALL
+          (SELECT ${BET_COLS_SPORTSBOOK}
+             FROM sportsbook_bets b
+             LEFT JOIN users u ON u.id = b.user_id
+             ${where})
+        `;
+
         const total = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count FROM bets b ${where}`,
+          `SELECT COUNT(*)::text AS count FROM (${unionSql}) t`,
           values
         );
         const rows = await client.query<BetRow>(
-          `SELECT ${BET_COLS}
-             FROM bets b
-             LEFT JOIN users u ON u.id = b.user_id
-             ${where}
-             ORDER BY COALESCE(b.sold_at, b.placed_at) DESC
+          `SELECT * FROM (${unionSql}) t
+             ORDER BY COALESCE(t.sold_at, t.placed_at) DESC
              LIMIT $${i++} OFFSET $${i++}`,
           [...values, q.limit, (q.page - 1) * q.limit]
         );

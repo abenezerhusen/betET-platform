@@ -104,11 +104,11 @@ async function settleRound(tenantId: string, roundId: string, allNumbers: number
       status: string;
     }>(
       `SELECT b.id, b.user_id, u.phone AS user_phone, b.amount::text, b.selected_numbers, b.status
-         FROM game_bets
+         FROM game_bets b
          LEFT JOIN users u ON u.id = b.user_id
         WHERE b.tenant_id = $1 AND b.round_id = $2 AND b.game_id = 'fast-keno'
           AND b.status = 'active'
-        FOR UPDATE`,
+        FOR UPDATE OF b`,
       [tenantId, roundId]
     );
     for (const bet of betsQ.rows) {
