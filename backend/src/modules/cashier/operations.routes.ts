@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { depositSchema, withdrawalSchema } from './cashier.dto';
 import { processDeposit, processWithdrawal } from './operations.service';
+import { requirePermission } from '../../middleware/require-permission';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -63,7 +64,7 @@ swagger.registerPath({
   },
 });
 
-router.post('/deposit', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/deposit', requirePermission('deposit'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const body = depositSchema.parse(req.body);
     const out = await processDeposit(req, body);
@@ -73,7 +74,7 @@ router.post('/deposit', async (req: Request, res: Response, next: NextFunction) 
   }
 });
 
-router.post('/withdrawal', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/withdrawal', requirePermission('withdraw'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const body = withdrawalSchema.parse(req.body);
     const out = await processWithdrawal(req, body);

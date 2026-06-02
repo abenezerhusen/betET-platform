@@ -1,0 +1,26 @@
+
+> vite-react-typescript-starter@0.0.0 dev
+> vite
+
+
+  VITE v5.4.8  ready in 2143 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+Browserslist: caniuse-lite is outdated. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+2:39:19 PM [vite] hmr update /src/index.css, /src/pages/bets/OfflineBets.tsx, /src/pages/bets/OnlineBets.tsx, /src/pages/bets/BetForMe.tsx, /src/pages/reports/OnlineCashReport.tsx, /src/pages/reports/PayableReport.tsx, /src/pages/reports/OfflineCashReport.tsx
+2:39:31 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:39:52 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:40:08 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:40:30 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:40:44 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:40:51 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:41:06 PM [vite] hmr update /src/pages/bets/OfflineBets.tsx, /src/index.css
+2:41:24 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+2:41:53 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+2:42:02 PM [vite] hmr update /src/pages/Dashboard.tsx, /src/index.css
+3:11:10 PM [vite] hmr update /src/pages/users/Sales.tsx, /src/index.css
+3:11:22 PM [vite] hmr update /src/pages/users/Sales.tsx, /src/index.css

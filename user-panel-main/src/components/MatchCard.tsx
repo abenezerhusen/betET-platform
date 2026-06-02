@@ -24,6 +24,28 @@ interface MatchCardProps {
     yesScore: number;
     noScore: number;
   };
+  /**
+   * Optional sportsbook selection IDs for the 1x2 market. When the
+   * caller provides them, every pick added from this card carries a
+   * real `selection_id` so the Betslip's offline-reserve flow can
+   * persist a real pending sportsbook_bet (Section 16 Flow B) that
+   * the cashier panel can subsequently Lookup / Sell / Print.
+   *
+   * 1X / 12 / X2 / Yes / No are not exposed by the list endpoint, so
+   * picks on those secondary markets keep falling back to the legacy
+   * client-only flow. Users who want a multi-leg double-chance slip
+   * should drill into the match detail page where every market and
+   * selection has real IDs.
+   */
+  selectionIds?: {
+    home?: string | null;
+    draw?: string | null;
+    away?: string | null;
+  };
+  eventId?: string;
+  marketId?: string | null;
+  /** ISO kickoff — odds are disabled once this time has passed. */
+  startsAt?: string;
   isLive?: boolean;
   score?: { home: number; away: number };
   minute?: string;
@@ -39,11 +61,27 @@ export function MatchCard({
   time,
   sideBets,
   odds,
+  selectionIds,
+  eventId,
+  marketId,
+  startsAt,
   isLive,
   score,
   minute,
   onSideBetsClick,
 }: MatchCardProps) {
+  // Defensive coercion — backend NUMERIC columns occasionally arrive as
+  // strings (pg's default), and some mock fixtures use `null` for
+  // missing markets. Always render via this helper so a stray
+  // non-number never crashes the page with `.toFixed is not a function`.
+  const fmt = (v: unknown, fallback = "—"): string => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n.toFixed(2) : fallback;
+  };
+  const num = (v: unknown, fallback = 0): number => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
   const [selectedOdd, setSelectedOdd] = useState<string | null>(null);
   const [liveScore, setLiveScore] = useState(score || { home: 0, away: 0 });
   const [liveMinute, setLiveMinute] = useState(minute || "");
@@ -54,6 +92,11 @@ export function MatchCard({
 
   const matchId = `${homeTeam}-${awayTeam}-${date}-${time}`;
   const isFavorite = isFavoriteMatch(matchId);
+  const kickoffMs = startsAt ? new Date(startsAt).getTime() : NaN;
+  const isStarted =
+    Boolean(isLive) ||
+    (Number.isFinite(kickoffMs) && kickoffMs <= Date.now());
+  const oddsDisabledClass = isStarted ? "opacity-40 pointer-events-none" : "";
 
   // Deterministic live display progression (no client RNG in production).
   useEffect(() => {
@@ -78,9 +121,22 @@ export function MatchCard({
   }, [isLive, liveMinute]);
 
   const handleOddClick = (oddType: string, oddValue: number, market: string) => {
+    if (isStarted) return;
+
     const betId = `${homeTeam}-${awayTeam}-${oddType}`;
 
-    // Create bet object
+    // Map the visible 1x2 pick onto its backend selection_id when the
+    // parent provided one. Secondary markets (1X / 12 / X2 / Yes / No)
+    // aren't in the list payload so they fall back to undefined and the
+    // slip stays in client-only fallback for those picks until the user
+    // drills into the match detail page.
+    let selectionId: string | undefined;
+    if (selectionIds) {
+      if (oddType === "1" && selectionIds.home) selectionId = selectionIds.home;
+      else if (oddType === "X" && selectionIds.draw) selectionId = selectionIds.draw;
+      else if (oddType === "2" && selectionIds.away) selectionId = selectionIds.away;
+    }
+
     const bet = {
       id: betId,
       match: `${homeTeam} V ${awayTeam}`,
@@ -92,12 +148,14 @@ export function MatchCard({
       odds: oddValue,
       time,
       date,
+      selectionId,
+      eventId,
+      marketId: marketId ?? undefined,
+      startsAt,
     };
 
-    // Add or remove bet
     addBet(bet);
 
-    // Toggle selected state
     setSelectedOdd(selectedOdd === oddType ? null : oddType);
   };
 
@@ -133,6 +191,9 @@ export function MatchCard({
               <Activity className="w-3 h-3" />
               LIVE
             </span>
+          )}
+          {isStarted && !isLive && (
+            <span className="text-amber-400 font-medium">Started</span>
           )}
         </div>
         <button
@@ -205,130 +266,130 @@ export function MatchCard({
           {/* Odds grid below lg. 4 cols on the tightest phones (Z Fold 5
               folded @344, Galaxy S8+ @360, iPhone SE @375 …) to keep each
               button legible; 8 cols once there's room (≥sm / 640px). */}
-          <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 lg:hidden">
+          <div className={`grid grid-cols-4 sm:grid-cols-8 gap-1 lg:hidden ${oddsDisabledClass}`}>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("1", odds.home, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("1", num(odds.home), "Match Result"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1</div>
-              <div className="font-semibold">{odds.home.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.home)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("X", odds.draw, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("X", num(odds.draw), "Match Result"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X</div>
-              <div className="font-semibold">{odds.draw.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.draw)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("2", odds.away, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("2", num(odds.away), "Match Result"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">2</div>
-              <div className="font-semibold">{odds.away.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.away)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("1X", odds.home1x, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("1X", num(odds.home1x), "Double Chance"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1X</div>
-              <div className="font-semibold">{odds.home1x.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.home1x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("12", odds.draw12, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">12</div>
-              <div className="font-semibold">{odds.draw12.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.draw12)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("X2", odds.away2x, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("X2", num(odds.away2x), "Double Chance"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X2</div>
-              <div className="font-semibold">{odds.away2x.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.away2x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", odds.yesScore, "Both Teams to Score"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", num(odds.yesScore), "Both Teams to Score"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-Yes`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">Yes</div>
-              <div className="font-semibold">{odds.yesScore.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.yesScore)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("No", odds.noScore, "Both Teams to Score"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("No", num(odds.noScore), "Both Teams to Score"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-No`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">No</div>
-              <div className="font-semibold">{odds.noScore.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.noScore)}</div>
             </button>
           </div>
 
           {/* Desktop Match Result Odds */}
-          <div className="hidden lg:flex items-center gap-1">
+          <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("1", odds.home, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("1", num(odds.home), "Match Result"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1</div>
-              <div className="font-semibold">{odds.home.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.home)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("X", odds.draw, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("X", num(odds.draw), "Match Result"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X</div>
-              <div className="font-semibold">{odds.draw.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.draw)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("2", odds.away, "Match Result"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("2", num(odds.away), "Match Result"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">2</div>
-              <div className="font-semibold">{odds.away.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.away)}</div>
             </button>
           </div>
 
           {/* Desktop Double Chance Odds */}
-          <div className="hidden lg:flex items-center gap-1">
+          <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("1X", odds.home1x, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("1X", num(odds.home1x), "Double Chance"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1X</div>
-              <div className="font-semibold">{odds.home1x.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.home1x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("12", odds.draw12, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">12</div>
-              <div className="font-semibold">{odds.draw12.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.draw12)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("X2", odds.away2x, "Double Chance"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("X2", num(odds.away2x), "Double Chance"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X2</div>
-              <div className="font-semibold">{odds.away2x.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.away2x)}</div>
             </button>
           </div>
 
           {/* Desktop Both Score Odds */}
-          <div className="hidden lg:flex items-center gap-1">
+          <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", odds.yesScore, "Both Teams to Score"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", num(odds.yesScore), "Both Teams to Score"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-Yes`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">Yes</div>
-              <div className="font-semibold">{odds.yesScore.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.yesScore)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("No", odds.noScore, "Both Teams to Score"); }}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("No", num(odds.noScore), "Both Teams to Score"); }}
               className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-No`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">No</div>
-              <div className="font-semibold">{odds.noScore.toFixed(2)}</div>
+              <div className="font-semibold">{fmt(odds.noScore)}</div>
             </button>
           </div>
 

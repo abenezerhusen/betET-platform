@@ -42,19 +42,34 @@ function toMatchDate(dateStr: string, timeStr: string): Date {
   return candidate;
 }
 
-function filterMatchesByTime<T extends { date: string; time: string }>(
+function isMatchBettable(startsAt?: string, date?: string, time?: string): boolean {
+  if (startsAt) {
+    const kickoff = new Date(startsAt).getTime();
+    return Number.isFinite(kickoff) && kickoff > Date.now();
+  }
+  if (date && time) {
+    return toMatchDate(date, time).getTime() > Date.now();
+  }
+  return true;
+}
+
+function filterMatchesByTime<T extends { date: string; time: string; startsAt?: string }>(
   list: T[],
   filter: TimeFilter,
   calendarDate: string,
 ): T[] {
-  if (filter === "all") return list;
   const now = new Date();
+  // Never offer fixtures for betting once kickoff has passed.
+  const bettable = list.filter((m) => isMatchBettable(m.startsAt, m.date, m.time));
+  if (filter === "all") return bettable;
   const HOURS: Record<string, number> = { "1h": 1, "2h": 2, "3h": 3, "6h": 6 };
 
   if (HOURS[filter] !== undefined) {
     const end = now.getTime() + HOURS[filter] * 60 * 60 * 1000;
-    return list.filter((m) => {
-      const t = toMatchDate(m.date, m.time).getTime();
+    return bettable.filter((m) => {
+      const t = m.startsAt
+        ? new Date(m.startsAt).getTime()
+        : toMatchDate(m.date, m.time).getTime();
       return t >= now.getTime() && t <= end;
     });
   }
@@ -63,21 +78,25 @@ function filterMatchesByTime<T extends { date: string; time: string }>(
     start.setHours(0, 0, 0, 0);
     const end = new Date(now);
     end.setHours(23, 59, 59, 999);
-    return list.filter((m) => {
-      const t = toMatchDate(m.date, m.time).getTime();
-      return t >= start.getTime() && t <= end.getTime();
+    return bettable.filter((m) => {
+      const t = m.startsAt
+        ? new Date(m.startsAt).getTime()
+        : toMatchDate(m.date, m.time).getTime();
+      return t >= now.getTime() && t <= end.getTime();
     });
   }
   if (filter === "calendar" && calendarDate) {
     const [y, mo, d] = calendarDate.split("-").map((v) => parseInt(v, 10));
     const start = new Date(y, (mo || 1) - 1, d || 1, 0, 0, 0, 0);
     const end = new Date(y, (mo || 1) - 1, d || 1, 23, 59, 59, 999);
-    return list.filter((m) => {
-      const t = toMatchDate(m.date, m.time).getTime();
+    return bettable.filter((m) => {
+      const t = m.startsAt
+        ? new Date(m.startsAt).getTime()
+        : toMatchDate(m.date, m.time).getTime();
       return t >= start.getTime() && t <= end.getTime();
     });
   }
-  return list;
+  return bettable;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +149,8 @@ interface HomeMatch {
   awayTeam: string;
   date: string;
   time: string;
+  /** ISO kickoff from the backend — used to hide/disable started fixtures. */
+  startsAt?: string;
   sideBets: number;
   odds: {
     home: number;
@@ -141,6 +162,17 @@ interface HomeMatch {
     yesScore: number;
     noScore: number;
   };
+  // Stable backend selection IDs for the 1x2 market — populated only
+  // when the row came from the API. Threaded into MatchCard so each
+  // pick from the home page carries a real selection_id and our
+  // offline-reserve flow (Section 16 Flow B) can persist the bet.
+  selectionIds?: {
+    home?: string | null;
+    draw?: string | null;
+    away?: string | null;
+  };
+  eventId?: string;
+  marketId?: string | null;
 }
 
 const FALLBACK_MATCHES: HomeMatch[] = [
@@ -242,6 +274,16 @@ function backendMatchToHome(row: sportsApi.SportsMatchRow): HomeMatch {
   const time = `${String(starts.getHours()).padStart(2, "0")}:${String(
     starts.getMinutes(),
   ).padStart(2, "0")}`;
+  // Postgres NUMERIC columns are serialized as strings by node-postgres,
+  // so the typed `number` field arrives as e.g. "1.50". Coerce eagerly
+  // so the MatchCard's `.toFixed(2)` calls don't crash on a string.
+  const toNum = (v: unknown, fallback = 0): number => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const homeOdds = toNum(row.home_odds, 1.01);
+  const drawOdds = toNum(row.draw_odds, 1.01);
+  const awayOdds = toNum(row.away_odds, 1.01);
   return {
     id: row.id,
     league: row.league ?? row.sport,
@@ -250,20 +292,28 @@ function backendMatchToHome(row: sportsApi.SportsMatchRow): HomeMatch {
     awayTeam: row.away_team,
     date,
     time,
+    startsAt: row.starts_at,
     sideBets: row.total_bets ?? 0,
     odds: {
-      home: row.home_odds,
-      draw: row.draw_odds,
-      away: row.away_odds,
+      home: homeOdds,
+      draw: drawOdds,
+      away: awayOdds,
       // No double-chance / both-score odds in the list payload — derive a
       // reasonable proxy from the headline 1x2 so the secondary slots
       // render. The detail page always shows real values.
-      home1x: Math.max(1.05, +(row.home_odds * 0.55).toFixed(2)),
-      draw12: Math.max(1.05, +((row.home_odds + row.away_odds) * 0.3).toFixed(2)),
-      away2x: Math.max(1.05, +(row.away_odds * 0.55).toFixed(2)),
+      home1x: Math.max(1.05, +(homeOdds * 0.55).toFixed(2)),
+      draw12: Math.max(1.05, +((homeOdds + awayOdds) * 0.3).toFixed(2)),
+      away2x: Math.max(1.05, +(awayOdds * 0.55).toFixed(2)),
       yesScore: 1.85,
       noScore: 1.85,
     },
+    selectionIds: {
+      home: row.home_selection_id ?? null,
+      draw: row.draw_selection_id ?? null,
+      away: row.away_selection_id ?? null,
+    },
+    eventId: row.id,
+    marketId: row.match_result_market_id ?? null,
   };
 }
 

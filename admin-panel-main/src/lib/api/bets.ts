@@ -36,10 +36,23 @@ export interface AdminBet {
   branch_name?: string | null;
   cashier_name?: string | null;
   cashier_email?: string | null;
+  /** The cashier who actually sold the printed ticket (offline flow). */
+  sold_by_cashier_name?: string | null;
+  sold_by_cashier_email?: string | null;
   user_email?: string | null;
   user_phone?: string | null;
   user_name?: string | null;
   source?: 'sportsbook' | 'bets';
+  /** Auto-generated short ticket code (TKT-XXXXXXXX). */
+  ticket_code?: string | null;
+  /** Printed receipt code (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}); null until sold. */
+  printed_ticket_code?: string | null;
+  /** Sportsbook coupon (SBK-XXXXXXXX); null for non-sportsbook bets. */
+  coupon_code?: string | null;
+  sold_at?: string | null;
+  sold_by_cashier_id?: string | null;
+  sold_branch_id?: string | null;
+  paid_at?: string | null;
   placed_at: string;
   settled_at?: string | null;
   created_at: string;

@@ -52,6 +52,7 @@ import {
   getTicketExpiryDays,
 } from '../admin/settings/business-settings';
 import { getCashierScope, getIp, getUa } from './cashier-shared';
+import { requirePermission } from '../../middleware/require-permission';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -550,6 +551,7 @@ swagger.registerPath({
 
 router.post(
   '/:ticketId/sell',
+  requirePermission('sell_tickets'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { ticketId } = paramSchema.parse(req.params);
@@ -715,6 +717,7 @@ swagger.registerPath({
 
 router.post(
   '/:ticketId/payout',
+  requirePermission('can_payout'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { ticketId } = paramSchema.parse(req.params);
@@ -905,6 +908,7 @@ swagger.registerPath({
 
 router.post(
   '/:ticketId/cancel',
+  requirePermission('cancel_tickets'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { ticketId } = paramSchema.parse(req.params);

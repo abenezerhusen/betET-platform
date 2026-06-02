@@ -12,6 +12,14 @@ export interface CashierUser {
   role: string;
   email: string | null;
   phone: string | null;
+  /**
+   * Section 22 permissions resolved at login. Contains the wildcard
+   * sentinel "*" for super admins; otherwise the explicit catalog of
+   * permission IDs the admin granted (e.g. "sell_tickets", "can_payout",
+   * "cancel_tickets", "deposit", "withdraw"). The cashier panel gates
+   * every action button on this list.
+   */
+  permissions?: string[];
 }
 
 export interface CashierBranch {
@@ -66,6 +74,43 @@ export function getCashierSession() {
 
 export function clearCashierSession() {
   window.localStorage.removeItem(SESSION_KEY);
+}
+
+/**
+ * Section 22 — Permission gate for the cashier panel.
+ *
+ * Reads the permission list stamped on the current session at login
+ * time. The backend resolves permissions from `users.metadata.permissions`
+ * (per-user override saved by the admin via the Role Settings modal)
+ * with fallback to the `roles` table.
+ *
+ * The wildcard "*" always grants access (super admins). Missing or
+ * empty session returns false — the cashier must re-login.
+ */
+export function hasCashierPermission(permission: string): boolean {
+  const session = getStoredSession();
+  const perms = session?.user.permissions;
+  if (!perms || perms.length === 0) return false;
+  if (perms.includes('*')) return true;
+  return perms.includes(permission);
+}
+
+/** Re-verifies the currently logged in user's password against the
+ * backend without issuing a new token. Used by the Dashboard "unlock"
+ * step-up screen. Returns true iff the password matches. */
+export async function verifyMyPassword(password: string): Promise<boolean> {
+  try {
+    const out = await apiRequest<{ valid: boolean }>("/api/auth/verify-password", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+      headers: { "content-type": "application/json" },
+      auth: true,
+    });
+    return Boolean(out?.valid);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return false;
+    throw err;
+  }
 }
 
 function redirectToSessionExpired(): void {

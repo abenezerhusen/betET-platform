@@ -1,0 +1,16 @@
+
+> my-project@0.1.0 dev
+> next dev -p 3001 -p 3002
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3002
+- Network:       http://172.20.80.1:3002
+- Environments: .env.local
+- Experiments (use with caution):
+  · optimizePackageImports
+
+✓ Starting...
+✓ Ready in 10.2s
+○ Compiling / ...
+ GET / 200 in 7.3s (compile: 6.9s, render: 377ms)
+ GET / 200 in 158ms (compile: 37ms, render: 120ms)

@@ -78,6 +78,13 @@ router.get(
         filters.push(`ev.status = $${i++}`);
         values.push(status);
       }
+      // Upcoming/scheduled listings must not surface fixtures whose
+      // kickoff has already passed — otherwise the user panel shows
+      // clickable odds but /api/public/bets/reserve-offline rejects the
+      // slip with "Match has already started".
+      if (status === 'scheduled') {
+        filters.push(`ev.starts_at > now()`);
+      }
       if (q.type === 'express' || q.is_featured === true) {
         filters.push(`ev.is_featured = true`);
       } else if (q.is_featured === false) {
@@ -97,8 +104,47 @@ router.get(
         values
       );
       const orderBy = q.sort === 'popularity' ? 'total_bets DESC, ev.starts_at ASC' : 'ev.starts_at ASC';
+      // The 1x2 markets on a fixture share the same `home_selection_id`,
+      // `draw_selection_id` and `away_selection_id` across every screen
+      // that lets a player pick from the headline odds (home page,
+      // sport-filter pages, live page). Exposing them in the list
+      // response lets the user-panel attach `selection_id` to every bet
+      // added from MatchCard so /api/public/bets/reserve-offline can
+      // create a real pending sportsbook_bet that the cashier panel
+      // can subsequently lookup, sell, print and pay out.
+      // The 1x2 market in our seed/admin uses Home/Draw/Away labels;
+      // other deployments use 1/X/2. We classify by either convention,
+      // then fall back to row-position within the market (1st = home,
+      // 2nd = draw, 3rd = away) so we always surface a pick no matter
+      // the label style.
       const rows = await client.query(
-        `SELECT ev.id, ev.sport, ev.league, ev.home_team, ev.away_team, ev.starts_at, ev.status,
+        `WITH match_results AS (
+            SELECT m.event_id, m.id AS market_id, s.id AS selection_id,
+                   s.label, s.odds_decimal, s.created_at,
+                   CASE
+                     WHEN s.label ILIKE 'home%' OR s.label = '1' OR s.label ILIKE '1 (%' THEN 'home'
+                     WHEN s.label ILIKE 'draw%' OR s.label ILIKE 'tie%' OR s.label = 'X'
+                          OR s.label ILIKE 'x %' OR s.label ILIKE 'x(%' THEN 'draw'
+                     WHEN s.label ILIKE 'away%' OR s.label = '2' OR s.label ILIKE '2 (%' THEN 'away'
+                     ELSE NULL
+                   END AS pick,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY m.id ORDER BY s.created_at ASC
+                   ) AS row_pos
+              FROM sports_markets m
+              JOIN sports_selections s ON s.market_id = m.id
+             WHERE (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
+          ),
+          mapped AS (
+            -- prefer label-matched pick, else fall back to ordinal position
+            SELECT event_id, market_id, selection_id, odds_decimal,
+                   COALESCE(pick,
+                     CASE row_pos WHEN 1 THEN 'home' WHEN 2 THEN 'draw' WHEN 3 THEN 'away' END
+                   ) AS pick,
+                   created_at
+              FROM match_results
+          )
+          SELECT ev.id, ev.sport, ev.league, ev.home_team, ev.away_team, ev.starts_at, ev.status,
                 COALESCE(ev.home_score, 0)::int AS home_score,
                 COALESCE(ev.away_score, 0)::int AS away_score,
                 COALESCE((ev.stats->>'minute')::int, 0) AS minute,
@@ -108,33 +154,40 @@ router.get(
                             JOIN sports_selections s ON s.market_id = m.id
                             JOIN sportsbook_bet_legs bl ON bl.selection_id = s.id
                            WHERE m.event_id = ev.id), 0) AS total_bets,
-                COALESCE((SELECT s.odds_decimal::numeric
-                            FROM sports_markets m
-                            JOIN sports_selections s ON s.market_id = m.id
-                           WHERE m.event_id = ev.id
-                             AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
-                             AND s.label ILIKE '1%'
-                           ORDER BY s.created_at ASC LIMIT 1), 1.5) AS home_odds,
-                COALESCE((SELECT s.odds_decimal::numeric
-                            FROM sports_markets m
-                            JOIN sports_selections s ON s.market_id = m.id
-                           WHERE m.event_id = ev.id
-                             AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
-                             AND s.label ILIKE 'x%'
-                           ORDER BY s.created_at ASC LIMIT 1), 3.0) AS draw_odds,
-                COALESCE((SELECT s.odds_decimal::numeric
-                            FROM sports_markets m
-                            JOIN sports_selections s ON s.market_id = m.id
-                           WHERE m.event_id = ev.id
-                             AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
-                             AND s.label ILIKE '2%'
-                           ORDER BY s.created_at ASC LIMIT 1), 2.5) AS away_odds
+                (SELECT odds_decimal::numeric FROM mapped
+                   WHERE event_id = ev.id AND pick = 'home'
+                   ORDER BY created_at ASC LIMIT 1) AS home_odds,
+                (SELECT odds_decimal::numeric FROM mapped
+                   WHERE event_id = ev.id AND pick = 'draw'
+                   ORDER BY created_at ASC LIMIT 1) AS draw_odds,
+                (SELECT odds_decimal::numeric FROM mapped
+                   WHERE event_id = ev.id AND pick = 'away'
+                   ORDER BY created_at ASC LIMIT 1) AS away_odds,
+                (SELECT selection_id FROM mapped
+                   WHERE event_id = ev.id AND pick = 'home'
+                   ORDER BY created_at ASC LIMIT 1) AS home_selection_id,
+                (SELECT selection_id FROM mapped
+                   WHERE event_id = ev.id AND pick = 'draw'
+                   ORDER BY created_at ASC LIMIT 1) AS draw_selection_id,
+                (SELECT selection_id FROM mapped
+                   WHERE event_id = ev.id AND pick = 'away'
+                   ORDER BY created_at ASC LIMIT 1) AS away_selection_id,
+                (SELECT market_id FROM mapped
+                   WHERE event_id = ev.id
+                   ORDER BY created_at ASC LIMIT 1) AS match_result_market_id
            FROM sports_events ev
            ${where}
            ORDER BY ${orderBy}
            LIMIT $${i++} OFFSET $${i++}`,
         [...values, q.limit, offset]
       );
+      // Backwards-compat: keep returning sensible odds defaults when a
+      // fixture is missing 1x2 selections (e.g. casino-only tenants).
+      for (const r of rows.rows as Record<string, unknown>[]) {
+        if (r.home_odds == null) r.home_odds = '1.50';
+        if (r.draw_odds == null) r.draw_odds = '3.00';
+        if (r.away_odds == null) r.away_odds = '2.50';
+      }
       return {
         items: rows.rows,
         total: Number(total.rows[0]?.count ?? 0),

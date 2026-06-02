@@ -131,15 +131,21 @@ async function parseError(res: Response): Promise<never> {
   let details: unknown;
   try {
     const data = (await res.json()) as {
-      error?: { message?: string; code?: string; details?: unknown };
+      error?: string | { message?: string; code?: string; details?: unknown };
       message?: string;
+      details?: unknown;
     };
-    if (data?.error) {
+    if (typeof data?.error === 'object' && data.error !== null) {
       message = data.error.message ?? message;
       code = data.error.code;
-      details = data.error.details;
+      details = data.error.details ?? data.details;
+    } else if (typeof data?.error === 'string') {
+      code = data.error;
+      message = data.message ?? message;
+      details = data.details;
     } else if (data?.message) {
       message = data.message;
+      details = data.details;
     }
   } catch {
     /* ignore */

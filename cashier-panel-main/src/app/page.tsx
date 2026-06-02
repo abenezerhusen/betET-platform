@@ -57,6 +57,8 @@ import {
   findPendingBranchWithdrawal,
   processBranchWithdrawal,
   getCashierDashboardStats,
+  hasCashierPermission,
+  verifyMyPassword,
   type CashierTicket,
   type CashierTicketCheck,
   type CashierJackpot,
@@ -66,6 +68,10 @@ import {
   type CashierTransactionRow,
   type CashierSession,
 } from "@/lib/api";
+import {
+  ThermalTicketView,
+  buildThermalTicketPrintHtml,
+} from "@/components/ThermalTicketView";
 
 // User-panel base URL for the "Launch Fixtures" sidebar shortcut. The
 // cashier opens this in a new tab to build a bet slip on behalf of the
@@ -79,7 +85,6 @@ export default function CashierPanel() {
   const [session, setSession] = useState<CashierSession | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [currentPage, setCurrentPage] = useState<PageType>("tickets");
 
@@ -101,9 +106,17 @@ export default function CashierPanel() {
           cashierSession.user.phone ??
           "Cashier"
       );
-      setLoginPassword("");
     }} />;
   }
+
+  const perms = session?.user.permissions ?? [];
+  const isWildcard = perms.includes("*");
+  const hasNoPerms = !isWildcard && perms.length === 0;
+  const grantedPermsLabel = isWildcard
+    ? "All permissions"
+    : perms.length > 0
+    ? `${perms.length} granted`
+    : "None granted";
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100">
@@ -124,8 +137,38 @@ export default function CashierPanel() {
             </>
           )}
           <span className="text-gray-400">|</span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded ${
+              hasNoPerms
+                ? "bg-red-700 text-white"
+                : isWildcard
+                ? "bg-emerald-700 text-white"
+                : "bg-blue-700 text-white"
+            }`}
+            title={
+              isWildcard
+                ? "Super admin — wildcard access"
+                : perms.length === 0
+                ? "Ask the admin to open Users → Sales Staff → Role Settings and grant the required permissions (sell_tickets, can_payout, etc.)."
+                : perms.join(", ")
+            }
+          >
+            Permissions: {grantedPermsLabel}
+          </span>
         </div>
       </header>
+
+      {hasNoPerms ? (
+        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-sm px-6 py-3">
+          <strong>No permissions granted yet.</strong> Action buttons will be
+          disabled until an admin opens <em>Admin Panel → Users → Sales Staff →
+          Role Settings</em> for this account and saves the required
+          permissions (e.g. <code>sell_tickets</code>, <code>can_payout</code>,
+          <code>cancel_tickets</code>, <code>deposit</code>,{" "}
+          <code>withdraw</code>). After saving, log out and back in here to
+          refresh.
+        </div>
+      ) : null}
 
       <div className="flex flex-1 overflow-hidden">
         {/* Left Sidebar */}
@@ -186,10 +229,10 @@ export default function CashierPanel() {
                 label="Logout"
                 onClick={() => {
                   clearCashierSession();
+                  setDashboardUnlocked(false);
                   setSession(null);
                   setIsLoggedIn(false);
                   setUsername("");
-                  setLoginPassword("");
                   setCurrentPage("tickets");
                 }}
               />
@@ -207,7 +250,7 @@ export default function CashierPanel() {
           {currentPage === "tickets" && <TicketsPage />}
           {currentPage === "super-jackpots" && <SuperJackpotsPage />}
           {currentPage === "withdraw-deposit" && <WithdrawDepositPage />}
-          {currentPage === "dashboard" && <DashboardPage username={username} password={loginPassword} />}
+          {currentPage === "dashboard" && <DashboardPage username={username} />}
           {currentPage === "settings" && <SettingsPage />}
         </main>
 
@@ -283,63 +326,12 @@ function TicketsPage() {
   const fmtDateOnly = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleDateString() : "—";
 
-  const selectionText = (selection: unknown): string => {
-    if (selection === null || selection === undefined) return "—";
-    if (typeof selection === "string") return selection;
-    if (Array.isArray(selection)) {
-      if (selection.length === 0) return "—";
-      return selection
-        .map((item) =>
-          typeof item === "string" ? item : JSON.stringify(item),
-        )
-        .join(", ");
-    }
-    if (typeof selection === "object") {
-      try {
-        return JSON.stringify(selection);
-      } catch {
-        return "[selection]";
-      }
-    }
-    return String(selection);
-  };
-
   const printTicketSlip = (t: CashierTicket) => {
-    const html = `
-      <html>
-      <head>
-        <title>Ticket ${t.ticket_id}</title>
-        <style>
-          * { font-family: 'Courier New', monospace; font-size: 12px; box-sizing: border-box; }
-          body { width: 80mm; margin: 0; padding: 4mm; color: #000; }
-          .center { text-align: center; }
-          .bold { font-weight: bold; }
-          .divider { border-top: 1px dashed #000; margin: 6px 0; }
-          .row { display: flex; justify-content: space-between; gap: 8px; }
-          .meta { margin-top: 4px; font-size: 11px; word-break: break-word; }
-        </style>
-      </head>
-      <body>
-        <div class="center bold">PLAYCORE</div>
-        <div class="center">Branch: ${branchLabel}</div>
-        <div class="center">Cashier: ${cashierLabel}</div>
-        <div class="center">${new Date().toLocaleString()}</div>
-        <div class="divider"></div>
-        <div class="bold">TICKET #${t.ticket_id}</div>
-        <div class="meta"><strong>Bet ID:</strong> ${t.bet_id}</div>
-        <div class="meta"><strong>Status:</strong> ${t.status.toUpperCase()}</div>
-        <div class="meta"><strong>Bet By:</strong> ${t.user_phone || t.user_email || t.user_id}</div>
-        <div class="meta"><strong>Selection:</strong> ${selectionText(t.selections)}</div>
-        <div class="divider"></div>
-        <div class="row"><span>Stake</span><span>${t.currency} ${t.stake.toFixed(2)}</span></div>
-        <div class="row"><span>Potential Win</span><span>${t.currency} ${t.potential_win.toFixed(2)}</span></div>
-        <div class="row bold"><span>Expires</span><span>${fmtDateOnly(t.expires_at)}</span></div>
-        <div class="divider"></div>
-        <div class="center" style="font-size:11px;margin-top:6px;">Coupon ID: ${t.ticket_id}</div>
-        <div class="center" style="font-size:9px;margin-top:6px;">Good Luck!</div>
-      </body>
-      </html>
-    `;
+    const html = buildThermalTicketPrintHtml({
+      ticket: t,
+      cashierName: cashierLabel,
+      branchLabel,
+    });
     const win = window.open("", "_blank", "width=340,height=700");
     if (!win) {
       throw new Error("Popup blocked. Please allow popups and try again.");
@@ -505,8 +497,17 @@ function TicketsPage() {
             </Button>
             <Button
               onClick={() => void printTicket(couponCode)}
-              disabled={printLoading || !couponCode.trim()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              disabled={
+                printLoading ||
+                !couponCode.trim() ||
+                !hasCashierPermission("sell_tickets")
+              }
+              title={
+                hasCashierPermission("sell_tickets")
+                  ? undefined
+                  : "Admin has not granted Sell Tickets permission for this account."
+              }
+              className="bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
             >
               {printLoading ? "Preparing..." : "Print Ticket"}
             </Button>
@@ -524,20 +525,35 @@ function TicketsPage() {
           ) : null}
 
           {ticket ? (
-            <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 space-y-2">
-              <p><strong>Ticket ID:</strong> {ticket.ticket_id}</p>
-              <p><strong>Bet ID:</strong> {ticket.bet_id}</p>
-              <p><strong>Status:</strong> {ticket.status.toUpperCase()}</p>
-              <p><strong>Bet By:</strong> {ticket.user_phone ?? ticket.user_email ?? ticket.user_id}</p>
-              <p><strong>Selection:</strong> {selectionText(ticket.selections)}</p>
-              <p><strong>Stake:</strong> {ticket.stake.toFixed(2)} {ticket.currency}</p>
-              <p><strong>Potential Win:</strong> {ticket.potential_win.toFixed(2)} {ticket.currency}</p>
-              <p><strong>Payout:</strong> {ticket.payout_amount > 0 ? `${ticket.payout_amount.toFixed(2)} ${ticket.currency}` : "—"}</p>
-              <p><strong>Issued:</strong> {fmtDate(ticket.issued_at)}</p>
-              <p><strong>Expires:</strong> {fmtDateOnly(ticket.expires_at)} ({ticket.expiry_days} days)</p>
-              {ticket.sold_at ? (
-                <p><strong>Sold At:</strong> {fmtDate(ticket.sold_at)}</p>
-              ) : null}
+            <div className="space-y-3">
+              <div
+                className="rounded-md border border-gray-200 bg-white p-2 shadow-sm"
+                style={{ overflow: "hidden" }}
+              >
+                <ThermalTicketView
+                  ticket={ticket}
+                  cashierName={cashierLabel}
+                  branchLabel={branchLabel}
+                />
+              </div>
+              <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 grid grid-cols-2 gap-x-4 gap-y-1">
+                <span className="font-semibold">Ticket ID</span>
+                <span className="font-mono">{ticket.ticket_id}</span>
+                <span className="font-semibold">Status</span>
+                <span>{ticket.status.toUpperCase()}</span>
+                <span className="font-semibold">Issued</span>
+                <span>{fmtDate(ticket.issued_at)}</span>
+                <span className="font-semibold">Expires</span>
+                <span>
+                  {fmtDateOnly(ticket.expires_at)} ({ticket.expiry_days} days)
+                </span>
+                {ticket.sold_at ? (
+                  <>
+                    <span className="font-semibold">Sold At</span>
+                    <span>{fmtDate(ticket.sold_at)}</span>
+                  </>
+                ) : null}
+              </div>
             </div>
           ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -586,8 +602,13 @@ function TicketsPage() {
             {payoutInfo && (payoutInfo.status === "won" || payoutInfo.status === "cashback") ? (
               <Button
                 onClick={() => void payTicket()}
-                disabled={payoutBusy}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                disabled={payoutBusy || !hasCashierPermission("can_payout")}
+                title={
+                  hasCashierPermission("can_payout")
+                    ? undefined
+                    : "Admin has not granted Payout permission for this account."
+                }
+                className="bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
               >
                 {payoutBusy
                   ? "Paying..."
@@ -597,9 +618,14 @@ function TicketsPage() {
             {ticket && (ticket.raw_status === "pending" || ticket.raw_status === "accepted") ? (
               <Button
                 onClick={() => void cancelTicket()}
-                disabled={cancelBusy}
+                disabled={cancelBusy || !hasCashierPermission("cancel_tickets")}
+                title={
+                  hasCashierPermission("cancel_tickets")
+                    ? undefined
+                    : "Admin has not granted Cancel Tickets permission for this account."
+                }
                 variant="outline"
-                className="border-red-300 text-red-700 hover:bg-red-50"
+                className="border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
                 {cancelBusy ? "Cancelling..." : "Cancel & Refund"}
               </Button>
@@ -822,8 +848,15 @@ function SuperJackpotsPage() {
 
           <Button
             onClick={() => void handleSell()}
-            disabled={sellBusy || !selectedId}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
+            disabled={
+              sellBusy || !selectedId || !hasCashierPermission("sell_jackpots")
+            }
+            title={
+              hasCashierPermission("sell_jackpots")
+                ? undefined
+                : "Admin has not granted Sell Jackpots permission for this account."
+            }
+            className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
           >
             {sellBusy ? "Selling…" : "Sell Jackpot Ticket"}
           </Button>
@@ -1172,8 +1205,13 @@ function WithdrawDepositPage() {
 
             <Button
               onClick={() => void handleDeposit()}
-              disabled={depositLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-11 shadow-md"
+              disabled={depositLoading || !hasCashierPermission("deposit")}
+              title={
+                hasCashierPermission("deposit")
+                  ? undefined
+                  : "Admin has not granted Deposit permission for this account."
+              }
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-11 shadow-md disabled:opacity-50"
             >
               {depositLoading ? "Processing..." : "Deposit"}
             </Button>
@@ -1202,8 +1240,13 @@ function WithdrawDepositPage() {
 
             <Button
               onClick={() => void handleLookupWithdrawal()}
-              disabled={withdrawLoading}
-              className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold h-11 shadow-md"
+              disabled={withdrawLoading || !hasCashierPermission("withdraw")}
+              title={
+                hasCashierPermission("withdraw")
+                  ? undefined
+                  : "Admin has not granted Withdraw permission for this account."
+              }
+              className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold h-11 shadow-md disabled:opacity-50"
             >
               {withdrawLoading ? "Checking..." : "Look Up Withdrawal"}
             </Button>
@@ -1267,8 +1310,17 @@ function WithdrawDepositPage() {
             </Button>
             <Button
               onClick={() => void handleProcessWithdrawal()}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-              disabled={processBusy || !pendingWithdrawal}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              disabled={
+                processBusy ||
+                !pendingWithdrawal ||
+                !hasCashierPermission("withdraw")
+              }
+              title={
+                hasCashierPermission("withdraw")
+                  ? undefined
+                  : "Admin has not granted Withdraw permission for this account."
+              }
             >
               {processBusy ? "Processing…" : "Process Withdrawal"}
             </Button>
@@ -1349,22 +1401,68 @@ function RecentTransactionsRightSidebar() {
   );
 }
 
-function DashboardPage({ username, password }: { username: string; password: string }) {
+// Section 16 — once the cashier has unlocked the dashboard for this
+// session we remember it in sessionStorage so navigating away and back
+// doesn't keep re-prompting. The flag clears automatically on tab close
+// (sessionStorage), and the parent panel clears it explicitly on logout.
+const DASHBOARD_UNLOCK_KEY = "playcore-cashier-dashboard-unlocked";
+
+function isDashboardUnlocked(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.sessionStorage.getItem(DASHBOARD_UNLOCK_KEY) === "1";
+}
+
+function setDashboardUnlocked(unlocked: boolean) {
+  if (typeof window === "undefined") return;
+  if (unlocked) {
+    window.sessionStorage.setItem(DASHBOARD_UNLOCK_KEY, "1");
+  } else {
+    window.sessionStorage.removeItem(DASHBOARD_UNLOCK_KEY);
+  }
+}
+
+function DashboardPage({ username }: { username: string }) {
   const [credential, setCredential] = useState("");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    isDashboardUnlocked()
+  );
   const [unlockError, setUnlockError] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [showMine, setShowMine] = useState(true);
   const [stats, setStats] = useState<CashierDashboardStats | null>(null);
   const [dashboardError, setDashboardError] = useState("");
 
-  const handleUnlock = () => {
-    if (credential.length > 0 && credential === password) {
-      setIsAuthenticated(true);
-      setUnlockError("");
-    } else {
-      setUnlockError("Incorrect password. Please use your login password.");
+  // Section 16 — Dashboard step-up. We verify the password against the
+  // backend (so a stale in-memory value can't lock the operator out and
+  // the secret never sits in memory beyond the type-and-verify cycle).
+  // After a successful unlock we set a sessionStorage flag so the
+  // operator isn't prompted again until they log out or close the tab.
+  const handleUnlock = async () => {
+    if (unlocking) return;
+    if (credential.length === 0) {
+      setUnlockError("Please enter your password.");
+      return;
+    }
+    setUnlocking(true);
+    setUnlockError("");
+    try {
+      const ok = await verifyMyPassword(credential);
+      if (ok) {
+        setDashboardUnlocked(true);
+        setIsAuthenticated(true);
+        setCredential("");
+      } else {
+        setUnlockError("Incorrect password. Please use your login password.");
+      }
+    } catch (err) {
+      setUnlockError(
+        (err as Error)?.message ||
+          "Could not verify your password. Please try again.",
+      );
+    } finally {
+      setUnlocking(false);
     }
   };
 
@@ -1425,7 +1523,7 @@ function DashboardPage({ username, password }: { username: string; password: str
                 className="pl-10 h-12 border-gray-300"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
-                    handleUnlock();
+                    void handleUnlock();
                   }
                 }}
               />
@@ -1438,11 +1536,12 @@ function DashboardPage({ username, password }: { username: string; password: str
             )}
 
             <Button
-              onClick={handleUnlock}
+              onClick={() => void handleUnlock()}
+              disabled={unlocking}
               className="w-full bg-red-500 hover:bg-red-600 text-white font-semibold h-12 shadow-md"
             >
               <LockOpen className="w-4 h-4 mr-2" />
-              Unlock
+              {unlocking ? "Verifying…" : "Unlock"}
             </Button>
           </div>
         </div>

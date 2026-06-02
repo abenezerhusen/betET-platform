@@ -61,6 +61,71 @@ export function placeBet(input: PlaceBetInput): Promise<PlaceBetOutcome> {
   });
 }
 
+/**
+ * Section 16 Flow B — reserve a walk-in (branch-pay) sportsbook slip.
+ *
+ * Used by the offline "Place Bet" button when the slip is built on
+ * behalf of a player who pays cash at the till. The backend creates a
+ * `sportsbook_bets` row in status='pending', channel='offline',
+ * without debiting any wallet. The returned `coupon_code` (SBK-XXXXXXXX)
+ * is what the cashier types into "Sell Ticket" in the cashier panel.
+ */
+/** Hint the backend can use to find a selection when the slip leg
+ * doesn't carry a real `selection_id` (e.g. picks were added before the
+ * page was reloaded with the new sportsbook IDs). */
+export interface OfflineSelectionHint {
+  home_team: string;
+  away_team: string;
+  /** Optional: "Match Result", "1x2", … (omit and the backend defaults
+   *  to the 1x2/Match Result market). */
+  market_label?: string;
+  /** "Home" | "Draw" | "Away" or "1" | "X" | "2" — case insensitive. */
+  selection_label: string;
+  /** ISO date to disambiguate when the same teams meet twice. */
+  starts_at?: string;
+}
+
+export interface OfflineSelectionInput {
+  /** Preferred — direct sportsbook selection UUID. */
+  selection_id?: string;
+  /** Fallback — backend resolves to a selection_id. */
+  selection_hint?: OfflineSelectionHint;
+  odds_seen?: number;
+}
+
+export interface OfflineReservationInput {
+  stake: number;
+  bet_type?: 'single' | 'combo' | 'system';
+  currency?: string;
+  selections: OfflineSelectionInput[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface OfflineReservation {
+  bet_id: string;
+  coupon_code: string;
+  ticket_code: string;
+  stake: number;
+  total_odds: number;
+  potential_payout: number;
+  currency: string;
+  bet_type: 'single' | 'combo' | 'system';
+  picks_count: number;
+  placed_at: string;
+  status: 'pending';
+  channel: 'offline';
+}
+
+export function reserveOfflineBet(
+  input: OfflineReservationInput,
+): Promise<OfflineReservation> {
+  return apiRequest<OfflineReservation>('/api/public/bets/reserve-offline', {
+    method: 'POST',
+    body: input,
+    skipAuth: true,
+  });
+}
+
 export interface CashoutOutcome {
   bet_id: string;
   cashout_amount: string;

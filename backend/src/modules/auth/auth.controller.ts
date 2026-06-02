@@ -10,6 +10,7 @@ import {
   registerSchema,
   refreshSchema,
   resetPasswordSchema,
+  verifyPasswordSchema,
 } from './auth.dto';
 import * as service from './auth.service';
 
@@ -148,6 +149,44 @@ export async function cashierPasswordChange(
       allowedRoles: CASHIER_LOGIN_ROLES,
     });
     res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Section 16 — Cashier panel dashboard step-up verification.
+ *
+ * The cashier dashboard requires the operator to re-confirm their
+ * password before showing financial KPIs. This endpoint verifies the
+ * supplied password against the currently authenticated user. It does
+ * NOT issue a new token and is rate-limited to prevent password
+ * fishing through long sessions.
+ *
+ * Returns { valid: true } on success and 401 on failure.
+ */
+export async function verifyPassword(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (!req.user) {
+      throw new BadRequestError('Authentication required', {
+        reason: 'unauthenticated',
+      });
+    }
+    const body = verifyPasswordSchema.parse(req.body);
+    const ok = await service.verifyCurrentPassword({
+      userId: req.user.id,
+      tenantId: req.user.tenantId,
+      password: body.password,
+    });
+    if (!ok) {
+      res.status(401).json({ valid: false, message: 'Invalid password' });
+      return;
+    }
+    res.json({ valid: true });
   } catch (err) {
     next(err);
   }

@@ -109,29 +109,92 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       ? parseFloat(localStorage.getItem("mezzobet_balance") || "0") || 0
       : 0;
 
-  const runOfflinePlacement = () => {
-    setPlacingBet(true);
-    setTimeout(() => {
-      const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
-      const ticketNumber = `${id.slice(0, 5)}-${id.slice(5)}`;
-      const stakeTax = stake * 0.15;
-      const winTax = 0;
+  /** Sidebar / top-league sample rows use generated names like "Lithuania Cup Team 3". */
+  const isDemoSampleMatch = (home: string, away: string) =>
+    /\s(Team|Player|Club|XI)\s+\d+$/i.test(home) ||
+    /\s(Team|Player|Club|XI)\s+\d+$/i.test(away);
 
+  const runOfflinePlacement = async () => {
+    const demoLeg = bets.find(
+      (b) => !b.selectionId && isDemoSampleMatch(b.homeTeam, b.awayTeam),
+    );
+    if (demoLeg) {
+      alert(
+        `"${demoLeg.homeTeam} vs ${demoLeg.awayTeam}" is demo/sample data only — it is not stored in the sportsbook. For cashier (offline) bets, pick a match from Home → Upcoming with real fixtures (e.g. Ethiopian Premier League), or ask admin to add this league in the admin panel.`,
+      );
+      return;
+    }
+
+    const startedLeg = bets.find((b) => {
+      if (!b.startsAt) return false;
+      const t = new Date(b.startsAt).getTime();
+      return Number.isFinite(t) && t <= Date.now();
+    });
+    if (startedLeg) {
+      alert(
+        `Cannot place bet — ${startedLeg.homeTeam} vs ${startedLeg.awayTeam} has already started. Remove it from your slip and pick an upcoming match.`,
+      );
+      return;
+    }
+
+    setPlacingBet(true);
+    try {
+      // Section 16 Flow B — always reserve a real pending bet on the
+      // backend so the cashier panel can find it via Lookup / Sell /
+      // Print. We send `selection_id` when available and otherwise fall
+      // back to a `selection_hint` (team names + 1/X/2 pick) which the
+      // backend resolves to a real selection. This means picks added
+      // before the page was reloaded with the latest props still work.
+      const selections = bets.map((b) => {
+        if (b.selectionId) {
+          return { selection_id: b.selectionId, odds_seen: b.odds };
+        }
+        return {
+          selection_hint: {
+            home_team: b.homeTeam,
+            away_team: b.awayTeam,
+            // Default to the 1x2 / Match Result market if no explicit
+            // label was attached. The backend recognises both.
+            market_label: b.market || "Match Result",
+            selection_label: b.selection,
+            ...(b.startsAt ? { starts_at: b.startsAt } : {}),
+          },
+          odds_seen: b.odds,
+        };
+      });
+
+      const reservation = await betsApi.reserveOfflineBet({
+        stake,
+        bet_type: bets.length > 1 ? "combo" : "single",
+        selections,
+        metadata: {
+          placed_from: "user_panel",
+          mode: "offline_branch_pay",
+          picks_count: bets.length,
+        },
+      });
+
+      setLastCouponCode(reservation.coupon_code);
       setConfirmationData({
-        ticketNumber,
+        ticketNumber: reservation.coupon_code,
+        betId: reservation.bet_id,
+        couponCode: reservation.coupon_code,
         stake,
         potentialWin,
         netPayout,
         betsCount: totalBetAmount,
         isOnline: false,
         totalOdds,
-        stakeTax,
-        winTax,
+        stakeTax: 0,
+        winTax: 0,
       });
-
       setShowConfirmation(true);
+      setTimeout(() => clearBets(), 1000);
+    } catch (err) {
+      alert((err as Error)?.message || "Failed to reserve offline ticket.");
+    } finally {
       setPlacingBet(false);
-    }, 1500);
+    }
   };
 
   // Place an online bet debiting the selected wallet.
@@ -156,6 +219,18 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         );
         return;
       }
+    }
+
+    const startedLeg = bets.find((b) => {
+      if (!b.startsAt) return false;
+      const t = new Date(b.startsAt).getTime();
+      return Number.isFinite(t) && t <= Date.now();
+    });
+    if (startedLeg) {
+      alert(
+        `Cannot place bet — ${startedLeg.homeTeam} vs ${startedLeg.awayTeam} has already started. Remove it from your slip and pick an upcoming match.`,
+      );
+      return;
     }
 
     setPlacingBet(true);
@@ -279,7 +354,7 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       alert(parsedStake.error.issues[0]?.message ?? "Invalid stake");
       return;
     }
-    runOfflinePlacement();
+    void runOfflinePlacement();
   };
 
   const handlePlaceBetOnline = () => {

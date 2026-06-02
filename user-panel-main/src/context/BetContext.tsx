@@ -22,6 +22,8 @@ export interface Bet {
   selectionId?: string;
   eventId?: string;
   marketId?: string;
+  /** ISO kickoff — used to block placement on started fixtures. */
+  startsAt?: string;
 }
 
 /**

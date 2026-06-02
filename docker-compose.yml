@@ -37,6 +37,15 @@ services:
       - "4000:4000"
     volumes:
       - ./migrations:/migrations:ro
+      # Bind-mount the backend source so `tsx watch` picks up edits made
+      # on the host without needing a full `docker compose build`. The
+      # named-volume mask on /app/node_modules keeps the container's own
+      # platform-specific binaries (bcrypt, esbuild) instead of inheriting
+      # the host's Windows-built ones.
+      - ./backend/src:/app/src
+      - ./backend/package.json:/app/package.json:ro
+      - ./backend/tsconfig.json:/app/tsconfig.json:ro
+      - backend_node_modules:/app/node_modules
     command: npm run dev
 
   redis:
@@ -48,3 +57,4 @@ services:
 
 volumes:
   postgres_data:
+  backend_node_modules:

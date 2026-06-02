@@ -181,7 +181,18 @@ async function listBets(req: Request, q: ListBetsQuery) {
         values.push(q.to);
       }
       if (q.search) {
-        filters.push(`(b.id::text ILIKE $${i} OR u.phone ILIKE $${i} OR u.email::text ILIKE $${i})`);
+        // Match any code the cashier / admin might know — UUID prefix,
+        // SBK-XXXXXXXX coupon, TKT-XXXXXXXX raw ticket code, or the
+        // printed receipt code (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}). Also
+        // match user phone / email so single-search box keeps working.
+        filters.push(`(
+          b.id::text ILIKE $${i}
+          OR b.ticket_code ILIKE $${i}
+          OR b.coupon_code ILIKE $${i}
+          OR b.printed_ticket_code ILIKE $${i}
+          OR u.phone ILIKE $${i}
+          OR u.email::text ILIKE $${i}
+        )`);
         values.push(`%${q.search}%`);
         i++;
       }
@@ -206,6 +217,13 @@ async function listBets(req: Request, q: ListBetsQuery) {
             sb.jackpot_id,
             sb.metadata,
             sb.metadata->>'branch_id'                            AS branch_id,
+            sb.ticket_code,
+            sb.printed_ticket_code,
+            sb.coupon_code,
+            sb.sold_at,
+            sb.sold_by_cashier_id,
+            sb.sold_branch_id,
+            sb.paid_at,
             sb.placed_at,
             sb.settled_at,
             sb.created_at,
@@ -229,6 +247,13 @@ async function listBets(req: Request, q: ListBetsQuery) {
             NULL::uuid                                           AS jackpot_id,
             ub.metadata,
             ub.metadata->>'branch_id'                            AS branch_id,
+            ub.ticket_code,
+            ub.printed_ticket_code,
+            NULL::text                                           AS coupon_code,
+            ub.sold_at,
+            ub.sold_by_cashier_id,
+            ub.sold_branch_id,
+            ub.paid_at,
             ub.placed_at,
             ub.settled_at,
             ub.created_at,
@@ -252,15 +277,24 @@ async function listBets(req: Request, q: ListBetsQuery) {
          SELECT b.id, b.tenant_id, b.user_id, b.cashier_id, b.channel, b.bet_type,
                 b.bet_for_user_phone, b.stake, b.currency, b.potential_payout,
                 b.actual_payout, b.status, b.jackpot_id, b.metadata, b.branch_id,
+                b.ticket_code, b.printed_ticket_code, b.coupon_code,
+                b.sold_at, b.sold_by_cashier_id, b.sold_branch_id, b.paid_at,
                 b.placed_at, b.settled_at, b.created_at, b.updated_at, b.source,
                 u.email AS user_email, u.phone AS user_phone,
                 COALESCE(u.metadata->>'full_name', u.email, u.phone) AS user_name,
                 c.email AS cashier_email,
                 COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email) AS cashier_name,
+                /* The cashier who actually sold the ticket (sportsbook
+                 * keeps the most recent sale on sold_by_cashier_id);
+                 * resolves to the same fallback chain as the placer
+                 * cashier so admin reports stay consistent. */
+                sc.email AS sold_by_cashier_email,
+                COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email) AS sold_by_cashier_name,
                 br.metadata->>'name' AS branch_name
            FROM all_bets b
            LEFT JOIN users u  ON u.id  = b.user_id
            LEFT JOIN users c  ON c.id  = b.cashier_id
+           LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
            LEFT JOIN users br ON br.id::text = b.branch_id AND br.role = 'branch'
            ${where}
          ORDER BY b.placed_at DESC
@@ -312,10 +346,15 @@ async function getBet(req: Request, id: string) {
                 COALESCE(u.metadata->>'full_name', u.email, u.phone) AS user_name,
                 c.email AS cashier_email,
                 COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email) AS cashier_name,
+                sc.email AS sold_by_cashier_email,
+                COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email) AS sold_by_cashier_name,
+                br.metadata->>'name' AS branch_name,
                 'sportsbook'::text AS source
            FROM sportsbook_bets b
-           LEFT JOIN users u ON u.id = b.user_id
-           LEFT JOIN users c ON c.id = b.cashier_id
+           LEFT JOIN users u  ON u.id = b.user_id
+           LEFT JOIN users c  ON c.id = b.cashier_id
+           LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
+           LEFT JOIN users br ON br.id = b.sold_branch_id AND br.role = 'branch'
            WHERE b.id = $1
            LIMIT 1`,
         [id]
@@ -354,11 +393,17 @@ async function getBet(req: Request, id: string) {
                 b.status, NULL::uuid                                    AS jackpot_id,
                 b.metadata, b.placed_at, b.settled_at, b.created_at,
                 b.created_at                                            AS updated_at,
+                b.ticket_code, b.printed_ticket_code,
+                NULL::text                                              AS coupon_code,
+                b.sold_at, b.sold_by_cashier_id, b.sold_branch_id, b.paid_at,
                 u.email AS user_email, u.phone AS user_phone,
                 COALESCE(u.metadata->>'full_name', u.email, u.phone)    AS user_name,
+                sc.email AS sold_by_cashier_email,
+                COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email) AS sold_by_cashier_name,
                 'bets'::text                                            AS source
            FROM bets b
-           LEFT JOIN users u ON u.id = b.user_id
+           LEFT JOIN users u  ON u.id = b.user_id
+           LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
            WHERE b.id = $1
            LIMIT 1`,
         [id]

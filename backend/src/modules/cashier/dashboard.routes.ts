@@ -77,12 +77,25 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
     const out = await withTenantClient(
       { tenantId: scope.tenantId, readOnly: true },
       async (client) => {
-        // ---- Tickets (bets table — user-panel + cashier-sold tickets) ----
+        // ---- Tickets sold/paid ----
+        // Cashier tickets live in TWO places:
+        //   1. `bets`            → internal-game / casino tickets
+        //   2. `sportsbook_bets` → multi-leg sports slips (Section 16
+        //                          Flow B "Launch Fixtures" tickets are
+        //                          stored here when sold by the cashier)
+        // The dashboard must aggregate both so the figures match what
+        // the cashier actually sold today. We exclude bet_type='jackpot'
+        // from the sportsbook side because jackpot tickets are counted
+        // separately by the jpStats query below.
+        //
         // We always pass 4 args ($1=tenant, $2=from, $3=to, $4=cashier or null)
         // so each SELECT below can branch on `q.mine` in its WHERE filter
         // without having to juggle different parameter slots.
         const betFilters = q.mine
           ? `(b.sold_by_cashier_id = $4 OR b.paid_by_cashier_id = $4)`
+          : `TRUE`;
+        const sbFilters = q.mine
+          ? `(sb.sold_by_cashier_id = $4 OR sb.paid_by_cashier_id = $4 OR sb.cashier_id = $4)`
           : `TRUE`;
         const betArgs: unknown[] = [
           scope.tenantId,
@@ -97,26 +110,39 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
           tickets_paid_count: string;
           tickets_paid_amount: string | null;
         }>(
-          `SELECT
-             COUNT(*) FILTER (WHERE b.sold_at IS NOT NULL
-                              AND b.sold_at BETWEEN $2 AND $3)::text
+          `WITH unioned AS (
+             SELECT b.sold_at, b.paid_at, b.stake, b.payout
+               FROM bets b
+              WHERE b.tenant_id = $1
+                AND ${betFilters}
+             UNION ALL
+             SELECT sb.sold_at,
+                    sb.paid_at,
+                    sb.stake,
+                    sb.actual_payout AS payout
+               FROM sportsbook_bets sb
+              WHERE sb.tenant_id = $1
+                AND sb.bet_type <> 'jackpot'
+                AND ${sbFilters}
+           )
+           SELECT
+             COUNT(*) FILTER (WHERE u.sold_at IS NOT NULL
+                              AND u.sold_at BETWEEN $2 AND $3)::text
                AS tickets_sold_count,
              COALESCE(
-               SUM(b.stake) FILTER (WHERE b.sold_at IS NOT NULL
-                                    AND b.sold_at BETWEEN $2 AND $3),
+               SUM(u.stake) FILTER (WHERE u.sold_at IS NOT NULL
+                                    AND u.sold_at BETWEEN $2 AND $3),
                0
              )::text AS tickets_sold_amount,
-             COUNT(*) FILTER (WHERE b.paid_at IS NOT NULL
-                              AND b.paid_at BETWEEN $2 AND $3)::text
+             COUNT(*) FILTER (WHERE u.paid_at IS NOT NULL
+                              AND u.paid_at BETWEEN $2 AND $3)::text
                AS tickets_paid_count,
              COALESCE(
-               SUM(b.payout) FILTER (WHERE b.paid_at IS NOT NULL
-                                     AND b.paid_at BETWEEN $2 AND $3),
+               SUM(u.payout) FILTER (WHERE u.paid_at IS NOT NULL
+                                     AND u.paid_at BETWEEN $2 AND $3),
                0
              )::text AS tickets_paid_amount
-           FROM bets b
-           WHERE b.tenant_id = $1
-             AND ${betFilters}`,
+           FROM unioned u`,
           betArgs
         );
 
@@ -186,33 +212,57 @@ router.get('/stats', async (req: Request, res: Response, next: NextFunction) => 
         );
 
         // ---- Two-day payable: settled but unpaid winning tickets ----
+        // Same union as ticketStats — payable winnings on either table
+        // count toward the cash the cashier needs on hand.
         const twoDayArgs = q.mine
           ? [scope.tenantId, twoDayFrom, scope.cashierId]
           : [scope.tenantId, twoDayFrom];
-        const twoDayFilter = q.mine
+        const twoDayBetFilter = q.mine
           ? `(b.sold_by_cashier_id = $3 OR b.paid_by_cashier_id = $3)`
+          : `TRUE`;
+        const twoDaySbFilter = q.mine
+          ? `(sb.sold_by_cashier_id = $3 OR sb.paid_by_cashier_id = $3 OR sb.cashier_id = $3)`
           : `TRUE`;
         const twoDay = await client.query<{
           bets_count: string;
           payable_amount: string | null;
         }>(
-          `SELECT
+          `WITH payable AS (
+             SELECT b.paid_at, b.status, b.settled_at,
+                    COALESCE(b.payout, b.potential_win) AS amount
+               FROM bets b
+              WHERE b.tenant_id = $1
+                AND ${twoDayBetFilter}
+             UNION ALL
+             SELECT sb.paid_at,
+                    -- normalise sportsbook statuses onto the bets vocabulary
+                    CASE
+                      WHEN sb.status = 'partial' THEN 'partial_won'
+                      WHEN sb.status = 'cashout' THEN 'cashed_out'
+                      ELSE sb.status
+                    END AS status,
+                    sb.settled_at,
+                    COALESCE(sb.actual_payout, sb.potential_payout) AS amount
+               FROM sportsbook_bets sb
+              WHERE sb.tenant_id = $1
+                AND sb.bet_type <> 'jackpot'
+                AND ${twoDaySbFilter}
+           )
+           SELECT
              COUNT(*) FILTER (
-               WHERE b.paid_at IS NULL
-                 AND b.status IN ('won', 'partial_won', 'cashed_out')
-                 AND b.settled_at >= $2
+               WHERE p.paid_at IS NULL
+                 AND p.status IN ('won', 'partial_won', 'cashed_out')
+                 AND p.settled_at >= $2
              )::text AS bets_count,
              COALESCE(
-               SUM(COALESCE(b.payout, b.potential_win)) FILTER (
-                 WHERE b.paid_at IS NULL
-                   AND b.status IN ('won', 'partial_won', 'cashed_out')
-                   AND b.settled_at >= $2
+               SUM(p.amount) FILTER (
+                 WHERE p.paid_at IS NULL
+                   AND p.status IN ('won', 'partial_won', 'cashed_out')
+                   AND p.settled_at >= $2
                ),
                0
              )::text AS payable_amount
-           FROM bets b
-           WHERE b.tenant_id = $1
-             AND ${twoDayFilter}`,
+           FROM payable p`,
           twoDayArgs
         );
 

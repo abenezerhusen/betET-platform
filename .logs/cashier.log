@@ -1,0 +1,122 @@
+
+> nextjs-shadcn@0.1.0 dev
+> next dev -p 3001
+
+   ▲ Next.js 15.3.7
+   - Local:        http://localhost:3001
+   - Network:      http://172.20.80.1:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 8.7s
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 663ms (108 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 10.8s (908 modules)
+ GET / 200 in 11706ms
+ ✓ Compiled in 669ms (440 modules)
+ GET / 200 in 79ms
+ GET /?session_expired=true 200 in 45ms
+ GET / 200 in 53ms
+ GET / 200 in 266ms
+ GET / 200 in 76ms
+ GET / 200 in 49ms
+ GET / 200 in 65ms
+ GET / 200 in 46ms
+ GET / 200 in 46ms
+ GET / 200 in 48ms
+ GET / 200 in 62ms
+ GET / 200 in 45ms
+ GET / 200 in 44ms
+ GET / 200 in 71ms
+ GET / 200 in 64ms
+ GET / 200 in 50ms
+ GET / 200 in 50ms
+ GET / 200 in 46ms
+ GET / 200 in 53ms
+ GET / 200 in 57ms
+ GET / 200 in 42ms
+ GET / 200 in 49ms
+ GET / 200 in 63ms
+ GET / 200 in 58ms
+ GET / 200 in 302ms
+ GET /?session_expired=true 200 in 302ms
+ ✓ Compiled in 490ms (440 modules)
+ ✓ Compiled in 400ms (440 modules)
+ ✓ Compiled in 724ms (908 modules)
+ ✓ Compiled in 1088ms (910 modules)
+ ✓ Compiled in 583ms (910 modules)
+ ✓ Compiled in 546ms (910 modules)
+ GET / 200 in 229ms
+ GET / 200 in 54ms
+ GET / 200 in 50ms
+ GET / 200 in 48ms
+ GET / 200 in 64ms
+ GET / 200 in 53ms
+ GET / 200 in 127ms
+ GET / 200 in 106ms
+ GET / 200 in 85ms
+ GET / 200 in 80ms
+ GET / 200 in 45ms
+ ✓ Compiled in 842ms (910 modules)
+ GET / 200 in 210ms
+ ✓ Compiled in 448ms (910 modules)
+ GET / 200 in 82ms
+ ✓ Compiled in 655ms (910 modules)
+ GET / 200 in 66ms
+ ✓ Compiled in 419ms (910 modules)
+ GET / 200 in 116ms
+ ✓ Compiled in 449ms (910 modules)
+ GET / 200 in 76ms
+ ✓ Compiled in 436ms (910 modules)
+ GET / 200 in 51ms
+ ✓ Compiled in 418ms (910 modules)
+ GET / 200 in 63ms
+ ✓ Compiled in 403ms (910 modules)
+ GET / 200 in 51ms
+ ✓ Compiled in 393ms (910 modules)
+ GET / 200 in 55ms
+ ✓ Compiled in 406ms (910 modules)
+ GET / 200 in 55ms
+ ✓ Compiled in 649ms (910 modules)
+ GET / 200 in 73ms
+ ✓ Compiled in 519ms (910 modules)
+ GET / 200 in 67ms
+ ✓ Compiled in 601ms (910 modules)
+ GET / 200 in 94ms
+ ✓ Compiled in 471ms (910 modules)
+ GET / 200 in 51ms
+ ✓ Compiled in 483ms (910 modules)
+ GET / 200 in 55ms
+ ✓ Compiled in 403ms (910 modules)
+ GET / 200 in 50ms
+ ✓ Compiled in 669ms (910 modules)
+ GET / 200 in 73ms
+ GET / 200 in 148ms
+ GET / 200 in 49ms
+ GET / 200 in 55ms
+ GET / 200 in 45ms
+ GET /?session_expired=true 200 in 49ms
+ ✓ Compiled in 958ms (910 modules)
+ GET /?session_expired=true 200 in 174ms
+ ✓ Compiled in 442ms (910 modules)
+ GET /?session_expired=true 200 in 52ms
+ GET /?session_expired=true 200 in 144ms
+ GET /?session_expired=true 200 in 81ms
+ GET / 200 in 44ms
+ GET / 200 in 78ms
+ GET / 200 in 49ms
+ GET / 200 in 46ms
+ GET / 200 in 57ms
+ GET / 200 in 52ms
+ GET / 200 in 81ms
+ GET / 200 in 62ms
+ GET / 200 in 52ms
+ GET / 200 in 54ms
+ GET / 200 in 50ms
+ GET / 200 in 56ms
+ GET / 200 in 78ms
+ GET / 200 in 72ms
+ GET / 200 in 63ms
+ GET / 200 in 69ms
+ GET / 200 in 77ms

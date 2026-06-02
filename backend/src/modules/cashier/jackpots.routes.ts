@@ -25,6 +25,7 @@ import {
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
 import { getCashierScope, getIp, getUa } from './cashier-shared';
+import { requirePermission } from '../../middleware/require-permission';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -192,7 +193,7 @@ swagger.registerPath({
   },
 });
 
-router.post('/:id/sell', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/:id/sell', requirePermission('sell_jackpots'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const scope = getCashierScope(req);
     const { id } = idParam.parse(req.params);

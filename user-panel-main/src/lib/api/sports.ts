@@ -12,9 +12,19 @@ export interface SportsMatchRow {
   away_score: number;
   minute: number;
   total_bets: number;
-  home_odds: number;
-  draw_odds: number;
-  away_odds: number;
+  // Postgres NUMERIC is serialized as a string by node-postgres. Callers
+  // MUST coerce with Number(...) before doing arithmetic / .toFixed().
+  home_odds: number | string;
+  draw_odds: number | string;
+  away_odds: number | string;
+  // Stable selection IDs for the 1x2 market — present whenever the
+  // fixture has a "Match Result" market in the DB. Used by the user
+  // panel to attach `selection_id` to slip legs so the cashier panel's
+  // Lookup / Sell / Print flow can resolve them.
+  home_selection_id?: string | null;
+  draw_selection_id?: string | null;
+  away_selection_id?: string | null;
+  match_result_market_id?: string | null;
 }
 
 export interface SportsMarket {

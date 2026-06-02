@@ -1134,6 +1134,33 @@ export async function getBranchForCashier(
   });
 }
 
+/**
+ * Re-verify the authenticated user's own password without issuing a new
+ * token. Used by the cashier panel's Dashboard "unlock" prompt and by
+ * any other step-up flow that wants to confirm the current operator is
+ * still in front of the terminal.
+ *
+ * Returns true iff the supplied plaintext matches the stored hash and
+ * the account is still in good standing. Does NOT count toward the
+ * failed-login lockout (the user already has a valid session and we
+ * don't want a typo'd unlock to lock the shift).
+ */
+export async function verifyCurrentPassword(input: {
+  userId: string;
+  tenantId: string;
+  password: string;
+  allowedRoles?: ReadonlySet<string>;
+}): Promise<boolean> {
+  const { userId, tenantId, password } = input;
+  return withTenantClient({ tenantId }, async (client) => {
+    const user = await repo.findUserById(client, userId);
+    if (!user || user.tenant_id !== tenantId) return false;
+    if (input.allowedRoles && !input.allowedRoles.has(user.role)) return false;
+    if (!user.password_hash) return false;
+    return verifyPassword(password, user.password_hash);
+  });
+}
+
 interface ChangePasswordForUserInput {
   userId: string;
   tenantId: string;

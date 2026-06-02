@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { ChevronUp, ChevronDown } from "lucide-react";
 
@@ -14,20 +14,9 @@ const footerLinks = [
 ];
 
 export function Footer() {
-  // On phones the fixed bottom-nav sits directly above the footer, so a
-  // fully expanded footer crams its logo + links + social row into a
-  // narrow slice of screen and reads as visual clutter. Start collapsed
-  // on phones (<768px) and expanded on tablet/desktop — the toggle
-  // still works on every breakpoint so no functionality is lost.
-  const [isOpen, setIsOpen] = useState(true);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia("(max-width: 767px)");
-    // Only apply the responsive default on first mount; after that the
-    // user's manual toggle takes over for the rest of the session.
-    setIsOpen(!mql.matches);
-  }, []);
+  // Always start collapsed on open/refresh so the footer does not cover
+  // the betting content. The user can expand it with the toggle button.
+  const [isOpen, setIsOpen] = useState(false);
 
   const toggleFooter = () => {
     setIsOpen(!isOpen);

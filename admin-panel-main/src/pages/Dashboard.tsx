@@ -16,6 +16,7 @@ import {
 import { downloadCsv, todayStamp } from '../lib/csv';
 import { toast } from '../lib/toast';
 import * as dashboardApi from '../lib/api/dashboard';
+import * as betsApi from '../lib/api/bets';
 import { useAuthStore } from '../store/auth';
 import { formatCurrency, formatInteger, toIso } from '../lib/format';
 
@@ -215,6 +216,138 @@ const BranchBreakdown: React.FC<{
   );
 };
 
+/**
+ * Recent Tickets — small table at the bottom of the dashboard that
+ * lists the latest cashier-sold tickets in the current date window.
+ * Hits `/api/admin/bets?type=offline&from=…&to=…` directly so it
+ * stays in sync with what the Offline Bets page shows.
+ */
+interface RecentTicketRow {
+  id: string;
+  code: string;
+  stake: string;
+  status: string;
+  cashier: string;
+  branch: string;
+  placed: string;
+  sold: string;
+}
+
+const RecentTickets: React.FC<{ from?: string; to?: string }> = ({
+  from,
+  to,
+}) => {
+  const [rows, setRows] = useState<RecentTicketRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const isAuth = useAuthStore((s) => s.isAuthenticated);
+
+  useEffect(() => {
+    if (!isAuth) return;
+    let cancelled = false;
+    setLoading(true);
+    betsApi
+      .listBets({ type: 'offline', from, to, limit: 20, page: 1 })
+      .then((res) => {
+        if (cancelled) return;
+        setRows(
+          (res.items ?? []).map<RecentTicketRow>((b) => ({
+            id: b.id,
+            code:
+              b.printed_ticket_code ||
+              b.coupon_code ||
+              b.ticket_code ||
+              b.id.slice(0, 8),
+            stake: `${Number(b.stake).toFixed(2)} ${b.currency}`,
+            status: b.status,
+            cashier:
+              b.sold_by_cashier_name ??
+              b.sold_by_cashier_email ??
+              b.cashier_name ??
+              b.cashier_email ??
+              '—',
+            branch:
+              b.branch_name ??
+              String(
+                (b.metadata?.branch_name as string | undefined) ??
+                  b.branch_id ??
+                  '—'
+              ),
+            placed: b.placed_at
+              ? new Date(b.placed_at).toLocaleString()
+              : '—',
+            sold: b.sold_at ? new Date(b.sold_at).toLocaleString() : '—',
+          }))
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuth, from, to]);
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <div className="flex items-center space-x-3 mb-4">
+        <Ticket className="h-5 w-5 text-emerald-600" />
+        <h3 className="text-lg font-medium text-gray-900">
+          Recent Cashier Tickets
+        </h3>
+      </div>
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-500">
+          No cashier-sold tickets in the selected range.
+        </p>
+      ) : (
+        <DataTable<RecentTicketRow>
+          columns={[
+            {
+              header: 'Ticket',
+              accessor: 'code' as const,
+              render: (v: string) => (
+                <span className="font-mono text-xs">{v}</span>
+              ),
+            },
+            { header: 'Stake', accessor: 'stake' as const },
+            {
+              header: 'Status',
+              accessor: 'status' as const,
+              render: (s: string) => {
+                const cls =
+                  s === 'won'
+                    ? 'bg-green-100 text-green-800'
+                    : s === 'lost'
+                    ? 'bg-gray-100 text-gray-800'
+                    : s === 'void' || s === 'cancelled'
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-yellow-100 text-yellow-800';
+                return (
+                  <span
+                    className={`px-2 py-1 rounded-full text-xs font-medium ${cls}`}
+                  >
+                    {s.toUpperCase()}
+                  </span>
+                );
+              },
+            },
+            { header: 'Cashier', accessor: 'cashier' as const },
+            { header: 'Branch', accessor: 'branch' as const },
+            { header: 'Sold', accessor: 'sold' as const },
+            { header: 'Placed', accessor: 'placed' as const },
+          ]}
+          data={rows}
+        />
+      )}
+    </div>
+  );
+};
+
 const TabIcon: React.FC<{ tab: Tab }> = ({ tab }) => {
   const map: Record<Tab, React.ComponentType<{ className?: string }>> = {
     summary: TrendingUp,
@@ -344,6 +477,15 @@ export function Dashboard() {
         {activeTab === 'detailed' && !loading && (
           <div className="mt-6">
             <BranchBreakdown rows={byBranch} />
+          </div>
+        )}
+
+        {/* Recent cashier-sold tickets — only relevant on tabs that
+            include offline activity (summary / offline / detailed). The
+            Online tab is online-only, so hide the table there. */}
+        {activeTab !== 'online' && (
+          <div className="mt-6">
+            <RecentTickets from={from} to={to} />
           </div>
         )}
       </div>

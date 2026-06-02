@@ -84,6 +84,18 @@ export const changePasswordSchema = z.object({
   new_password: z.string().min(8).max(128),
 });
 
+/**
+ * Section 16 — Cashier panel "Dashboard" step-up confirmation.
+ *
+ * The dashboard requires the operator to re-enter their login password
+ * before viewing financial figures. This is NOT a full re-authentication
+ * (the existing token continues to work) — just a password check on the
+ * currently authenticated user.
+ */
+export const verifyPasswordSchema = z.object({
+  password: z.string().min(1).max(256),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CashierLoginInput = z.infer<typeof cashierLoginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
@@ -92,3 +104,4 @@ export type LogoutInput = z.infer<typeof logoutSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type VerifyPasswordInput = z.infer<typeof verifyPasswordSchema>;

@@ -281,6 +281,36 @@ router.patch(
   requireRole('cashier', 'sales'),
   controller.cashierPasswordChange
 );
+// Section 16 — Dashboard step-up verification. Reuses the auth rate
+// limiter so a token holder cannot use this as a free password oracle.
+swagger.registerPath({
+  method: 'post',
+  path: '/api/auth/verify-password',
+  summary: 'Re-verify the authenticated user\'s password (no token issued)',
+  tags: ['Auth'],
+  security: [{ bearerAuth: [] }],
+  requestBody: {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['password'],
+          properties: { password: { type: 'string' } },
+        },
+      },
+    },
+  },
+  responses: {
+    '200': { description: 'Password matches the authenticated user' },
+    '401': { description: 'Password does not match' },
+  },
+});
+router.post(
+  '/verify-password',
+  authenticateToken(),
+  controller.verifyPassword
+);
 router.post('/refresh', refreshRateLimiter, controller.refresh);
 router.post('/logout', controller.logout);
 router.post(

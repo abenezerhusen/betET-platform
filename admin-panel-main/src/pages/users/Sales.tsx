@@ -15,6 +15,7 @@ import { useAdminUsersByRole } from '../../lib/hooks';
 import * as usersApi from '../../lib/api/users';
 import type { AdminUser } from '../../lib/api/types';
 import { toNumber } from '../../lib/format';
+import { useAuthStore } from '../../store/auth';
 
 interface SalesData {
   id: string;
@@ -349,11 +350,13 @@ export function Sales() {
     },
   ];
 
+  const canManageSales = useAuthStore((s) => s.hasPermission('users.sales.manage'));
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold text-gray-900">Sales Staff</h1>
-        {activeTab === 'list' && (
+        {activeTab === 'list' && canManageSales && (
           <button
             onClick={() => setActiveTab('add')}
             className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
