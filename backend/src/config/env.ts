@@ -31,7 +31,7 @@ const envSchema = z.object({
   ACCOUNT_LOCK_DURATION_MINUTES: z.coerce.number().int().positive().default(15),
   PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(60),
 
-  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   LOGIN_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
 
   TENANT_HEADER: z.string().default('x-tenant-id'),
@@ -52,10 +52,10 @@ const envSchema = z.object({
   CACHE_DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(60),
 
   // Rate-limit defaults used by middleware (per-window).
-  RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(5),
-  RATE_LIMIT_BET_PER_MIN: z.coerce.number().int().positive().default(10),
-  RATE_LIMIT_ADMIN_REPORTS_PER_MIN: z.coerce.number().int().positive().default(30),
-  RATE_LIMIT_GENERAL_PER_MIN: z.coerce.number().int().positive().default(100),
+  RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(600),
+  RATE_LIMIT_BET_PER_MIN: z.coerce.number().int().positive().default(240),
+  RATE_LIMIT_ADMIN_REPORTS_PER_MIN: z.coerce.number().int().positive().default(600),
+  RATE_LIMIT_GENERAL_PER_MIN: z.coerce.number().int().positive().default(6000),
 
   /* ----------------------------------------------------------------------- */
   /* Telebirr SMS Pay Client (Flutter agent app)                             */

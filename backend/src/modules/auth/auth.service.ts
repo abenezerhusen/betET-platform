@@ -1087,11 +1087,25 @@ export async function getBranchForCashier(
       [cashierUserId]
     );
     const meta = userRes.rows[0]?.metadata ?? {};
-    const branchUserId =
+    const branchIdRaw =
       typeof meta.branch_id === 'string' ? meta.branch_id : null;
-    const branchCode =
+    const branchCodeMeta =
       typeof meta.branch_code === 'string' ? meta.branch_code : null;
-    if (!branchUserId && !branchCode) return null;
+    const branchLabelMeta =
+      typeof meta.branch_label === 'string' ? meta.branch_label : null;
+    if (!branchIdRaw && !branchCodeMeta) return null;
+
+    // `metadata.branch_id` can hold EITHER a UUID FK to a role='branch'
+    // user (newer admin flow) OR a human label like "PC001" (seed / legacy
+    // data). Only treat it as a UUID when it actually parses as one — this
+    // mirrors how the cashier tickets module resolves the branch and avoids
+    // a 22P02 "invalid input syntax for type uuid" crash on login.
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const branchUuid = branchIdRaw && UUID_RE.test(branchIdRaw) ? branchIdRaw : null;
+    // When branch_id is not a UUID, treat it as the branch code/label.
+    const branchCode =
+      branchCodeMeta ?? (branchIdRaw && !branchUuid ? branchIdRaw : null);
 
     // Pull the branch row (a user with role='branch') for its display
     // name. Tenancy is implicit (RLS) but we re-assert via tenant_id.
@@ -1105,17 +1119,23 @@ export async function getBranchForCashier(
          FROM users
         WHERE tenant_id = $1
           AND role = 'branch'
-          AND (${branchUserId ? 'id = $2' : '$2::uuid IS NULL'} OR metadata->>'branch_code' = $3)
+          AND (
+            ($2::uuid IS NOT NULL AND id = $2::uuid)
+            OR ($3::text IS NOT NULL AND metadata->>'branch_code' = $3)
+          )
         LIMIT 1`,
-      [tenantId, branchUserId, branchCode]
+      [tenantId, branchUuid, branchCode]
     );
     const b = branchRes.rows[0];
     if (!b) {
+      // No dedicated branch user row — surface the label the cashier was
+      // configured with so the panel header still shows the branch.
+      const label = branchLabelMeta ?? branchCode ?? branchIdRaw;
       return {
-        id: branchUserId ?? '',
-        user_id: branchUserId ?? '',
+        id: branchUuid ?? '',
+        user_id: branchUuid ?? '',
         branch_code: branchCode,
-        label: branchCode,
+        label,
       };
     }
     const bm = (b.metadata ?? {}) as Record<string, unknown>;

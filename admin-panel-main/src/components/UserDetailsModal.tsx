@@ -8,6 +8,7 @@ import {
   FileDown,
   History,
   DollarSign,
+  Ban,
 } from 'lucide-react';
 import { TabGroup } from './TabGroup';
 import { DataTable } from './DataTable';
@@ -20,24 +21,6 @@ interface UserDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: any;
-}
-
-interface RecentBetRow {
-  id: string;
-  source: string;
-  stake: number;
-  potential: number;
-  actual: number;
-  status: string;
-  placed_at: string;
-}
-
-interface RecentTxRow {
-  id: string;
-  amount: number;
-  status: string;
-  reference: string;
-  created_at: string;
 }
 
 const StatCard = ({
@@ -72,10 +55,33 @@ const fmtMoney = (v: number) => `$${v.toFixed(2)}`;
 const fmtDate = (v: string | null | undefined) =>
   v ? new Date(v).toLocaleString() : '—';
 
+const StatusPill = ({ s }: { s: string }) => (
+  <span
+    className={`px-2 py-1 text-xs rounded-full font-medium ${
+      s === 'won' || s === 'completed'
+        ? 'bg-green-100 text-green-700'
+        : s === 'lost' || s === 'cancelled'
+          ? 'bg-gray-100 text-gray-700'
+          : s === 'pending'
+            ? 'bg-yellow-100 text-yellow-700'
+            : 'bg-red-100 text-red-700'
+    }`}
+  >
+    {s}
+  </span>
+);
+
+type TabId =
+  | 'transactions'
+  | 'deposits'
+  | 'wins'
+  | 'bonus'
+  | 'referrals'
+  | 'tickets'
+  | 'branch';
+
 export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProps) {
-  const [activeTab, setActiveTab] = useState<'profile' | 'bets' | 'deposits' | 'withdrawals'>(
-    'profile'
-  );
+  const [activeTab, setActiveTab] = useState<TabId>('transactions');
   const [details, setDetails] = useState<usersApi.UserDetailsBundle | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -84,6 +90,7 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     let cancelled = false;
     setLoading(true);
     setDetails(null);
+    setActiveTab('transactions');
     usersApi
       .getUserDetails(user.id)
       .then((res) => {
@@ -112,7 +119,8 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
   const totalBalance = balances.reduce((s, b) => s + num(b.balance), 0);
   const totalBonus = balances.reduce((s, b) => s + num(b.bonus_balance), 0);
 
-  const recentBets = useMemo<RecentBetRow[]>(
+  // ---- Wins / Losses (sportsbook + casino bets) --------------------------
+  const winsRows = useMemo(
     () =>
       (details?.recent_bets ?? []).map((b) => ({
         id: b.id.slice(0, 8),
@@ -126,7 +134,21 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     [details]
   );
 
-  const recentDeposits = useMemo<RecentTxRow[]>(
+  // ---- Tickets (same bet feed, ticket-oriented columns) ------------------
+  const ticketRows = useMemo(
+    () =>
+      (details?.recent_bets ?? []).map((b) => ({
+        ticketId: b.id.slice(0, 8),
+        stake: fmtMoney(num(b.stake)),
+        possibleWin: fmtMoney(num(b.potential_payout)),
+        paidStatus: b.status,
+        createdDate: fmtDate(b.placed_at),
+      })),
+    [details]
+  );
+
+  // ---- Deposits / Withdrawals --------------------------------------------
+  const depositRows = useMemo(
     () =>
       (details?.recent_deposits ?? []).map((t) => ({
         id: t.id.slice(0, 8),
@@ -138,7 +160,7 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     [details]
   );
 
-  const recentWithdrawals = useMemo<RecentTxRow[]>(
+  const withdrawalRows = useMemo(
     () =>
       (details?.recent_withdrawals ?? []).map((t) => ({
         id: t.id.slice(0, 8),
@@ -150,16 +172,82 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     [details]
   );
 
+  // ---- Transactions (deposits + withdrawals merged, newest first) --------
+  const transactionRows = useMemo(() => {
+    const deps = (details?.recent_deposits ?? []).map((t) => ({
+      raw: t.created_at,
+      date: fmtDate(t.created_at),
+      amount: num(t.amount),
+      type: 'Deposit',
+      method: String((t.metadata?.['method'] as string) ?? (t.metadata?.['channel'] as string) ?? '—'),
+      status: t.status,
+      source: String((t.metadata?.['source'] as string) ?? 'online'),
+    }));
+    const wds = (details?.recent_withdrawals ?? []).map((t) => ({
+      raw: t.created_at,
+      date: fmtDate(t.created_at),
+      amount: num(t.amount),
+      type: 'Withdrawal',
+      method: String((t.metadata?.['method'] as string) ?? (t.metadata?.['channel'] as string) ?? '—'),
+      status: t.status,
+      source: String((t.metadata?.['source'] as string) ?? 'online'),
+    }));
+    return [...deps, ...wds].sort(
+      (a, b) => new Date(b.raw).getTime() - new Date(a.raw).getTime()
+    );
+  }, [details]);
+
   if (!isOpen || !user) return null;
 
   const tabs = [
-    { id: 'profile', label: 'Profile' },
-    { id: 'bets', label: `Bets (${recentBets.length})` },
-    { id: 'deposits', label: `Deposits (${recentDeposits.length})` },
-    { id: 'withdrawals', label: `Withdrawals (${recentWithdrawals.length})` },
+    { id: 'transactions', label: 'Transactions' },
+    { id: 'deposits', label: 'Deposits/Withdrawals' },
+    { id: 'wins', label: 'Wins/Losses' },
+    { id: 'bonus', label: 'Bonus History' },
+    { id: 'referrals', label: 'Referrals' },
+    { id: 'tickets', label: 'Tickets' },
+    { id: 'branch', label: 'Branch Transactions' },
   ];
 
-  const betColumns = [
+  const transactionColumns = [
+    { header: 'Date', accessor: 'date' as const },
+    {
+      header: 'Amount',
+      accessor: 'amount' as const,
+      render: (v: number, row: { type: string }) => (
+        <span className={row.type === 'Deposit' ? 'text-green-600' : 'text-red-600'}>
+          {row.type === 'Deposit' ? '+' : '-'}
+          {fmtMoney(v)}
+        </span>
+      ),
+    },
+    { header: 'Type', accessor: 'type' as const },
+    { header: 'Method', accessor: 'method' as const },
+    {
+      header: 'Status',
+      accessor: 'status' as const,
+      render: (s: string) => <StatusPill s={s} />,
+    },
+    { header: 'Source', accessor: 'source' as const },
+  ];
+
+  const txColumns = [
+    { header: 'ID', accessor: 'id' as const },
+    {
+      header: 'Amount',
+      accessor: 'amount' as const,
+      render: (v: number) => fmtMoney(v),
+    },
+    {
+      header: 'Status',
+      accessor: 'status' as const,
+      render: (s: string) => <StatusPill s={s} />,
+    },
+    { header: 'Reference', accessor: 'reference' as const },
+    { header: 'Date', accessor: 'created_at' as const },
+  ];
+
+  const winsColumns = [
     { header: 'Bet ID', accessor: 'id' as const },
     { header: 'Source', accessor: 'source' as const },
     {
@@ -180,51 +268,44 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     {
       header: 'Status',
       accessor: 'status' as const,
-      render: (s: string) => (
-        <span
-          className={`px-2 py-1 text-xs rounded-full font-medium ${
-            s === 'won'
-              ? 'bg-green-100 text-green-700'
-              : s === 'lost'
-              ? 'bg-gray-100 text-gray-700'
-              : s === 'pending'
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-red-100 text-red-700'
-          }`}
-        >
-          {s}
-        </span>
-      ),
+      render: (s: string) => <StatusPill s={s} />,
     },
     { header: 'Placed At', accessor: 'placed_at' as const },
   ];
 
-  const txColumns = [
-    { header: 'ID', accessor: 'id' as const },
-    {
-      header: 'Amount',
-      accessor: 'amount' as const,
-      render: (v: number) => fmtMoney(v),
-    },
+  const bonusColumns = [
+    { header: 'Date', accessor: 'date' as const },
+    { header: 'Amount', accessor: 'amount' as const },
+    { header: 'Type', accessor: 'type' as const },
+    { header: 'Description', accessor: 'description' as const },
+  ];
+
+  const referralColumns = [
+    { header: 'Name', accessor: 'name' as const },
+    { header: 'Joined Date', accessor: 'joinedDate' as const },
+    { header: 'Bonus Earned', accessor: 'bonusEarned' as const },
+    { header: 'Total Bets', accessor: 'totalBets' as const },
+    { header: 'Net Amount', accessor: 'netAmount' as const },
+  ];
+
+  const ticketColumns = [
+    { header: 'Ticket ID', accessor: 'ticketId' as const },
+    { header: 'Stake', accessor: 'stake' as const },
+    { header: 'Possible Win', accessor: 'possibleWin' as const },
     {
       header: 'Status',
-      accessor: 'status' as const,
-      render: (s: string) => (
-        <span
-          className={`px-2 py-1 text-xs rounded-full font-medium ${
-            s === 'completed'
-              ? 'bg-green-100 text-green-700'
-              : s === 'pending'
-              ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-red-100 text-red-700'
-          }`}
-        >
-          {s}
-        </span>
-      ),
+      accessor: 'paidStatus' as const,
+      render: (s: string) => <StatusPill s={s} />,
     },
-    { header: 'Reference', accessor: 'reference' as const },
-    { header: 'Date', accessor: 'created_at' as const },
+    { header: 'Created Date', accessor: 'createdDate' as const },
+  ];
+
+  const branchColumns = [
+    { header: 'Branch', accessor: 'branchName' as const },
+    { header: 'Sales Person', accessor: 'salesPerson' as const },
+    { header: 'Date', accessor: 'date' as const },
+    { header: 'Amount', accessor: 'amount' as const },
+    { header: 'Phone', accessor: 'phoneNumber' as const },
   ];
 
   const handleExport = () => {
@@ -280,19 +361,23 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center overflow-y-auto py-10">
-      <div className="bg-gray-100 rounded-lg w-[90%] max-w-7xl relative">
-        <div className="p-6 space-y-6">
-          <div className="flex justify-between items-center sticky top-0 z-50 bg-gray-100 rounded-t-lg">
-            <h2 className="text-2xl font-semibold text-gray-900">User Details</h2>
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 p-2 hover:bg-gray-200 rounded-full transition-colors"
-            >
-              <X className="h-6 w-6" />
-            </button>
-          </div>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      {/* The modal is height-capped to the viewport and scrolls internally so
+          it stays usable on every screen resolution without resizing the app. */}
+      <div className="bg-gray-100 rounded-lg w-full max-w-7xl max-h-[92vh] flex flex-col overflow-hidden shadow-xl">
+        {/* Fixed header */}
+        <div className="flex justify-between items-center px-6 py-4 bg-gray-100 border-b border-gray-200 shrink-0">
+          <h2 className="text-2xl font-semibold text-gray-900">User Details</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 p-2 hover:bg-gray-200 rounded-full transition-colors"
+          >
+            <X className="h-6 w-6" />
+          </button>
+        </div>
 
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {loading && !details ? (
             <div className="bg-white p-10 text-center text-sm text-gray-500 rounded-lg shadow-sm">
               Loading user details…
@@ -300,16 +385,8 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard
-                  title="Total Balance"
-                  value={fmtMoney(totalBalance)}
-                  icon={Wallet}
-                />
-                <StatCard
-                  title="Bonus Balance"
-                  value={fmtMoney(totalBonus)}
-                  icon={Gift}
-                />
+                <StatCard title="Total Balance" value={fmtMoney(totalBalance)} icon={Wallet} />
+                <StatCard title="Bonus Balance" value={fmtMoney(totalBonus)} icon={Gift} />
                 <StatCard
                   title="Total Won"
                   value={fmtMoney(num(aggregates?.total_won))}
@@ -396,40 +473,88 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
                 )}
               </div>
 
+              {/* Tabs and content */}
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <TabGroup
-                    tabs={tabs}
-                    activeTab={activeTab}
-                    onTabChange={(id) =>
-                      setActiveTab(id as 'profile' | 'bets' | 'deposits' | 'withdrawals')
-                    }
-                  />
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                  <div className="overflow-x-auto">
+                    <TabGroup
+                      tabs={tabs}
+                      activeTab={activeTab}
+                      onTabChange={(id) => setActiveTab(id as TabId)}
+                    />
+                  </div>
                   <button
                     onClick={handleExport}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 shrink-0"
                   >
                     <FileDown className="h-4 w-4 mr-2" />
-                    Export Profile
+                    Export Data
                   </button>
                 </div>
 
                 <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                  {activeTab === 'profile' && (
-                    <div className="p-6 text-sm text-gray-600">
-                      Use the tabs above to inspect this user&rsquo;s recent betting,
-                      deposit, and withdrawal activity. All numbers reflect the live
-                      database; the modal refreshes every time it is reopened.
+                  {activeTab === 'transactions' && (
+                    <DataTable columns={transactionColumns} data={transactionRows} />
+                  )}
+
+                  {activeTab === 'deposits' && (
+                    <div className="p-6 space-y-6">
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-700 mb-2">Deposits</h3>
+                        <DataTable columns={txColumns} data={depositRows} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-700 mb-2">Withdrawals</h3>
+                        <DataTable columns={txColumns} data={withdrawalRows} />
+                      </div>
                     </div>
                   )}
-                  {activeTab === 'bets' && (
-                    <DataTable columns={betColumns} data={recentBets} />
+
+                  {activeTab === 'wins' && (
+                    <DataTable columns={winsColumns} data={winsRows} />
                   )}
-                  {activeTab === 'deposits' && (
-                    <DataTable columns={txColumns} data={recentDeposits} />
+
+                  {activeTab === 'bonus' && (
+                    <div className="p-6 space-y-4">
+                      <div className="bg-blue-50 border-l-4 border-blue-400 p-4 flex">
+                        <Gift className="h-5 w-5 text-blue-400" />
+                        <div className="ml-3 text-sm text-blue-700">
+                          Current bonus balance:{' '}
+                          <span className="font-medium">{fmtMoney(totalBonus)}</span>
+                        </div>
+                      </div>
+                      <DataTable columns={bonusColumns} data={[]} />
+                    </div>
                   )}
-                  {activeTab === 'withdrawals' && (
-                    <DataTable columns={txColumns} data={recentWithdrawals} />
+
+                  {activeTab === 'referrals' && (
+                    <div className="p-6 space-y-4">
+                      <div className="bg-blue-50 border-l-4 border-blue-400 p-4 flex">
+                        <Users className="h-5 w-5 text-blue-400" />
+                        <div className="ml-3 text-sm text-blue-700">
+                          <h3 className="font-medium text-blue-800">Referral Summary</h3>
+                          <p>Total Referrals: {num(md.referral_count as number)}</p>
+                        </div>
+                      </div>
+                      <DataTable columns={referralColumns} data={[]} />
+                    </div>
+                  )}
+
+                  {activeTab === 'tickets' && (
+                    <DataTable columns={ticketColumns} data={ticketRows} />
+                  )}
+
+                  {activeTab === 'branch' && (
+                    <div className="p-6 space-y-4">
+                      <div className="bg-amber-50 border-l-4 border-amber-400 p-4 flex">
+                        <Ban className="h-5 w-5 text-amber-400" />
+                        <div className="ml-3 text-sm text-amber-700">
+                          Branch (cashier) transactions for this member are listed in the
+                          Branch Transactions report.
+                        </div>
+                      </div>
+                      <DataTable columns={branchColumns} data={[]} />
+                    </div>
                   )}
                 </div>
               </div>

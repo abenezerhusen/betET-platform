@@ -147,6 +147,7 @@ export async function listUsers(req: Request, params: ListUsersQuery) {
     async (client) =>
       repo.listUsers(client, scope.tenantId, {
         role: params.role ?? null,
+        roles: params._include_cashier_alias ? ['sales', 'cashier'] : null,
         status: params.status ?? null,
         kycStatus: params.kyc_status ?? null,
         search: params.search ?? null,

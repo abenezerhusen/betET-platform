@@ -57,6 +57,15 @@ export const listUsersSchema = z
           _online_users_alias: true,
         };
       }
+      // The admin Sales page manages retail/POS staff. Cashier accounts share
+      // this concept (both `sales` and `cashier` log into the cashier panel),
+      // so surface both roles in the Sales list.
+      if (r === 'sales') {
+        return {
+          ...(raw as Record<string, unknown>),
+          _include_cashier_alias: true,
+        };
+      }
     }
     return raw;
   }, z.object({
@@ -75,6 +84,11 @@ export const listUsersSchema = z
      * the `online_user` alias. Not exposed as a public query parameter.
      */
     _online_users_alias: z.boolean().optional(),
+    /**
+     * Set internally when the caller filtered by `role=sales`; widens the
+     * list to include `cashier` accounts too.
+     */
+    _include_cashier_alias: z.boolean().optional(),
   }));
 
 export const createUserSchema = z

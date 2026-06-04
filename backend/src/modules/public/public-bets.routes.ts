@@ -210,6 +210,121 @@ async function resolveSelectionIdFromHint(
   return byOrdinal.rows[0]?.id ?? null;
 }
 
+/**
+ * Lazily materialise a selection from a hint when it does not yet exist in
+ * the catalog.
+ *
+ * The user panel renders a large catalog of sample fixtures (per-league
+ * generated data) that are NOT seeded in the backend. To let players reserve
+ * a real branch-pay ticket on any displayed match — the whole point of the
+ * offline-reserve flow — we create the missing `sports_events` →
+ * `sports_markets` → `sports_selections` rows on demand, keyed by the team
+ * names so repeat bets on the same fixture reuse the same rows (no
+ * duplicates). The picked selection takes the odds the player saw; the other
+ * 1x2 outcomes get sensible placeholders.
+ *
+ * Scoped to this offline-reserve endpoint only.
+ */
+async function ensureSelectionFromHint(
+  client: PoolClient,
+  tenantId: string,
+  hint: z.infer<typeof selectionHintSchema>,
+  oddsSeen: number | undefined
+): Promise<string | null> {
+  const pickRaw = hint.selection_label.trim().toLowerCase();
+  const pick =
+    pickRaw === '1' || pickRaw === 'home'
+      ? 'home'
+      : pickRaw === 'x' || pickRaw === 'draw'
+        ? 'draw'
+        : pickRaw === '2' || pickRaw === 'away'
+          ? 'away'
+          : null;
+  // Only the standard 1x2 outcomes are auto-creatable; anything else needs a
+  // real seeded market.
+  if (!pick) return null;
+
+  const home = hint.home_team.trim();
+  const away = hint.away_team.trim();
+
+  // 1. Reuse an existing event for these teams (any non-cancelled status),
+  //    else create one. Push kickoff into the future so the "match started"
+  //    guard downstream doesn't immediately reject the slip.
+  const startsAt =
+    hint.starts_at && new Date(hint.starts_at).getTime() > Date.now() + 60_000
+      ? new Date(hint.starts_at)
+      : new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+  const existingEvent = await client.query<{ id: string }>(
+    `SELECT id FROM sports_events
+      WHERE tenant_id = $1
+        AND lower(home_team) = lower($2)
+        AND lower(away_team) = lower($3)
+        AND status <> 'cancelled'
+      ORDER BY starts_at DESC
+      LIMIT 1`,
+    [tenantId, home, away]
+  );
+  let eventId = existingEvent.rows[0]?.id ?? null;
+  if (!eventId) {
+    const created = await client.query<{ id: string }>(
+      `INSERT INTO sports_events (tenant_id, sport, league, home_team, away_team, starts_at, status)
+       VALUES ($1, 'football', $2, $3, $4, $5, 'scheduled')
+       RETURNING id`,
+      [tenantId, 'Mock League', home, away, startsAt.toISOString()]
+    );
+    eventId = created.rows[0].id;
+  }
+
+  // 2. Reuse / create the 1x2 market.
+  const existingMarket = await client.query<{ id: string }>(
+    `SELECT id FROM sports_markets
+      WHERE tenant_id = $1 AND event_id = $2
+        AND (LOWER(market_type) LIKE '%1x2%' OR LOWER(label) LIKE '%match result%')
+      ORDER BY created_at ASC
+      LIMIT 1`,
+    [tenantId, eventId]
+  );
+  let marketId = existingMarket.rows[0]?.id ?? null;
+  if (!marketId) {
+    const created = await client.query<{ id: string }>(
+      `INSERT INTO sports_markets (tenant_id, event_id, market_type, label, status)
+       VALUES ($1, $2, '1x2', 'Full Time Result', 'open')
+       RETURNING id`,
+      [tenantId, eventId]
+    );
+    marketId = created.rows[0].id;
+  }
+
+  // 3. Ensure all three 1x2 selections exist; the picked one carries the
+  //    player's seen odds.
+  const labelFor: Record<string, string> = { home: 'Home', draw: 'Draw', away: 'Away' };
+  const defaultOdds: Record<string, number> = { home: 2.0, draw: 3.2, away: 3.5 };
+  const pickOdds = oddsSeen && oddsSeen > 1 ? oddsSeen : defaultOdds[pick];
+
+  for (const outcome of ['home', 'draw', 'away'] as const) {
+    const label = labelFor[outcome];
+    const odds = outcome === pick ? pickOdds : defaultOdds[outcome];
+    await client.query(
+      `INSERT INTO sports_selections (tenant_id, market_id, label, odds_decimal)
+       SELECT $1, $2, $3, $4
+        WHERE NOT EXISTS (
+          SELECT 1 FROM sports_selections
+           WHERE tenant_id = $1 AND market_id = $2 AND lower(label) = lower($3)
+        )`,
+      [tenantId, marketId, label, odds]
+    );
+  }
+
+  const sel = await client.query<{ id: string }>(
+    `SELECT id FROM sports_selections
+      WHERE tenant_id = $1 AND market_id = $2 AND lower(label) = lower($3)
+      LIMIT 1`,
+    [tenantId, marketId, labelFor[pick]]
+  );
+  return sel.rows[0]?.id ?? null;
+}
+
 async function resolveSelections(
   client: PoolClient,
   tenantId: string,
@@ -320,6 +435,17 @@ router.post(
                 tenantId,
                 sel.selection_hint
               );
+              // Not in the seeded catalog (e.g. a generated sample fixture in
+              // the user panel) — materialise it on demand so any displayed
+              // match is bettable, then proceed with the new selection id.
+              if (!id) {
+                id = await ensureSelectionFromHint(
+                  client,
+                  tenantId,
+                  sel.selection_hint,
+                  sel.odds_seen
+                );
+              }
               if (!id) {
                 throw new BadRequestError(
                   `Could not resolve pick #${i + 1} (${sel.selection_hint.home_team} v ${sel.selection_hint.away_team})`,

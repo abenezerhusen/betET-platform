@@ -57,7 +57,7 @@ const ACTIVITY_AGGREGATE_JOIN = `
           0
         ) +
         COALESCE(
-          (SELECT SUM(sb.payout)::numeric
+          (SELECT SUM(sb.actual_payout)::numeric
              FROM sportsbook_bets sb
             WHERE sb.user_id = u.id AND sb.status = 'won'),
           0
@@ -99,6 +99,12 @@ export async function listUsers(
   scopeTenantId: string | null,
   params: {
     role: string | null;
+    /**
+     * When provided (and non-empty) the list matches ANY of these roles,
+     * overriding the single `role` equality. Used by the admin Sales page to
+     * surface both `sales` and `cashier` retail-staff accounts in one list.
+     */
+    roles?: string[] | null;
     status: string | null;
     kycStatus: string | null;
     search: string | null;
@@ -122,9 +128,15 @@ export async function listUsers(
     filters.push(`u.tenant_id = $${i++}`);
     values.push(scopeTenantId);
   }
-  if (params.role) {
-    filters.push(`u.role = $${i++}`);
-    values.push(params.role);
+  const roleList =
+    params.roles && params.roles.length
+      ? params.roles
+      : params.role
+        ? [params.role]
+        : null;
+  if (roleList) {
+    filters.push(`u.role = ANY($${i++}::text[])`);
+    values.push(roleList);
   }
   if (params.excludeOfflineStaffRoles) {
     const placeholders = OFFLINE_STAFF_ROLES.map(() => `$${i++}`);

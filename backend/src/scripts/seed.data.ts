@@ -19,6 +19,25 @@ async function ensureDefaultTenant(client: PoolClient): Promise<TenantRow> {
   return created.rows[0];
 }
 
+// Default Sales Operations permissions granted to the seeded cashier so the
+// Cashier Panel works out of the box for local testing. These IDs match the
+// admin-panel "Sales Operations" catalog (admin-panel-main/src/lib/permissions.ts)
+// and the `requirePermission(...)` gates on the cashier routes. In production an
+// administrator manages this exact list per cashier via the Admin Panel
+// (Users → Sales Staff → Role Settings), which writes `users.metadata.permissions`.
+const DEFAULT_CASHIER_PERMISSIONS = [
+  'deposit',
+  'withdraw',
+  'sell_tickets',
+  'sell_jackpots',
+  'can_payout',
+  'cancel_tickets',
+  'cancel_jackpots',
+  'cancel_deposit',
+  'date_filter_dashboard',
+  'request_withdrawal',
+];
+
 async function seedUsers(client: PoolClient, tenantId: string): Promise<void> {
   const passwordHash = await bcrypt.hash('Admin@123456', 12);
   // Each row carries a stable `username` in metadata so the spec-mandated
@@ -29,30 +48,44 @@ async function seedUsers(client: PoolClient, tenantId: string): Promise<void> {
       role: 'superadmin',
       full_name: 'Super Admin',
       username: 'superadmin',
+      metadata: { full_name: 'Super Admin', username: 'superadmin' } as Record<string, unknown>,
     },
     {
       email: 'admin@playcore.local',
       role: 'admin',
       full_name: 'Admin User',
       username: 'admin',
+      metadata: { full_name: 'Admin User', username: 'admin' } as Record<string, unknown>,
     },
     {
       email: 'cashier@playcore.local',
       role: 'cashier',
       full_name: 'Cashier User',
       username: 'cashier',
+      // A branch label (human code shown on printed receipts) plus the
+      // default permission set so deposit/withdraw/sell/cancel/payout all
+      // work immediately. Admins can tighten/loosen this per cashier.
+      metadata: {
+        full_name: 'Cashier User',
+        username: 'cashier',
+        branch_id: 'PC001',
+        branch_label: 'PC001',
+        permissions: DEFAULT_CASHIER_PERMISSIONS,
+      } as Record<string, unknown>,
     },
     {
       email: 'user@playcore.local',
       role: 'user',
       full_name: 'Test User',
       username: 'testuser',
+      metadata: { full_name: 'Test User', username: 'testuser' } as Record<string, unknown>,
     },
     {
       email: 'agent@playcore.local',
       role: 'agent',
       full_name: 'Agent User',
       username: 'agent',
+      metadata: { full_name: 'Agent User', username: 'agent' } as Record<string, unknown>,
     },
   ];
 
@@ -78,7 +111,7 @@ async function seedUsers(client: PoolClient, tenantId: string): Promise<void> {
         u.email,
         passwordHash,
         u.role,
-        JSON.stringify({ full_name: u.full_name, username: u.username }),
+        JSON.stringify(u.metadata),
       ]
     );
   }
@@ -273,9 +306,26 @@ async function seedP2pDevice(client: PoolClient, tenantId: string): Promise<void
   );
 }
 
+/**
+ * Seed a `cashier` role row carrying the default Sales Operations permission
+ * set. This backs the role-level fallback in `loadPermissionsForRole` so any
+ * cashier that does NOT have a per-user override still inherits a sensible
+ * default — and gives the Admin Panel a concrete role to manage.
+ */
+async function seedRoles(client: PoolClient, tenantId: string): Promise<void> {
+  await client.query(
+    `INSERT INTO roles (tenant_id, name, description, permissions, is_system, status)
+     VALUES ($1, 'cashier', 'Default cashier / sales staff role', $2::jsonb, true, 'active')
+     ON CONFLICT ON CONSTRAINT roles_tenant_name_unique
+     DO UPDATE SET permissions = EXCLUDED.permissions, updated_at = now()`,
+    [tenantId, JSON.stringify(DEFAULT_CASHIER_PERMISSIONS)]
+  );
+}
+
 export async function runSeed(client: PoolClient): Promise<void> {
   const tenant = await ensureDefaultTenant(client);
   await seedUsers(client, tenant.id);
+  await seedRoles(client, tenant.id);
   await seedGames(client, tenant.id);
   await seedSports(client, tenant.id);
   await seedTelebirrAgent(client, tenant.id);

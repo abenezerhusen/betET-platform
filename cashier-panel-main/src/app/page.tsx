@@ -33,7 +33,8 @@ import {
   LockOpen,
   Calendar,
   Hash,
-  DollarSign
+  DollarSign,
+  Trash2
 } from "lucide-react";
 import {
   clearCashierSession,
@@ -50,6 +51,7 @@ import {
   sellCashierTicket,
   payoutCashierTicket,
   cancelCashierTicket,
+  removeCashierTicketLeg,
   listCashierTickets,
   listActiveJackpots,
   listJackpotTicketsToday,
@@ -58,6 +60,9 @@ import {
   processBranchWithdrawal,
   getCashierDashboardStats,
   hasCashierPermission,
+  ensureCashierPermission,
+  onPermissionDenied,
+  PERMISSION_DENIED_MESSAGE,
   verifyMyPassword,
   type CashierTicket,
   type CashierTicketCheck,
@@ -87,6 +92,7 @@ export default function CashierPanel() {
   const [username, setUsername] = useState("");
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [currentPage, setCurrentPage] = useState<PageType>("tickets");
+  const [permissionDeniedMsg, setPermissionDeniedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = getCashierSession();
@@ -94,6 +100,13 @@ export default function CashierPanel() {
     setSession(stored);
     setIsLoggedIn(true);
     setUsername(stored.login_username ?? stored.user.email ?? stored.user.phone ?? "Cashier");
+  }, []);
+
+  // Global permission-denied popup. Any action handler that calls
+  // ensureCashierPermission(...) — or any backend 403 — surfaces the
+  // spec-mandated message here.
+  useEffect(() => {
+    return onPermissionDenied((message) => setPermissionDeniedMsg(message));
   }, []);
 
   if (!isLoggedIn) {
@@ -120,6 +133,33 @@ export default function CashierPanel() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-100">
+      {/* Permission-denied popup (spec-mandated message). */}
+      <Dialog
+        open={permissionDeniedMsg !== null}
+        onOpenChange={(open) => {
+          if (!open) setPermissionDeniedMsg(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Lock className="w-5 h-5" /> Permission Required
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-700 py-2">
+            {permissionDeniedMsg ?? PERMISSION_DENIED_MESSAGE}
+          </p>
+          <DialogFooter>
+            <Button
+              onClick={() => setPermissionDeniedMsg(null)}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Header */}
       <header className="bg-[#2d2d2d] text-white h-16 flex items-center justify-between px-6 shadow-md">
         <div className="flex items-center gap-3">
@@ -160,9 +200,9 @@ export default function CashierPanel() {
 
       {hasNoPerms ? (
         <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-sm px-6 py-3">
-          <strong>No permissions granted yet.</strong> Action buttons will be
-          disabled until an admin opens <em>Admin Panel → Users → Sales Staff →
-          Role Settings</em> for this account and saves the required
+          <strong>No permissions granted yet.</strong> Each action will show a
+          permission popup until an admin opens <em>Admin Panel → Users → Sales
+          Staff → Role Settings</em> for this account and saves the required
           permissions (e.g. <code>sell_tickets</code>, <code>can_payout</code>,
           <code>cancel_tickets</code>, <code>deposit</code>,{" "}
           <code>withdraw</code>). After saving, log out and back in here to
@@ -309,6 +349,7 @@ function TicketsPage() {
   const [printLoading, setPrintLoading] = useState(false);
   const [payoutBusy, setPayoutBusy] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [removeLegBusy, setRemoveLegBusy] = useState<number | null>(null);
 
   const session = getCashierSession();
   const branchLabel =
@@ -325,6 +366,19 @@ function TicketsPage() {
     iso ? new Date(iso).toLocaleString() : "—";
   const fmtDateOnly = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleDateString() : "—";
+
+  // A ticket can only be cancelled while every match is still upcoming.
+  // Returns true if at least one leg has already kicked off.
+  const ticketHasStartedMatch = (t: CashierTicket | null): boolean => {
+    if (!t || !Array.isArray(t.selections)) return false;
+    const now = Date.now();
+    return (t.selections as Array<Record<string, unknown>>).some((s) => {
+      const startsRaw = s?.starts_at as string | undefined;
+      if (!startsRaw) return false;
+      const ms = new Date(startsRaw).getTime();
+      return !Number.isNaN(ms) && ms <= now;
+    });
+  };
 
   const printTicketSlip = (t: CashierTicket) => {
     const html = buildThermalTicketPrintHtml({
@@ -373,6 +427,7 @@ function TicketsPage() {
   const printTicket = async (ticketId: string) => {
     const id = ticketId.trim();
     if (!id || printLoading) return;
+    if (!ensureCashierPermission("sell_tickets")) return;
     setCouponError("");
     setActionMessage("");
     setPrintLoading(true);
@@ -421,6 +476,7 @@ function TicketsPage() {
 
   const payTicket = async () => {
     if (!payoutInfo || payoutBusy) return;
+    if (!ensureCashierPermission("can_payout")) return;
     setPayoutBusy(true);
     setCouponError("");
     try {
@@ -443,6 +499,7 @@ function TicketsPage() {
 
   const cancelTicket = async () => {
     if (!ticket || cancelBusy) return;
+    if (!ensureCashierPermission("cancel_tickets")) return;
     setCancelBusy(true);
     setCouponError("");
     try {
@@ -455,6 +512,25 @@ function TicketsPage() {
       setCouponError((err as Error).message || "Cancel failed.");
     } finally {
       setCancelBusy(false);
+    }
+  };
+
+  const removeLeg = async (index: number, label: string) => {
+    if (!ticket || removeLegBusy !== null) return;
+    if (!ensureCashierPermission("sell_tickets")) return;
+    setRemoveLegBusy(index);
+    setCouponError("");
+    setActionMessage("");
+    try {
+      const out = await removeCashierTicketLeg(ticket.ticket_id, index);
+      setTicket(out.ticket);
+      setActionMessage(
+        `Removed ${out.removed_match || label || "match"}. Ticket re-priced.`,
+      );
+    } catch (err) {
+      setCouponError((err as Error).message || "Could not remove the match.");
+    } finally {
+      setRemoveLegBusy(null);
     }
   };
 
@@ -499,8 +575,7 @@ function TicketsPage() {
               onClick={() => void printTicket(couponCode)}
               disabled={
                 printLoading ||
-                !couponCode.trim() ||
-                !hasCashierPermission("sell_tickets")
+                !couponCode.trim()
               }
               title={
                 hasCashierPermission("sell_tickets")
@@ -554,6 +629,85 @@ function TicketsPage() {
                   </>
                 ) : null}
               </div>
+
+              {(() => {
+                const editable =
+                  (ticket.raw_status === "pending" ||
+                    ticket.raw_status === "accepted") &&
+                  !ticket.paid_at &&
+                  Array.isArray(ticket.selections) &&
+                  ticket.selections.length > 1;
+                if (!editable) return null;
+                const now = Date.now();
+                return (
+                  <div className="rounded-md border border-gray-200 bg-white p-3">
+                    <div className="mb-2 text-sm font-semibold text-gray-700">
+                      Adjust selections
+                    </div>
+                    <p className="mb-3 text-xs text-gray-500">
+                      Remove a match that has not started yet. The ticket is
+                      re-priced automatically.
+                    </p>
+                    <ul className="space-y-2">
+                      {(ticket.selections as Array<Record<string, unknown>>).map(
+                        (sel, idx) => {
+                          const matchLabel =
+                            (sel.match as string) ||
+                            [sel.home_team, sel.away_team]
+                              .filter(Boolean)
+                              .join(" v ") ||
+                            `Match ${idx + 1}`;
+                          const pick = (sel.selection as string) || "";
+                          const odds = Number(sel.odds ?? 0);
+                          const startsRaw = sel.starts_at as string | undefined;
+                          const startsAt = startsRaw
+                            ? new Date(startsRaw)
+                            : null;
+                          const started =
+                            !startsAt ||
+                            Number.isNaN(startsAt.getTime()) ||
+                            startsAt.getTime() <= now;
+                          return (
+                            <li
+                              key={idx}
+                              className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-gray-50 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-gray-800">
+                                  {matchLabel}
+                                </div>
+                                <div className="truncate text-xs text-gray-500">
+                                  {pick}
+                                  {odds > 0 ? ` @ ${odds.toFixed(2)}` : ""}
+                                  {startsAt && !Number.isNaN(startsAt.getTime())
+                                    ? ` · ${startsAt.toLocaleString()}`
+                                    : ""}
+                                </div>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void removeLeg(idx, matchLabel)}
+                                disabled={started || removeLegBusy !== null}
+                                title={
+                                  started
+                                    ? "This match has started and cannot be removed."
+                                    : "Remove this match from the ticket"
+                                }
+                                className="shrink-0 border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                              >
+                                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                                {removeLegBusy === idx ? "Removing..." : "Remove"}
+                              </Button>
+                            </li>
+                          );
+                        },
+                      )}
+                    </ul>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -602,7 +756,7 @@ function TicketsPage() {
             {payoutInfo && (payoutInfo.status === "won" || payoutInfo.status === "cashback") ? (
               <Button
                 onClick={() => void payTicket()}
-                disabled={payoutBusy || !hasCashierPermission("can_payout")}
+                disabled={payoutBusy}
                 title={
                   hasCashierPermission("can_payout")
                     ? undefined
@@ -618,11 +772,13 @@ function TicketsPage() {
             {ticket && (ticket.raw_status === "pending" || ticket.raw_status === "accepted") ? (
               <Button
                 onClick={() => void cancelTicket()}
-                disabled={cancelBusy || !hasCashierPermission("cancel_tickets")}
+                disabled={cancelBusy || ticketHasStartedMatch(ticket)}
                 title={
-                  hasCashierPermission("cancel_tickets")
-                    ? undefined
-                    : "Admin has not granted Cancel Tickets permission for this account."
+                  !hasCashierPermission("cancel_tickets")
+                    ? "Admin has not granted Cancel Tickets permission for this account."
+                    : ticketHasStartedMatch(ticket)
+                      ? "This ticket cannot be cancelled — one of its matches has already started."
+                      : undefined
                 }
                 variant="outline"
                 className="border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
@@ -734,6 +890,7 @@ function SuperJackpotsPage() {
 
   const handleSell = async () => {
     if (!selectedId || sellBusy) return;
+    if (!ensureCashierPermission("sell_jackpots")) return;
     setSellBusy(true);
     setFeedback(null);
     try {
@@ -849,7 +1006,7 @@ function SuperJackpotsPage() {
           <Button
             onClick={() => void handleSell()}
             disabled={
-              sellBusy || !selectedId || !hasCashierPermission("sell_jackpots")
+              sellBusy || !selectedId
             }
             title={
               hasCashierPermission("sell_jackpots")
@@ -1071,7 +1228,7 @@ function JackpotsRightSidebar() {
 
 function WithdrawDepositPage() {
   const session = getCashierSession();
-  const branchUserId = session?.branch?.user_id ?? undefined;
+  const branchUserId = session?.branch?.user_id?.trim() || undefined;
 
   const [depositPhone, setDepositPhone] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
@@ -1084,6 +1241,7 @@ function WithdrawDepositPage() {
   const [pendingWithdrawal, setPendingWithdrawal] = useState<CashierPendingWithdrawal | null>(null);
 
   const handleDeposit = async () => {
+    if (!ensureCashierPermission("deposit")) return;
     setFeedback(null);
     const phone = depositPhone.trim();
     const amountNum = Number(depositAmount);
@@ -1113,6 +1271,7 @@ function WithdrawDepositPage() {
   };
 
   const handleLookupWithdrawal = async () => {
+    if (!ensureCashierPermission("withdraw")) return;
     setFeedback(null);
     const code = withdrawCode.trim().toUpperCase();
     if (!code) {
@@ -1141,6 +1300,7 @@ function WithdrawDepositPage() {
 
   const handleProcessWithdrawal = async () => {
     if (!pendingWithdrawal || processBusy) return;
+    if (!ensureCashierPermission("withdraw")) return;
     setProcessBusy(true);
     setFeedback(null);
     try {
@@ -1205,7 +1365,7 @@ function WithdrawDepositPage() {
 
             <Button
               onClick={() => void handleDeposit()}
-              disabled={depositLoading || !hasCashierPermission("deposit")}
+              disabled={depositLoading}
               title={
                 hasCashierPermission("deposit")
                   ? undefined
@@ -1240,7 +1400,7 @@ function WithdrawDepositPage() {
 
             <Button
               onClick={() => void handleLookupWithdrawal()}
-              disabled={withdrawLoading || !hasCashierPermission("withdraw")}
+              disabled={withdrawLoading}
               title={
                 hasCashierPermission("withdraw")
                   ? undefined
@@ -1313,8 +1473,7 @@ function WithdrawDepositPage() {
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
               disabled={
                 processBusy ||
-                !pendingWithdrawal ||
-                !hasCashierPermission("withdraw")
+                !pendingWithdrawal
               }
               title={
                 hasCashierPermission("withdraw")
@@ -1818,13 +1977,6 @@ function LoginPage({ onLogin }: { onLogin: (session: CashierSession) => void }) 
           >
             {loading ? "Logging in..." : "Login"}
           </Button>
-
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-            <p className="font-semibold mb-1">Backend Login</p>
-            <p>Uses <strong>POST /api/auth/login</strong> with JWT.</p>
-            <p>Required fields: <strong>Branch ID</strong>, <strong>Username</strong>, <strong>Password</strong>.</p>
-            <p>Branch ID is validated against the branch assigned to the account.</p>
-          </div>
         </div>
       </div>
     </div>

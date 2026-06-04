@@ -18,6 +18,17 @@ const idempotencyKeyBodySchema = z
   .regex(/^[A-Za-z0-9._:\-]+$/, 'invalid idempotency key')
   .optional();
 
+/**
+ * Optional free-text identifier (e.g. branch id/label) that some panels send
+ * as an empty string when no value is selected. Treat blank as "absent" so a
+ * missing branch never trips validation — the cashier's shift/branch is the
+ * source of truth, not this hint.
+ */
+const optionalBranchId = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.string().trim().min(2).max(128).optional()
+);
+
 /* ------------------------------------------------------------------------- */
 /* Operations: deposit / withdrawal                                          */
 /* ------------------------------------------------------------------------- */
@@ -34,7 +45,7 @@ export const depositSchema = z
     /** Spec-aligned alternative identifier for walk-in deposits. */
     phone: z.string().trim().min(6).max(32).optional(),
     email: z.string().trim().toLowerCase().email().optional(),
-    branch_id: z.string().trim().min(2).max(128).optional(),
+    branch_id: optionalBranchId,
     amount: moneySchema,
     currency: z.string().trim().min(2).max(8).optional(),
     payment_method: z

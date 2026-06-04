@@ -131,17 +131,50 @@ export const adminReportsRateLimiter = rateLimit({
 });
 
 /**
- * General fallback: 100 requests / minute / user. Mounted at the very
- * top of the app so it covers every API route. Per-route limiters above
- * still apply with their own (typically lower) caps.
+ * Paths the global fallback limiter must never throttle.
+ *
+ * The general limiter is mounted at the very top of the app — *before* any
+ * route-level authentication runs — so for these surfaces `req.user` is not
+ * yet populated and the limiter would fall back to keying by IP. Behind a
+ * load balancer/NAT every cashier (potentially thousands, per the
+ * "millions of concurrent users" requirement) shares that single IP bucket,
+ * which collapses instantly and blocks legitimate work with
+ * "Rate limit exceeded".
+ *
+ * These surfaces are already protected by their own auth + permission
+ * checks (and, for agents, a dedicated per-device limiter), so we exempt
+ * them from the blunt global floor entirely. Cashier accounts therefore
+ * never get throttled by it — but every action still requires the correct
+ * permission, so an operation with no permission still does nothing.
+ */
+function skipGeneralLimiter(req: Request): boolean {
+  if (req.path === '/health' || req.path === '/ready') return true;
+  // Auth routes (/api/auth/*) carry their own dedicated limiters
+  // (loginRateLimiter + authRateLimiter). Letting the blunt IP-keyed global
+  // floor also apply here just produced confusing "Rate limit exceeded"
+  // blocks on legitimate logins/registrations, so it is exempted — users can
+  // log in at any time, while the targeted login limiter still deters
+  // brute-force.
+  if (req.path.startsWith('/api/auth')) return true;
+  // High-throughput, permission-gated panel/device surfaces.
+  return (
+    req.path.startsWith('/api/cashier') ||
+    req.path.startsWith('/api/agent')
+  );
+}
+
+/**
+ * General fallback limiter. Mounted at the top of the app so it covers
+ * public/user API routes. Authenticated panel surfaces (cashier, agent)
+ * are skipped — see `skipGeneralLimiter`. Per-route limiters (auth, bet
+ * placement, admin reports) still apply on top of this floor.
  */
 export const generalRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: env.RATE_LIMIT_GENERAL_PER_MIN,
   ...STANDARD_HEADERS,
   keyGenerator: userScopedKey('general'),
-  // Health and ready probes should never be throttled — important for k8s.
-  skip: (req) => req.path === '/health' || req.path === '/ready',
+  skip: skipGeneralLimiter,
   message: {
     error: 'too_many_requests',
     message: 'Rate limit exceeded.',

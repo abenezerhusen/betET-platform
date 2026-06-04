@@ -53,6 +53,7 @@ import {
 } from '../admin/settings/business-settings';
 import { getCashierScope, getIp, getUa } from './cashier-shared';
 import { requirePermission } from '../../middleware/require-permission';
+import { emitWalletUpdated } from '../../realtime/socket';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -897,6 +898,220 @@ router.post(
   }
 );
 
+/* ----------------------------------------------------------------------- */
+/* Remove a single not-yet-started leg from a pending multi-leg ticket and  */
+/* re-price it. Used when the customer changes their mind about one match   */
+/* before the slip is paid out. Only legs whose match has not kicked off    */
+/* can be dropped; the last remaining leg cannot be removed (cancel the     */
+/* whole ticket instead).                                                   */
+/* ----------------------------------------------------------------------- */
+
+const removeLegSchema = z.object({
+  index: z.coerce.number().int().min(0),
+});
+
+swagger.registerPath({
+  method: 'post',
+  path: '/api/cashier/tickets/{ticketId}/remove-leg',
+  summary: 'Remove a not-yet-started selection from a pending ticket and re-price it',
+  tags: ['Cashier Tickets'],
+  security: [{ bearerAuth: [] }],
+  responses: {
+    '200': { description: 'Leg removed; ticket re-priced' },
+    '400': { description: 'Match started / last leg / not editable' },
+  },
+});
+
+router.post(
+  '/:ticketId/remove-leg',
+  requirePermission('sell_tickets'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { ticketId } = paramSchema.parse(req.params);
+      const { index } = removeLegSchema.parse(req.body);
+      const scope = getCashierScope(req);
+
+      const out = await withTenantClient(
+        { tenantId: scope.tenantId },
+        async (client) => {
+          await client.query('BEGIN');
+          try {
+            const preload = await loadTicket(client, scope.tenantId, ticketId);
+            if (!preload) throw new NotFoundError('Ticket not found');
+
+            const lockRes =
+              preload.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `SELECT ${BET_COLS_SPORTSBOOK}
+                       FROM sportsbook_bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  )
+                : await client.query<BetRow>(
+                    `SELECT ${BET_COLS_INTERNAL}
+                       FROM bets b
+                       LEFT JOIN users u ON u.id = b.user_id
+                      WHERE b.tenant_id = $1 AND b.id = $2
+                      FOR UPDATE OF b`,
+                    [scope.tenantId, preload.id]
+                  );
+            const bet = lockRes.rows[0];
+            if (!bet) throw new NotFoundError('Ticket not found');
+
+            if (bet.paid_at) {
+              throw new ConflictError('Cannot edit a paid ticket.', {
+                reason: 'already_paid',
+              });
+            }
+            if (bet.status !== 'pending' && bet.status !== 'accepted') {
+              throw new BadRequestError(
+                `Only pending tickets can be edited (status: ${bet.status}).`,
+                { reason: 'not_pending' }
+              );
+            }
+
+            // Selections live in metadata.selections (sportsbook + cashier
+            // kiosk slips) or, for some legacy rows, result.selections.
+            const meta = { ...(bet.metadata ?? {}) } as Record<string, unknown>;
+            const result = bet.result
+              ? ({ ...bet.result } as Record<string, unknown>)
+              : null;
+            const metaSelections = Array.isArray(meta.selections)
+              ? [...(meta.selections as unknown[])]
+              : null;
+            const resultSelections =
+              result && Array.isArray(result.selections)
+                ? [...(result.selections as unknown[])]
+                : null;
+            const selections = metaSelections ?? resultSelections;
+            if (!selections) {
+              throw new BadRequestError(
+                "This ticket's selections cannot be edited.",
+                { reason: 'no_editable_selections' }
+              );
+            }
+            if (index >= selections.length) {
+              throw new BadRequestError('Selection not found on this ticket.', {
+                reason: 'index_out_of_range',
+              });
+            }
+            if (selections.length <= 1) {
+              throw new BadRequestError(
+                'Cannot remove the only remaining match. Cancel the ticket instead.',
+                { reason: 'last_leg' }
+              );
+            }
+
+            const leg = selections[index] as Record<string, unknown>;
+            const startsAtRaw = leg?.starts_at;
+            const startsAt = startsAtRaw ? new Date(String(startsAtRaw)) : null;
+            if (!startsAt || Number.isNaN(startsAt.getTime())) {
+              throw new BadRequestError(
+                'Cannot determine this match start time; the leg cannot be removed.',
+                { reason: 'no_start_time' }
+              );
+            }
+            if (startsAt.getTime() <= Date.now()) {
+              throw new BadRequestError(
+                'This match has already started and cannot be removed.',
+                { reason: 'match_started' }
+              );
+            }
+
+            // Drop the leg and re-price from the remaining odds. Stake is
+            // unchanged; only the multiplier (and therefore the potential
+            // win) shrinks.
+            selections.splice(index, 1);
+            const totalOdds = selections.reduce((acc, s) => {
+              const o = Number((s as Record<string, unknown>).odds ?? 0);
+              return acc * (Number.isFinite(o) && o > 0 ? o : 1);
+            }, 1);
+            const stakeNum = num(bet.stake);
+            const newPotential = (stakeNum * totalOdds).toFixed(4);
+
+            if (metaSelections) meta.selections = selections;
+            if (resultSelections && result) result.selections = selections;
+
+            if (bet.source === 'sportsbook_bets') {
+              await client.query(
+                `UPDATE sportsbook_bets
+                    SET metadata = $3::jsonb,
+                        total_odds = $4,
+                        potential_payout = $5,
+                        bet_type = CASE WHEN $6 <= 1 THEN 'single' ELSE bet_type END
+                  WHERE tenant_id = $1 AND id = $2`,
+                [
+                  scope.tenantId,
+                  bet.id,
+                  JSON.stringify(meta),
+                  totalOdds.toFixed(4),
+                  newPotential,
+                  selections.length,
+                ]
+              );
+            } else {
+              await client.query(
+                `UPDATE bets
+                    SET metadata = $3::jsonb,
+                        result = $4::jsonb,
+                        potential_win = $5
+                  WHERE tenant_id = $1 AND id = $2`,
+                [
+                  scope.tenantId,
+                  bet.id,
+                  JSON.stringify(meta),
+                  result ? JSON.stringify(result) : null,
+                  newPotential,
+                ]
+              );
+            }
+
+            const reloaded = await loadTicket(client, scope.tenantId, ticketId);
+            const expiryDays = await getTicketExpiryDays(client, scope.tenantId);
+            await client.query('COMMIT');
+            const finalBet = reloaded ?? bet;
+            return {
+              ticket: presentTicket(
+                finalBet,
+                evaluatePayout(finalBet, expiryDays)
+              ),
+              removed_match: String(leg?.match ?? ''),
+            };
+          } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+          }
+        }
+      );
+
+      await tryAudit(
+        {
+          tenantId: scope.tenantId,
+          actorId: scope.cashierId,
+          actorType: 'cashier',
+          action: 'cashier.ticket.remove_leg',
+          resource: 'bet',
+          resourceId: out.ticket.bet_id,
+          payload: {
+            ticket_code: out.ticket.ticket_id,
+            removed_match: out.removed_match,
+          },
+          ip: getIp(req),
+          userAgent: getUa(req),
+          status: 'success',
+        },
+        { bypassRls: true }
+      );
+
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 swagger.registerPath({
   method: 'post',
   path: '/api/cashier/tickets/{ticketId}/cancel',
@@ -957,6 +1172,36 @@ router.post(
                 `Only pending tickets may be cancelled (status: ${bet.status}).`,
                 { reason: 'not_pending' }
               );
+            }
+
+            // A ticket may only be cancelled while ALL of its matches are
+            // still upcoming. The moment any single leg has kicked off the
+            // whole ticket is locked from cancellation.
+            {
+              const cMeta = bet.metadata ?? {};
+              const cResult = bet.result ?? {};
+              const cSelections =
+                (Array.isArray((cMeta as { selections?: unknown }).selections) &&
+                  ((cMeta as { selections: unknown[] }).selections as unknown[])) ||
+                (Array.isArray((cResult as { selections?: unknown }).selections) &&
+                  ((cResult as { selections: unknown[] }).selections as unknown[])) ||
+                [];
+              const now = Date.now();
+              const startedLeg = cSelections.find((s) => {
+                const startsRaw = (s as Record<string, unknown>)?.starts_at;
+                if (!startsRaw) return false;
+                const t = new Date(String(startsRaw)).getTime();
+                return !Number.isNaN(t) && t <= now;
+              });
+              if (startedLeg) {
+                const label =
+                  (startedLeg as Record<string, unknown>).match ||
+                  'a match';
+                throw new BadRequestError(
+                  `This ticket cannot be cancelled because ${label} has already started. A ticket can only be cancelled while none of its matches have started.`,
+                  { reason: 'match_started' }
+                );
+              }
             }
 
             // Section 19 — Cashier Config enforcement (cancel window,
@@ -1184,6 +1429,18 @@ router.post(
         },
         { bypassRls: true }
       );
+
+      // Real-time wallet sync — the cancel refunded the stake to the user's
+      // wallet, so notify their socket room to refresh the displayed balance.
+      if (out.refunded > 0 && out.ticket.user_id) {
+        emitWalletUpdated(scope.tenantId, out.ticket.user_id, {
+          reason: 'ticket_cancel_refund',
+          wallet: null,
+          amount: out.refunded,
+          currency: out.currency,
+          bet_id: out.ticket.bet_id,
+        });
+      }
 
       res.json(out);
     } catch (err) {

@@ -18,6 +18,7 @@ import {
   sendEmailBestEffort,
   sendSmsBestEffort,
 } from '../notifications/notifications.service';
+import { emitWalletUpdated } from '../../realtime/socket';
 
 /**
  * Resolve the target user id from whatever combination of identifiers
@@ -278,6 +279,17 @@ export async function processDeposit(
     status: 'success',
   });
 
+  // Real-time wallet sync — push the updated balance to the user's socket
+  // room so the User Home Page, Wallet Page and any open game iframe reflect
+  // the cashier deposit instantly (Deposit Synchronization requirement).
+  emitWalletUpdated(scope.tenantId, result.user_id, {
+    reason: 'cashier_deposit',
+    wallet: result.wallet,
+    amount: body.amount,
+    currency: result.wallet.currency,
+    transaction_id: result.transaction.id,
+  });
+
   if (!result.idempotent) {
     const user = await withTenantClient(
       { tenantId: scope.tenantId },
@@ -482,6 +494,16 @@ export async function processWithdrawal(
     ip: getIp(req),
     userAgent: getUa(req),
     status: 'success',
+  });
+
+  // Real-time wallet sync — push the updated balance to the user's socket
+  // room so the User Home/Wallet pages reflect the cashier withdrawal instantly.
+  emitWalletUpdated(scope.tenantId, result.user_id, {
+    reason: 'cashier_withdrawal',
+    wallet: result.wallet,
+    amount: body.amount,
+    currency: result.wallet.currency,
+    transaction_id: result.transaction.id,
   });
 
   if (!result.idempotent) {

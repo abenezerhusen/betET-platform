@@ -7,23 +7,16 @@ import { ImportModal } from '../../components/ImportModal';
 import { AddMemberModal } from '../../components/AddMemberModal';
 import { WalletModal } from '../../components/WalletModal';
 import { UserDetailsModal } from '../../components/UserDetailsModal';
+import { UserActions } from '../../components/UserActions';
+import { EditUserModal } from '../../components/EditUserModal';
+import { PasswordChangeModal } from '../../components/PasswordChangeModal';
 import * as XLSX from 'xlsx';
 import { toast } from '../../lib/toast';
 import * as usersApi from '../../lib/api/users';
 import { ApiError } from '../../lib/api/client';
 import type { AdminUser } from '../../lib/api/types';
 import { useAuthStore } from '../../store/auth';
-import {
-  UserPlus,
-  FileDown,
-  FileUp,
-  Wallet,
-  FileText,
-  Download,
-  Pause,
-  Play,
-  Shield,
-} from 'lucide-react';
+import { UserPlus, FileDown, FileUp, Download, Shield } from 'lucide-react';
 
 interface OnlineUserData {
   id: string;
@@ -136,6 +129,8 @@ export function OnlineUsers() {
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<OnlineUserData | null>(null);
   const [items, setItems] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -262,6 +257,54 @@ export function OnlineUsers() {
       setSelectedMember(member);
       setIsDetailsModalOpen(true);
     }
+  };
+
+  const handleEdit = (id: string) => {
+    const member = rows.find((u) => u.id === id);
+    if (member) {
+      setSelectedMember(member);
+      setIsEditModalOpen(true);
+    }
+  };
+
+  const handleChangePassword = (id: string) => {
+    const member = rows.find((u) => u.id === id);
+    if (member) {
+      setSelectedMember(member);
+      setIsPasswordModalOpen(true);
+    }
+  };
+
+  const submitEdit = async (data: Record<string, unknown>) => {
+    if (!selectedMember) return;
+    const src = items.find((u) => u.id === selectedMember.id);
+    const md = (src?.metadata ?? {}) as Record<string, unknown>;
+    const fullName = `${data.firstName ?? ''} ${data.lastName ?? ''}`.trim();
+    try {
+      await usersApi.updateUser(selectedMember.id, {
+        email: (data.email as string) || undefined,
+        phone: (data.phone as string) || undefined,
+        metadata: {
+          ...md,
+          full_name: fullName || md.full_name,
+          first_name: data.firstName ?? md.first_name ?? null,
+          last_name: data.lastName ?? md.last_name ?? null,
+          member_type: String(data.memberType ?? 'Regular').toLowerCase(),
+          city: data.city ?? md.city ?? null,
+          address: data.address ?? md.address ?? null,
+        },
+      });
+      toast('Member updated.');
+      reload();
+    } catch (err) {
+      toast(`Failed to update member: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
+  const submitPassword = async (data: { password: string }) => {
+    if (!selectedMember) return;
+    await usersApi.changeUserPassword(selectedMember.id, data.password);
+    toast('Password updated.');
   };
 
   const handleToggleStatus = async (id: string) => {
@@ -450,43 +493,18 @@ export function OnlineUsers() {
     {
       header: 'Actions',
       accessor: 'id' as const,
-      className: 'w-32',
-      render: (value: string) => {
-        const member = rows.find((r) => r.id === value);
-        return (
-          <div className="flex items-center justify-start space-x-1">
-            <button
-              onClick={() => handleViewWallet(value)}
-              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full"
-              title="Wallet"
-            >
-              <Wallet className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => handleViewDetails(value)}
-              className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-full"
-              title="View Details"
-            >
-              <FileText className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => void handleToggleStatus(value)}
-              className={`p-1.5 rounded-full ${
-                member?.rawStatus === 'active'
-                  ? 'text-red-600 hover:bg-red-50'
-                  : 'text-green-600 hover:bg-green-50'
-              }`}
-              title={member?.rawStatus === 'active' ? 'Suspend' : 'Reactivate'}
-            >
-              {member?.rawStatus === 'active' ? (
-                <Pause className="h-4 w-4" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-            </button>
-          </div>
-        );
-      },
+      className: 'w-44',
+      render: (value: string) => (
+        <UserActions
+          userId={value}
+          onView={handleViewDetails}
+          onEdit={handleEdit}
+          onChangePassword={handleChangePassword}
+          onToggleStatus={(id) => void handleToggleStatus(id)}
+          onWallet={handleViewWallet}
+          showWallet
+        />
+      ),
     },
   ];
 
@@ -589,6 +607,34 @@ export function OnlineUsers() {
         isOpen={isDetailsModalOpen}
         onClose={() => setIsDetailsModalOpen(false)}
         user={selectedMember}
+      />
+
+      <EditUserModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        onSubmit={(data) => void submitEdit(data)}
+        user={(() => {
+          if (!selectedMember) return null;
+          const src = items.find((u) => u.id === selectedMember.id);
+          const md = (src?.metadata ?? {}) as Record<string, unknown>;
+          const [first, ...rest] = selectedMember.name.split(/\s+/);
+          return {
+            first_name: String(md.first_name ?? first ?? ''),
+            last_name: String(md.last_name ?? rest.join(' ') ?? ''),
+            email: selectedMember.email === '-' ? '' : selectedMember.email,
+            phone: selectedMember.phone === '-' ? '' : selectedMember.phone,
+            memberType: selectedMember.memberType,
+            city: String(md.city ?? ''),
+            address: String(md.address ?? ''),
+          };
+        })()}
+      />
+
+      <PasswordChangeModal
+        isOpen={isPasswordModalOpen}
+        onClose={() => setIsPasswordModalOpen(false)}
+        onSubmit={submitPassword}
+        userId={selectedMember?.id ?? ''}
       />
     </div>
   );

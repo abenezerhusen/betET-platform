@@ -11,6 +11,7 @@ import {
 } from '../lib/auth/session';
 import { authApi, walletApi } from '../lib/api';
 import type { AuthUserSummary, WalletApiResponse, WalletSummaryLine } from '../lib/api/types';
+import { connectWalletRealtime, disconnectWalletRealtime } from '../lib/realtime';
 
 function syncLegacyBetSlipBalances(wallet: WalletApiResponse | null): void {
   if (typeof window === 'undefined') return;
@@ -76,7 +77,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setWallet(w);
       syncLegacyBetSlipBalances(w);
     } catch {
-      setWallet(null);
+      // Keep the last known wallet on a transient failure (network blip,
+      // token refresh race, brief 5xx). Wiping it to null here was what made
+      // the balance flicker between visible and hidden — and zeroed the
+      // balance the branch-withdrawal form relies on. We only clear the
+      // wallet on explicit logout / loss of session (handled elsewhere).
     } finally {
       setWalletLoading(false);
     }
@@ -87,13 +92,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refreshWallet();
   }, [ready, snapshot.accessToken, refreshWallet]);
 
+  // NOTE: We intentionally do NOT listen for our own `mezzobet:balance` event
+  // here. `refreshWallet()` dispatches that event (via syncLegacyBetSlipBalances)
+  // to notify the legacy betslip UI that reads balance from localStorage. If we
+  // also refetched on it, every successful fetch would re-dispatch the event and
+  // re-trigger a fetch — an infinite loop that hammered /api/user/wallet. Server-
+  // authoritative balance changes are covered by the realtime push + focus refresh
+  // below and explicit refreshWallet() calls after actions.
+
+  // Real-time wallet sync — listen for backend WALLET_UPDATED pushes (cashier
+  // deposits/withdrawals, ticket refunds, bet settlements, etc.) so the
+  // displayed balance updates instantly without a manual refresh.
   useEffect(() => {
-    const onLegacy = () => {
-      void refreshWallet();
+    if (!ready || !snapshot.accessToken) {
+      disconnectWalletRealtime();
+      return;
+    }
+    const disconnect = connectWalletRealtime(snapshot.accessToken, {
+      onWalletUpdated: () => {
+        void refreshWallet();
+      },
+    });
+    return disconnect;
+  }, [ready, snapshot.accessToken, refreshWallet]);
+
+  // Safety net — refresh the balance whenever the tab regains focus, covering
+  // any moment the socket was disconnected.
+  useEffect(() => {
+    if (!ready) return;
+    const onFocus = () => {
+      if (snapshot.accessToken) void refreshWallet();
     };
-    window.addEventListener('mezzobet:balance', onLegacy);
-    return () => window.removeEventListener('mezzobet:balance', onLegacy);
-  }, [refreshWallet]);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [ready, snapshot.accessToken, refreshWallet]);
 
   const login = useCallback(
     async (input: Parameters<typeof authApi.login>[0]) => {

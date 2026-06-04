@@ -26,6 +26,7 @@ import {
   NotFoundError,
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
+import { emitWalletUpdated } from '../../realtime/socket';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -204,6 +205,15 @@ router.post(
         { bypassRls: true }
       );
 
+      // Reserving the funds reduces available balance immediately — push it.
+      emitWalletUpdated(scope.tenantId, scope.userId, {
+        reason: 'branch_withdrawal_reserved',
+        wallet: null,
+        amount: Number(out.amount),
+        currency: out.currency,
+        withdrawal_code: out.code,
+      });
+
       res.status(201).json({
         id: out.id,
         code: out.code,
@@ -239,8 +249,12 @@ router.get(
     try {
       const scope = getUserScope(req);
       const q = listQuery.parse(req.query);
+      // NOT read-only: sweepExpired() below performs UPDATE/INSERT to roll
+      // expired locked balances back, which Postgres rejects inside a
+      // READ ONLY transaction (this was causing the list endpoint to 500 and
+      // the user's generated code to never appear).
       const out = await withTenantClient(
-        { tenantId: scope.tenantId, readOnly: true },
+        { tenantId: scope.tenantId },
         async (client) => {
           // Sweep expired rows up before we list.
           await sweepExpired(client, scope.tenantId);
@@ -431,14 +445,28 @@ router.delete(
               reason: 'cancelled',
             });
             await client.query('COMMIT');
-            return { id, status: 'cancelled' };
+            return {
+              id,
+              status: 'cancelled',
+              amount: Number(row.amount),
+              currency: row.currency,
+            };
           } catch (err) {
             await client.query('ROLLBACK');
             throw err;
           }
         }
       );
-      res.json(out);
+
+      // Cancelling returns the locked funds to available balance — push it.
+      emitWalletUpdated(scope.tenantId, scope.userId, {
+        reason: 'branch_withdrawal_cancelled',
+        wallet: null,
+        amount: out.amount,
+        currency: out.currency,
+      });
+
+      res.json({ id: out.id, status: out.status });
     } catch (err) {
       next(err);
     }

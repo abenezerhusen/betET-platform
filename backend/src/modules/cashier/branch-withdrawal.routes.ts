@@ -29,9 +29,13 @@ import {
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
 import { getCashierScope, getIp, getUa } from './cashier-shared';
+import { emitWalletUpdated } from '../../realtime/socket';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface WithdrawalCodeRow {
   id: string;
@@ -234,9 +238,15 @@ router.post('/:id/process', async (req: Request, res: Response, next: NextFuncti
             `SELECT metadata FROM users WHERE id = $1`,
             [scope.cashierId]
           );
+          // `branch_id` columns are UUIDs. A cashier's metadata.branch_id is
+          // often a human label (e.g. "PC001"), not a real branch user id —
+          // inserting that into a uuid column 500s. Only keep it when it is a
+          // valid UUID, otherwise store null (same as the deposit flow).
+          const rawBranchId = meta.rows[0]?.metadata?.['branch_id'];
           const branchId =
-            (meta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-            null;
+            typeof rawBranchId === 'string' && UUID_RE.test(rawBranchId.trim())
+              ? rawBranchId.trim()
+              : null;
 
           // Locked-balance flow: the user-side endpoint already moved
           // the amount from `balance` into `locked_balance` when they
@@ -379,6 +389,16 @@ router.post('/:id/process', async (req: Request, res: Response, next: NextFuncti
       },
       { bypassRls: true }
     );
+
+    // Push the deduction to the player's wallet in real time so the user
+    // panel balance drops the instant the cashier hands over the cash.
+    emitWalletUpdated(scope.tenantId, out.user_id, {
+      reason: 'branch_withdrawal_paid',
+      wallet: null,
+      amount: out.amount,
+      currency: out.currency,
+      withdrawal_code: out.code,
+    });
 
     res.json(out);
   } catch (err) {

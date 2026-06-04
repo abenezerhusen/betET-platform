@@ -95,6 +95,43 @@ export function hasCashierPermission(permission: string): boolean {
   return perms.includes(permission);
 }
 
+/**
+ * The exact spec-mandated message shown when a cashier attempts an action
+ * they have not been granted permission for.
+ */
+export const PERMISSION_DENIED_MESSAGE =
+  "You do not have permission to perform this action. Please contact the administrator.";
+
+type PermissionDeniedListener = (message: string) => void;
+let permissionDeniedListener: PermissionDeniedListener | null = null;
+
+/**
+ * Register a single global listener (the app shell) that renders the
+ * permission-denied popup. Returns an unsubscribe function.
+ */
+export function onPermissionDenied(cb: PermissionDeniedListener): () => void {
+  permissionDeniedListener = cb;
+  return () => {
+    if (permissionDeniedListener === cb) permissionDeniedListener = null;
+  };
+}
+
+function triggerPermissionDenied(message: string = PERMISSION_DENIED_MESSAGE): void {
+  if (permissionDeniedListener) permissionDeniedListener(message);
+}
+
+/**
+ * Permission gate for action handlers. If the current cashier lacks
+ * `permission`, the spec-mandated popup is shown and the function returns
+ * false so the caller can short-circuit (the action "must not execute").
+ * Returns true when the action may proceed.
+ */
+export function ensureCashierPermission(permission: string): boolean {
+  if (hasCashierPermission(permission)) return true;
+  triggerPermissionDenied();
+  return false;
+}
+
 /** Re-verifies the currently logged in user's password against the
  * backend without issuing a new token. Used by the Dashboard "unlock"
  * step-up screen. Returns true iff the password matches. */
@@ -186,6 +223,13 @@ export async function apiRequest<T>(
     throw new ApiError(401, "Session expired", body);
   }
   if (!res.ok) {
+    // Backend permission failures (requirePermission gate) surface as 403
+    // with an "Insufficient permissions" error. Mirror these to the global
+    // popup so a denied action always shows the spec-mandated message, even
+    // if the client-side gate was somehow bypassed.
+    if (res.status === 403) {
+      triggerPermissionDenied();
+    }
     throw new ApiError(res.status, messageFromBody(body, `Request failed (${res.status})`), body);
   }
   return body as T;
@@ -588,6 +632,16 @@ export async function cancelCashierTicket(
   return apiRequest(
     `/api/cashier/tickets/${encodeURIComponent(ticketId.trim())}/cancel`,
     { method: "POST" },
+  );
+}
+
+export async function removeCashierTicketLeg(
+  ticketId: string,
+  index: number,
+): Promise<{ ticket: CashierTicket; removed_match: string }> {
+  return apiRequest(
+    `/api/cashier/tickets/${encodeURIComponent(ticketId.trim())}/remove-leg`,
+    { method: "POST", body: JSON.stringify({ index }) },
   );
 }
 
