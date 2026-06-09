@@ -6,6 +6,7 @@ import { Menu, Smile, Send, X } from "lucide-react"
 import {
   connectGameSocket,
   disconnectGameSocket,
+  ensureGameToken,
   fetchPlayerMe,
   placeAviatorBet,
   cashoutAviator,
@@ -15,6 +16,8 @@ import {
   type AviatorRoundFlyingEvent,
   type AviatorRoundStartEvent,
 } from "@/lib/game-engine"
+import { goBackToParent } from "@/lib/embed-nav"
+import { useBalanceToast } from "@/components/balance-toast"
 
 // SVG URLs for plane animation frames
 const PLANE_FRAMES = [
@@ -50,6 +53,7 @@ const AVATAR_IMAGES = [
 
 export default function AviatorPage() {
   const router = useRouter()
+  const { notify: notifyBalance, toast: balanceToast } = useBalanceToast()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number | null>(null)
   // Looping background music. The same <audio> instance is reused
@@ -80,7 +84,6 @@ export default function AviatorPage() {
   // Auto-reset on round_start when the previous bet finished.
   const bet1RoundIdRef = useRef<string | null>(null)
   const bet2RoundIdRef = useRef<string | null>(null)
-  const [planeFrame, setPlaneFrame] = useState(0)
   const [curveProgress, setCurveProgress] = useState(0)
   const [bobOffset, setBobOffset] = useState(0) // For plane bobbing at right edge
   const [menuOpen, setMenuOpen] = useState(false) // Hamburger menu state
@@ -255,6 +258,16 @@ export default function AviatorPage() {
     ))
   }, [])
 
+  // Pre-load + decode the plane sprite + background art once on mount so the
+  // very first flight animates smoothly without fetching frames mid-flight.
+  useEffect(() => {
+    ;[...PLANE_FRAMES, BG_SUN_URL].forEach((url) => {
+      const img = new Image()
+      img.decoding = 'async'
+      img.src = url
+    })
+  }, [])
+
   // ============================================================
   // Background music
   //   • One looping <audio> instance is created on mount.
@@ -376,15 +389,8 @@ export default function AviatorPage() {
     return () => clearInterval(cleanupInterval)
   }, [])
 
-  // Plane frame animation
-  useEffect(() => {
-    if (gamePhase === "flying") {
-      const interval = setInterval(() => {
-        setPlaneFrame(prev => (prev + 1) % PLANE_FRAMES.length)
-      }, 100)
-      return () => clearInterval(interval)
-    }
-  }, [gamePhase])
+  // Propeller frames now cycle via CSS keyframes (plane-prop-*), so there's
+  // no per-frame React state update during flight.
 
   // ============================================================
   // Backend integration — Section 17 spec.
@@ -401,34 +407,7 @@ export default function AviatorPage() {
   // ============================================================
   useEffect(() => {
     let cancelled = false
-    fetchPlayerMe()
-      .then((me) => {
-        if (cancelled) return
-        setBalance(readBalance(me))
-      })
-      .catch(() => {
-        /* unauthenticated — caller will see 401 redirect from api helper */
-      })
-
-    // Seed initial round snapshot so the first paint doesn't hang at
-    // "waiting" if the page joins mid-round.
-    getAviatorRound()
-      .then((snap) => {
-        if (cancelled) return
-        if (snap.round_id) setRoundId(snap.round_id)
-        if (snap.phase === "waiting" || snap.phase === "flying" || snap.phase === "crashed") {
-          setGamePhase(snap.phase)
-        }
-        if (typeof snap.current_multiplier === "number") {
-          setMultiplier(snap.current_multiplier)
-        }
-      })
-      .catch(() => {
-        /* not authenticated yet or worker hasn't bootstrapped — ignore */
-      })
-
-    const socket = connectGameSocket("aviator")
-    if (!socket) return
+    let socket: ReturnType<typeof connectGameSocket> = null
 
     const onStart = (ev: AviatorRoundStartEvent) => {
       setRoundId(ev.round_id)
@@ -479,15 +458,53 @@ export default function AviatorPage() {
       bet2RoundIdRef.current = null
     }
 
-    socket.on("aviator:round_start", onStart)
-    socket.on("aviator:round_flying", onFlying)
-    socket.on("aviator:round_crashed", onCrashed)
+    // Resolve a token first (live: iframe token; local dev: auto-minted
+    // seeded-player token) so the game always opens, then hydrate wallet +
+    // round and subscribe to the live feed.
+    void (async () => {
+      await ensureGameToken()
+      if (cancelled) return
+
+      fetchPlayerMe()
+        .then((me) => {
+          if (cancelled) return
+          setBalance(readBalance(me))
+        })
+        .catch(() => {
+          /* unauthenticated — caller will see 401 redirect from api helper */
+        })
+
+      // Seed initial round snapshot so the first paint doesn't hang at
+      // "waiting" if the page joins mid-round.
+      getAviatorRound()
+        .then((snap) => {
+          if (cancelled) return
+          if (snap.round_id) setRoundId(snap.round_id)
+          if (snap.phase === "waiting" || snap.phase === "flying" || snap.phase === "crashed") {
+            setGamePhase(snap.phase)
+          }
+          if (typeof snap.current_multiplier === "number") {
+            setMultiplier(snap.current_multiplier)
+          }
+        })
+        .catch(() => {
+          /* not authenticated yet or worker hasn't bootstrapped — ignore */
+        })
+
+      socket = connectGameSocket("aviator")
+      if (!socket) return
+      socket.on("aviator:round_start", onStart)
+      socket.on("aviator:round_flying", onFlying)
+      socket.on("aviator:round_crashed", onCrashed)
+    })()
 
     return () => {
       cancelled = true
-      socket.off("aviator:round_start", onStart)
-      socket.off("aviator:round_flying", onFlying)
-      socket.off("aviator:round_crashed", onCrashed)
+      if (socket) {
+        socket.off("aviator:round_start", onStart)
+        socket.off("aviator:round_flying", onFlying)
+        socket.off("aviator:round_crashed", onCrashed)
+      }
     }
     // Mount-only — listeners use refs/setters which are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -529,7 +546,10 @@ export default function AviatorPage() {
   const handleBet = useCallback(
     async (panel: 1 | 2) => {
       const amount = panel === 1 ? betAmount1 : betAmount2
-      if (amount > balance) return
+      if (amount > balance) {
+        notifyBalance("Insufficient balance — please deposit")
+        return
+      }
       if (!roundId) return
 
       // Flying → queue for next round.
@@ -571,6 +591,8 @@ export default function AviatorPage() {
         }
       } catch (err) {
         console.error("Aviator bet failed", err)
+        const msg = err instanceof Error ? err.message : ""
+        notifyBalance(/insufficient/i.test(msg) ? "Insufficient balance — please deposit" : "Bet failed")
       }
     },
     [
@@ -583,6 +605,7 @@ export default function AviatorPage() {
       autoCashout2,
       autoCashoutValue1,
       autoCashoutValue2,
+      notifyBalance,
     ],
   )
 
@@ -670,6 +693,7 @@ export default function AviatorPage() {
         fontFamily: "'Inter', 'Roboto', sans-serif"
       }}
     >
+      {balanceToast}
       {/* CSS Animations */}
       <style jsx global>{`
         @keyframes fly-curve {
@@ -684,6 +708,16 @@ export default function AviatorPage() {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
+        /* Propeller sprite cycling, driven entirely on the compositor so the
+           flight loop no longer re-renders the whole React tree 10×/second
+           just to swap a frame (the old setInterval(setPlaneFrame) churn was
+           a big contributor to jank, especially inside the user-panel iframe
+           where the page shares the main thread). Four stacked frames each
+           light up for one quarter of a 0.4s cycle. */
+        @keyframes plane-prop-0 { 0%,24.99% { opacity: 1 } 25%,100% { opacity: 0 } }
+        @keyframes plane-prop-1 { 0%,24.99% { opacity: 0 } 25%,49.99% { opacity: 1 } 50%,100% { opacity: 0 } }
+        @keyframes plane-prop-2 { 0%,49.99% { opacity: 0 } 50%,74.99% { opacity: 1 } 75%,100% { opacity: 0 } }
+        @keyframes plane-prop-3 { 0%,74.99% { opacity: 0 } 75%,100% { opacity: 1 } }
         .curve-path {
           stroke-dasharray: 1000;
           stroke-dashoffset: 1000;
@@ -706,7 +740,7 @@ export default function AviatorPage() {
         <div className="flex items-center gap-2">
           {/* Back Button */}
           <button 
-            onClick={() => router.push('/')}
+            onClick={() => goBackToParent(() => router.push('/'))}
             className="p-1 hover:opacity-80 transition-opacity"
             aria-label="Back to lobby"
           >
@@ -730,7 +764,7 @@ export default function AviatorPage() {
             src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/image-PCnSTgJBvW8diWzbfgc8OgnkcIarUu.png"
             alt="Aviator"
             className="cursor-pointer"
-            onClick={() => router.push('/')}
+            onClick={() => goBackToParent(() => router.push('/'))}
             style={{
               height: '24px',
               width: 'auto'
@@ -1668,17 +1702,37 @@ export default function AviatorPage() {
                       // Move plane to close the gap completely - tail directly touches curve
                       transform: 'translate(-18px, 15px) rotate(-15deg)',
                       transformOrigin: 'left top',
+                      // The server streams the multiplier ~5×/second; glide the
+                      // plane between those samples on the compositor so the
+                      // motion reads as 60fps instead of 5fps steps.
+                      transition: 'left 0.2s linear, bottom 0.2s linear',
+                      willChange: 'left, bottom',
                     }}
                   >
-                    <img 
-                      src={PLANE_FRAMES[planeFrame]}
-                      alt="Plane"
-                      style={{ 
-                        width: '100px',
-                        height: 'auto',
-                        filter: 'drop-shadow(0 0 10px rgba(229, 5, 57, 0.5))'
-                      }}
-                    />
+                    {/* All sprite frames are mounted once and pre-decoded; the
+                        propeller cycles via CSS keyframes (see plane-prop-*),
+                        so no React state churn and no remote <img src> swaps
+                        mid-flight. */}
+                    {PLANE_FRAMES.map((frame, idx) => (
+                      <img
+                        key={frame}
+                        src={frame}
+                        alt="Plane"
+                        aria-hidden={idx !== 0}
+                        decoding="async"
+                        draggable={false}
+                        style={{
+                          width: '100px',
+                          height: 'auto',
+                          filter: 'drop-shadow(0 0 10px rgba(229, 5, 57, 0.5))',
+                          position: idx === 0 ? 'relative' : 'absolute',
+                          top: 0,
+                          left: 0,
+                          animation: `plane-prop-${idx} 0.4s steps(1, end) infinite`,
+                          willChange: 'opacity',
+                        }}
+                      />
+                    ))}
                   </div>
 
                   {/* Multiplier Display - centered */}
@@ -1737,7 +1791,13 @@ export default function AviatorPage() {
                   border: '1px solid #2a2b2d',
                   filter: gamePhase === "flying" ? 'blur(0.5px)' : 'none',
                   opacity: gamePhase === "flying" ? 0.95 : 1,
-                  padding: '10px 60px 36px 60px'
+                  // The wide 60px side padding looks great at full width, but
+                  // when the chat panel is open the center shrinks and that
+                  // padding would squeeze the BET button into a tiny one. Relax
+                  // it while chat is open so the buttons keep their size. (Mobile
+                  // padding is overridden with !important in globals.css, so this
+                  // only affects desktop.)
+                  padding: chatPanelOpen ? '10px 18px 36px 18px' : '10px 60px 36px 60px'
                 }}
               >
                 {/* Bet/Auto tabs - centered at top */}
@@ -1906,7 +1966,9 @@ export default function AviatorPage() {
                   borderRadius: '12px',
                   filter: gamePhase === "flying" ? 'blur(0.5px)' : 'none',
                   opacity: gamePhase === "flying" ? 0.95 : 1,
-                  padding: showSinglePanel ? '12px 24px 20px 24px' : '10px 60px 36px 60px'
+                  padding: showSinglePanel
+                    ? '12px 24px 20px 24px'
+                    : (chatPanelOpen ? '10px 18px 36px 18px' : '10px 60px 36px 60px')
                 }}
               >
                 {/* Centered content wrapper for single panel mode */}

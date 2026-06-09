@@ -80,6 +80,32 @@ export async function login(req: Request, res: Response, next: NextFunction) {
 }
 
 /**
+ * Development-only convenience endpoint. Mints a player access token for a
+ * seeded test user so the internal game engine can be opened directly at
+ * http://localhost:3002 during local testing without going through the
+ * user-panel login + iframe launch. Disabled on production builds.
+ */
+export async function devGameToken(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (env.NODE_ENV === 'production') {
+      throw new BadRequestError('Not available');
+    }
+    const tenantId = requireTenantId(req);
+    const out = await service.issueDevGameToken(tenantId);
+    if (!out) {
+      throw new BadRequestError('No seeded player available for dev token');
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * Cashier panel login (Section 16).
  *
  * Only `cashier` / `sales` accounts may obtain tokens here. Identical

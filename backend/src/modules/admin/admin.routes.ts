@@ -28,6 +28,7 @@ import monitoringRouter from './monitoring/monitoring.module';
 import reportsPanelRouter from './reports-panel/reports-panel.module';
 import settingsExtraRouter from './settings-extra/settings-extra.module';
 import adminTransactionsRouter from './transactions/transactions.module';
+import gameActivityRouter from './game-activity/game-activity.module';
 import streaksRouter from './streaks/streaks.module';
 import opsRouter from './ops/ops.module';
 import packagesRouter from './packages/packages.module';
@@ -100,6 +101,9 @@ router.use('/notifications', notificationsAliasRouter);
 router.use('/panel-reports', reportsPanelRouter);
 router.use('/configurations', settingsExtraRouter);
 router.use('/transactions', adminTransactionsRouter);
+// Internal-game per-bet activity explorer (Aviator / JetX / Fast Keno /
+// Multi Hot 5) — reads `game_bets` joined to players + rounds.
+router.use('/game-activity', gameActivityRouter);
 router.use('/streaks', streaksRouter);
 router.use('/packages', packagesRouter);
 router.use('/game-picks', gamePicksRouter);

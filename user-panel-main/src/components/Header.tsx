@@ -58,9 +58,9 @@ import {
 const mainNavItems = [
   { name: "HOME", href: "/", icon: Home },
   { name: "GAMES", href: "/games", icon: Gamepad2 },
-  { name: "AVIATOR", href: "/aviator", icon: Plane },
-  { name: "JETX", href: "/jetx", icon: Zap },
-  { name: "FAST KENO", href: "/fast-keno", icon: Hash },
+  { name: "AVIATOR", href: "/games?play=aviator", icon: Plane },
+  { name: "JETX", href: "/games?play=jetx", icon: Zap },
+  { name: "FAST KENO", href: "/games?play=fast-keno", icon: Hash },
   { name: "PROMOTIONS", href: "/promotions", icon: Gift },
 ];
 
@@ -280,12 +280,18 @@ export function Header() {
             )}
           </button>
 
-          <Link href="/" className="flex items-center">
-            <img
-              src="/play-core-logo.png"
-              alt="Play Core"
-              className="h-8 sm:h-10 w-auto"
-            />
+          {/* Brand logo — clicking still routes to home (unchanged). */}
+          <Link href="/" className="flex items-center gap-2" aria-label="1birr.bet home">
+            <span
+              className="flex items-center justify-center rounded-lg font-extrabold text-black h-8 w-8 sm:h-10 sm:w-10 text-sm sm:text-base shrink-0"
+              style={{ background: "#22c55e" }}
+            >
+              1B
+            </span>
+            <span className="font-extrabold text-lg sm:text-2xl leading-none tracking-tight">
+              <span className="text-white">1birr</span>
+              <span style={{ color: "#22c55e" }}>.bet</span>
+            </span>
           </Link>
 
           {/* Desktop Search */}
@@ -535,14 +541,13 @@ export function Header() {
             <>
               <Button
                 variant="outline"
-                className="border-white text-white hover:bg-white hover:text-black px-2 sm:px-4 py-2 text-xs sm:text-sm"
+                className="border-[#22c55e] text-[#22c55e] hover:bg-[#22c55e] hover:text-black px-2 sm:px-4 py-2 text-xs sm:text-sm"
                 onClick={() => setLoginOpen(true)}
               >
                 LOGIN
               </Button>
               <Button
-                className="text-black font-semibold px-2 sm:px-4 py-2 text-xs sm:text-sm"
-                style={{ background: "var(--mezzo-accent-green)" }}
+                className="text-black font-semibold px-2 sm:px-4 py-2 text-xs sm:text-sm bg-[#22c55e] hover:bg-[#16a34a]"
                 onClick={() => setRegisterOpen(true)}
               >
                 REGISTER

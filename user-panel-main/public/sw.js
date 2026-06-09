@@ -1,5 +1,5 @@
-const CACHE_NAME = 'play-core-v16';
-const DYNAMIC_CACHE = 'play-core-dynamic-v16';
+const CACHE_NAME = '1birr-v17';
+const DYNAMIC_CACHE = '1birr-dynamic-v17';
 
 // Assets to cache on install
 const STATIC_ASSETS = [

@@ -1,13 +1,16 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import Link from "next/link"
 import {
+  ensureGameToken,
   fetchPlayerMe,
   readBalance,
   spinSlots,
   type SlotsSpinResponse,
 } from "@/lib/game-engine"
+import { goBackToParent } from "@/lib/embed-nav"
+import { useBalanceToast } from "@/components/balance-toast"
+import { useStageScale } from "@/hooks/use-stage-scale"
 
 // Asset URLs - All provided assets
 const ASSETS = {
@@ -171,19 +174,27 @@ function SlotSymbol({ symbolId, isWinning, isSpinning }: { symbolId: string, isW
 }
 
 export default function MultiHot5Page() {
+  const { notify: notifyBalance, toast: balanceToast } = useBalanceToast()
+  useStageScale()
   // Section 17 spec — balance is the authoritative wallet value from
   // GET /api/users/me. We never invent it client-side.
   const [balance, setBalance] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetchPlayerMe()
-      .then((me) => {
-        if (!cancelled) setBalance(readBalance(me))
-      })
-      .catch(() => {
-        /* unauthenticated — handled centrally in lib/api */
-      })
+    // Resolve a token first (live: iframe token; local dev: auto-minted
+    // seeded-player token) so the game always opens, then hydrate wallet.
+    void (async () => {
+      await ensureGameToken()
+      if (cancelled) return
+      fetchPlayerMe()
+        .then((me) => {
+          if (!cancelled) setBalance(readBalance(me))
+        })
+        .catch(() => {
+          /* unauthenticated — handled centrally in lib/api */
+        })
+    })()
     return () => {
       cancelled = true
     }
@@ -274,6 +285,10 @@ export default function MultiHot5Page() {
   const cardFlashRef = useRef<NodeJS.Timeout | null>(null)
   // Auto-hide timeout for winning line + firebox glow after a spin result is shown
   const winDisplayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // Server-authoritative outcome for the in-flight spin, so the manual-stop
+  // path credits/animates the exact same values as the auto-resolve path.
+  const pendingServerPayoutRef = useRef<number>(0)
+  const pendingServerBalanceRef = useRef<number | null>(null)
 
   useEffect(() => {
     const updateTime = () => {
@@ -313,21 +328,19 @@ export default function MultiHot5Page() {
   }
 
   /**
-   * Convert the backend `reels` payload (a single-row array of symbol
-   * strings) into the 3×3 matrix the UI renders. The server-driven row
-   * is shown on the middle row so the canonical payline lines up
-   * visually. Top and bottom rows are filled with the same symbols
-   * (cosmetic only — wins are taken straight from `total_payout`).
+   * Convert the backend `reels` payload — a full 3×3 grid, reel-major
+   * (`reels[reel][row]`) of symbol id strings — into the 3×3 matrix of
+   * SYMBOLS indices the UI renders. The grid is built server-side so that the
+   * winning symbol lands on a real payline; the client highlights whichever
+   * line(s) actually match, and the amount comes from `total_payout`.
    */
   const serverReelsToMatrix = (reels: SlotsSpinResponse["reels"]): number[][] => {
-    // The backend wraps the row in an outer array (`reels: [round.reels]`).
-    const row = reels[0] ?? []
-    const middle = [0, 1, 2].map((i) => serverSymbolToIndex(row[i] ?? row[0] ?? "seven"))
-    return [
-      [middle[0], middle[0], middle[0]],
-      [middle[1], middle[1], middle[1]],
-      [middle[2], middle[2], middle[2]],
-    ]
+    return [0, 1, 2].map((col) => {
+      const reel = reels[col] ?? []
+      return [0, 1, 2].map((row) =>
+        serverSymbolToIndex(reel[row] ?? reel[0] ?? "plum"),
+      )
+    })
   }
 
   // Play click sound - gated by clickSoundEnabled toggle
@@ -389,11 +402,66 @@ export default function MultiHot5Page() {
     return { winAmount: totalWinAmount, winCells, winRows, winPaylines }
   }, [activeMultiplier, betPerLine])
 
-  const animateMultiplierSelection = useCallback(() => {
+  /**
+   * Apply the winning visual effects for a resolved spin. `winAmount` is the
+   * server-authoritative payout — the single source of truth for whether the
+   * player won. The cell/payline highlight is derived from the reels, but if
+   * (defensively) the matcher finds nothing on a paid spin we light the whole
+   * grid so the winning effect ALWAYS shows when the player wins.
+   */
+  const showWinEffects = useCallback((winAmount: number, finalReels: number[][]) => {
+    if (winDisplayTimeoutRef.current) {
+      clearTimeout(winDisplayTimeoutRef.current)
+      winDisplayTimeoutRef.current = null
+    }
+
+    if (winAmount > 0) {
+      playWinSound()
+      setLastWin(winAmount)
+
+      let { winCells, winRows, winPaylines } = checkWins(finalReels)
+      if (winCells.size === 0) {
+        winCells = new Set<string>()
+        for (let col = 0; col < 3; col++) {
+          for (let row = 0; row < 3; row++) winCells.add(`${col}-${row}`)
+        }
+        winRows = new Set<number>([0, 1, 2])
+        winPaylines = new Set<number>([0, 1, 2, 3, 4])
+      }
+      setWinningCells(winCells)
+      setWinningRows(winRows)
+      setWinningPaylines(winPaylines)
+
+      // Auto-hide winning line + firebox glow after a brief display
+      winDisplayTimeoutRef.current = setTimeout(() => {
+        setWinningCells(new Set())
+        setWinningRows(new Set())
+        setWinningPaylines(new Set())
+        winDisplayTimeoutRef.current = null
+      }, 2500)
+
+      // Big-win celebration overlay for sizeable wins
+      if (winAmount >= betAmount * 20) {
+        setShowBigWin(true)
+        setTimeout(() => setShowBigWin(false), 3000)
+      }
+    } else {
+      setWinningCells(new Set())
+      setWinningRows(new Set())
+      setWinningPaylines(new Set())
+    }
+  }, [betAmount, checkWins, playWinSound])
+
+  const animateMultiplierSelection = useCallback((targetIndex?: number) => {
     return new Promise<number>((resolve) => {
       let count = 0
       const maxCycles = 10 + Math.floor(Math.random() * 3) // 10-12 cycles for ~800-960ms total
-      const finalIndex = Math.floor(Math.random() * 5)
+      // Land on the server-chosen multiplier when provided so the displayed
+      // multiplier reel matches the payout; otherwise pick one locally.
+      const finalIndex =
+        typeof targetIndex === 'number' && targetIndex >= 0 && targetIndex < 5
+          ? targetIndex
+          : Math.floor(Math.random() * 5)
       
       multiplierAnimRef.current = setInterval(() => {
         setAnimatingMultiplier(count % 5)
@@ -413,7 +481,11 @@ export default function MultiHot5Page() {
   }, [])
 
   const spin = useCallback(async () => {
-    if (isSpinning || balance < betAmount) return
+    if (isSpinning) return
+    if (balance < betAmount) {
+      notifyBalance("Insufficient balance — please deposit")
+      return
+    }
 
     // Button press animation
     setIsButtonPressed(true)
@@ -447,6 +519,8 @@ export default function MultiHot5Page() {
       setBalance(spinResult.balance_after)
     } catch (err) {
       console.error("Slots spin failed", err)
+      const msg = err instanceof Error ? err.message : ""
+      notifyBalance(/insufficient/i.test(msg) ? "Insufficient balance — please deposit" : "Spin failed")
       setIsSpinning(false)
       return
     }
@@ -476,9 +550,10 @@ export default function MultiHot5Page() {
       }, delay)
     })
 
-    // Multiplier animation runs concurrently
+    // Multiplier animation runs concurrently, landing on the server multiplier
+    const serverMultiplierIndex = (spinResult.multiplier ?? 1) - 1
     setTimeout(async () => {
-      await animateMultiplierSelection()
+      await animateMultiplierSelection(serverMultiplierIndex)
       setIsMultiplierSpinning(false)
     }, 50)
 
@@ -491,8 +566,11 @@ export default function MultiHot5Page() {
     const serverPayout = spinResult.total_payout
     const serverBalanceAfter = spinResult.balance_after
     
-    // Store final reels for potential early stop and enable stop button after brief delay
+    // Store final reels + server outcome for potential early stop, and enable
+    // the stop button after a brief delay.
     pendingFinalReelsRef.current = finalReels
+    pendingServerPayoutRef.current = serverPayout
+    pendingServerBalanceRef.current = serverBalanceAfter
     stopSpinRequestedRef.current = false
     setTimeout(() => {
       setCanStopSpin(true)
@@ -554,40 +632,12 @@ export default function MultiHot5Page() {
             // Skip if stop was already triggered manually
             if (stopSpinRequestedRef.current) return
             
-            // The server is the source of truth for whether we won and
-            // how much. The local `checkWins` is kept only for the visual
-            // win cells / paylines highlight.
-            const { winCells, winRows, winPaylines } = checkWins(finalReels)
+            // The server is the source of truth for whether we won and how
+            // much. Sync the balance with the server value and fire the
+            // winning effects from the same authoritative payout.
             const winAmount = serverPayout
-
-            // Sync balance once more with the server value in case any
-            // optimistic update slipped through.
             setBalance(serverBalanceAfter)
-
-            if (winAmount > 0) {
-              playWinSound()
-              setLastWin(winAmount)
-              setWinningCells(winCells)
-              setWinningRows(winRows)
-              setWinningPaylines(winPaylines)
-
-              // Auto-hide winning line + firebox glow after a brief display
-              if (winDisplayTimeoutRef.current) clearTimeout(winDisplayTimeoutRef.current)
-              winDisplayTimeoutRef.current = setTimeout(() => {
-                setWinningCells(new Set())
-                setWinningRows(new Set())
-                setWinningPaylines(new Set())
-                winDisplayTimeoutRef.current = null
-              }, 2500)
-              
-              if (winAmount >= betAmount * 20) {
-                setShowBigWin(true)
-                setTimeout(() => setShowBigWin(false), 3000)
-              }
-            } else {
-              setWinningRows(new Set())
-              setWinningPaylines(new Set())
-            }
+            showWinEffects(winAmount, finalReels)
             
             // Add to spin history
             const now = new Date()
@@ -610,7 +660,7 @@ export default function MultiHot5Page() {
         }
       }, reelStopDelays[reelIndex])
     }
-  }, [isSpinning, balance, betAmount, checkWins, animateMultiplierSelection])
+  }, [isSpinning, balance, betAmount, animateMultiplierSelection, notifyBalance, showWinEffects])
 
   // Start autoplay function
   const startAutoplay = useCallback(() => {
@@ -661,35 +711,15 @@ export default function MultiHot5Page() {
       setReelJustStopped([false, false, false])
     }, 200)
     
-    // Check wins
+    // Check wins — use the server-authoritative payout/balance captured for
+    // this spin (the balance was already set to the server value at spin
+    // start, so we re-sync rather than add, avoiding any double-credit).
     setTimeout(() => {
-      const { winAmount, winCells, winRows, winPaylines } = checkWins(finalReels)
-      
-      if (winAmount > 0) {
-        playWinSound()
-        setLastWin(winAmount)
-        setBalance(prev => prev + winAmount)
-        setWinningCells(winCells)
-        setWinningRows(winRows)
-        setWinningPaylines(winPaylines)
-
-        // Auto-hide winning line + firebox glow after a brief display
-        if (winDisplayTimeoutRef.current) clearTimeout(winDisplayTimeoutRef.current)
-        winDisplayTimeoutRef.current = setTimeout(() => {
-          setWinningCells(new Set())
-          setWinningRows(new Set())
-          setWinningPaylines(new Set())
-          winDisplayTimeoutRef.current = null
-        }, 2500)
-        
-        if (winAmount >= betAmount * 20) {
-          setShowBigWin(true)
-          setTimeout(() => setShowBigWin(false), 3000)
-        }
-      } else {
-        setWinningRows(new Set())
-        setWinningPaylines(new Set())
+      const winAmount = pendingServerPayoutRef.current
+      if (pendingServerBalanceRef.current !== null) {
+        setBalance(pendingServerBalanceRef.current)
       }
+      showWinEffects(winAmount, finalReels)
       
       // Add to spin history
       const now = new Date()
@@ -709,7 +739,7 @@ export default function MultiHot5Page() {
       stopSpinRequestedRef.current = false
       pendingFinalReelsRef.current = null
     }, 150)
-  }, [isSpinning, canStopSpin, checkWins, betAmount, activeMultiplier])
+  }, [isSpinning, canStopSpin, betAmount, activeMultiplier, showWinEffects])
 
   useEffect(() => {
     return () => {
@@ -762,6 +792,7 @@ export default function MultiHot5Page() {
       
       // Check if we have enough balance
       if (balance < betAmount) {
+        notifyBalance("Insufficient balance — please deposit")
         stopAutoplay()
         return
       }
@@ -780,7 +811,7 @@ export default function MultiHot5Page() {
     return () => {
       if (autoplayRef.current) clearTimeout(autoplayRef.current)
     }
-  }, [autoplayActive, isSpinning, autoplayRemaining, lastWin, autoplayWinLimit, autoplayLoseLimit, stopOnBigWin, balance, betAmount, stopAutoplay])
+  }, [autoplayActive, isSpinning, autoplayRemaining, lastWin, autoplayWinLimit, autoplayLoseLimit, stopOnBigWin, balance, betAmount, stopAutoplay, notifyBalance])
 
   // Bet amounts array for scrolling (min 0.05, max 400 total bet = 80 per line)
   const betSteps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.50, 10.00, 15.00, 20.00, 30.00, 40.00, 50.00, 60.00, 80.00]
@@ -942,6 +973,7 @@ export default function MultiHot5Page() {
 
   return (
     <>
+    {balanceToast}
     <div className="game-scale-wrapper">
     <div 
       className="game-scale-inner min-h-screen flex flex-col relative overflow-hidden select-none"
@@ -988,18 +1020,19 @@ export default function MultiHot5Page() {
       <header className="relative z-10 flex items-center justify-between px-4 py-2 bg-black/80">
         <div className="flex items-center gap-3">
           {/* Back to Lobby Button */}
-          <Link 
-            href="/" 
+          <button
+            type="button"
+            onClick={() => goBackToParent()}
             className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#2a3a4a] hover:bg-[#3a4a5a] border border-[#4a5a6a] transition-colors"
             title="Back to Lobby"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white">
               <polyline points="15 18 9 12 15 6" />
             </svg>
-          </Link>
-          <Link href="/" className="flex items-center gap-2">
+          </button>
+          <button type="button" onClick={() => goBackToParent()} className="flex items-center gap-2">
             <img src={ASSETS.smartsoftLogo} alt="SmartSoft Gaming" className="h-5" />
-          </Link>
+          </button>
         </div>
         
         <div className="flex items-center gap-4">
@@ -2245,11 +2278,11 @@ export default function MultiHot5Page() {
         {/* === Header — back arrow + SmartSoft logo + time + menu === */}
         <header className="mhm-header">
           <div className="mhm-header-left">
-            <Link href="/" className="mhm-back-btn" aria-label="Back to lobby">
+            <button type="button" onClick={() => goBackToParent()} className="mhm-back-btn" aria-label="Back to lobby">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="15 18 9 12 15 6" />
               </svg>
-            </Link>
+            </button>
             <img src={ASSETS.smartsoftLogo} alt="SmartSoft Gaming" className="mhm-header-logo" />
           </div>
           <div className="mhm-header-left">

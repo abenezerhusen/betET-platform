@@ -49,9 +49,9 @@ type NavItem = {
 const primaryItems: NavItem[] = [
   { name: "HOME", href: "/", icon: HomeIcon },
   { name: "GAMES", href: "/games", icon: Gamepad2 },
-  { name: "AVIATOR", href: "/aviator", icon: Plane },
-  { name: "JETX", href: "/jetx", icon: Zap },
-  { name: "KENO", href: "/fast-keno", icon: Hash },
+  { name: "AVIATOR", href: "/games?play=aviator", icon: Plane },
+  { name: "JETX", href: "/games?play=jetx", icon: Zap },
+  { name: "KENO", href: "/games?play=fast-keno", icon: Hash },
 ];
 
 // "MORE" surfaces the same secondary destinations the desktop header's

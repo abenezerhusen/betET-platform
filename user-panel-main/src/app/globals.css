@@ -43,10 +43,57 @@
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------------------
+ * Cross-browser normalisation.
+ *
+ * The Chrome layout is the reference. The two biggest sources of "looks
+ * different in Edge/Firefox" on Windows are:
+ *   1. Scrollbar width — a classic 17px scrollbar shrinks the usable viewport
+ *      and can flip a responsive breakpoint (e.g. the 1280px Betslip switch)
+ *      versus a browser using overlay scrollbars. `scrollbar-gutter: stable`
+ *      reserves the gutter in every engine so the content width is identical.
+ *   2. Auto text inflation — some engines auto-resize text which changes line
+ *      wrapping and therefore vertical spacing. Pin it to 100%.
+ * ------------------------------------------------------------------------- */
+html {
+  scrollbar-gutter: stable;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Same scrollbar width + colour in Firefox so the reserved gutter (and
+     therefore the usable content width) is identical to the Chromium
+     reference instead of the OS default. */
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a52 var(--mezzo-bg-primary);
+}
+
+/* Chrome / Edge (Chromium): force an explicit styled page scrollbar so it is
+   the same fixed width and look as the reference, rather than the variable
+   17px Windows classic scrollbar that shifts the layout. */
+html::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+html::-webkit-scrollbar-track {
+  background: var(--mezzo-bg-primary);
+}
+html::-webkit-scrollbar-thumb {
+  background: #3a3a52;
+  border-radius: 8px;
+  border: 3px solid var(--mezzo-bg-primary);
+}
+html::-webkit-scrollbar-thumb:hover {
+  background: var(--mezzo-accent-green);
+}
+
 body {
   background-color: var(--mezzo-bg-primary);
   color: white;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  /* Identical glyph weight/metrics across rendering engines so spacing and
+     alignment match the Chrome reference. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   /* Prevent horizontal overflow if a descendant has wider content on
      narrow screens (the mobile breakpoint gets extra safeguards below). */
   overflow-x: hidden;

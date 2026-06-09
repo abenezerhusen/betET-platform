@@ -113,6 +113,11 @@ const WALLET_TX_TYPES = [
   'transfer_out',
   'rollback',
   'bet_refund',
+  // Internal-game money movements (Aviator / JetX / Fast Keno / Multi Hot 5).
+  // Surfaced here so admins can track every game stake and payout in the
+  // wallet ledger; the `reference` column encodes the game + bet id.
+  'bet_stake',
+  'bet_win',
 ] as const;
 
 /* ========================================================================== */
@@ -499,6 +504,8 @@ async function listWalletTransactions(
                            WHEN 'transfer_out' THEN 'Wallet transfer (out)'
                            WHEN 'rollback'     THEN 'Rollback'
                            WHEN 'bet_refund'   THEN 'Bet refund'
+                           WHEN 'bet_stake'    THEN 'Game bet'
+                           WHEN 'bet_win'      THEN 'Game win'
                            ELSE INITCAP(REPLACE(t.type, '_', ' '))
                          END)                                AS reason,
                 t.metadata->>'comment'                       AS comment,

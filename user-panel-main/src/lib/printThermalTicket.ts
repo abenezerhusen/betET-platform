@@ -57,7 +57,7 @@ export function printThermalTicket(): boolean {
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Play Core Ticket</title>
+<title>1birr.bet Ticket</title>
 <style>
   /* Standard 80 mm thermal receipt page. ESC/POS drivers (POS80, Epson,
      Star, Citizen, generic Windows) all honour this. Margin 0 means the

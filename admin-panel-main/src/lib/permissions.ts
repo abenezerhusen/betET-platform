@@ -139,6 +139,7 @@ const administratorCatalog: Permission[] = [
   { id: 'games.view', name: 'View Games', description: 'View games management page', category: 'Games', scopes: adminScopes },
   { id: 'games.rtp.view', name: 'View RTP Management', description: 'Open RTP management', category: 'Games', scopes: adminScopes },
   { id: 'games.rtp.edit', name: 'Edit RTP Values', description: 'Adjust RTP values per game / client', category: 'Games', scopes: adminScopes },
+  { id: 'games.activity.view', name: 'View Game Activity', description: 'Monitor internal game bets, wins and losses per player', category: 'Games', scopes: adminScopes },
 
   /* Iframe Integration ------------------------------------------------------ */
   { id: 'iframe.outbound.view', name: 'View Outbound Iframe', description: 'View outbound iframe configuration', category: 'Iframe Integration', scopes: adminScopes },

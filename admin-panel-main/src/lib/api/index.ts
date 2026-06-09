@@ -22,6 +22,7 @@ import * as games from './games';
 import * as reports from './reports';
 import * as panelReports from './panel-reports';
 import * as transactions from './transactions';
+import * as gameActivity from './game-activity';
 import * as auditLogs from './audit-logs';
 import * as logs from './logs';
 import * as analytics from './analytics';
@@ -51,6 +52,7 @@ export {
   reports,
   panelReports,
   transactions,
+  gameActivity,
   auditLogs,
   logs,
   analytics,

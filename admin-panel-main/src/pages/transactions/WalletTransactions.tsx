@@ -77,6 +77,8 @@ const REASON_FILTER_OPTIONS = [
   'Wallet Transfer',
   'Bet Refund',
   'Rollback',
+  'Game Bet',
+  'Game Win',
 ];
 
 const REASON_TO_VALUE: Record<string, string> = {
@@ -87,6 +89,8 @@ const REASON_TO_VALUE: Record<string, string> = {
   'Wallet Transfer': 'transfer_in',
   'Bet Refund': 'bet_refund',
   Rollback: 'rollback',
+  'Game Bet': 'bet_stake',
+  'Game Win': 'bet_win',
 };
 
 export function WalletTransactions() {

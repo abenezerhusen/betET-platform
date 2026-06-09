@@ -62,6 +62,7 @@ import { LimitsRules } from './pages/p2p/LimitsRules';
 import { Commissions } from './pages/p2p/Commissions';
 import { Logs as P2PLogs } from './pages/p2p/Logs';
 import { RtpManagement } from './pages/games/RtpManagement';
+import { GameActivity } from './pages/games/GameActivity';
 import { IframeIntegration } from './pages/iframe/IframeIntegration';
 import { Packages } from './pages/packages/Packages';
 import { ApisIntegrations } from './pages/apis/ApisIntegrations';
@@ -171,6 +172,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
 
   /* Games / Iframe / Packages / APIs */
   { path: '/games/rtp', perm: 'games.rtp.view', element: <RtpManagement /> },
+  { path: '/games/activity', perm: 'games.activity.view', element: <GameActivity /> },
   { path: '/iframe', perm: 'iframe.outbound.view', element: <IframeIntegration /> },
   { path: '/packages', perm: 'packages.view', element: <Packages /> },
   { path: '/apis', perm: 'apis.view', element: <ApisIntegrations /> },

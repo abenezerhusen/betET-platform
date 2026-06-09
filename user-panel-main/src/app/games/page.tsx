@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import {
@@ -9,10 +9,10 @@ import {
   Maximize2,
   Minimize2,
   ArrowLeft,
-  X,
 } from "lucide-react";
 import * as gamesApi from "@/lib/api/games";
 import type { GameSummary } from "@/lib/api/types";
+import { getAccessToken } from "@/lib/auth/session";
 
 type ViewMode = "expanded" | "compact";
 
@@ -49,6 +49,16 @@ function typeLabel(type: string): string {
   return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const THUMB_FALLBACK = "/play-core-logo.png";
+
+// Swap any thumbnail that fails to load (404 / broken provider URL) for the
+// PlayCore logo so the lobby never shows the browser's broken-image icon.
+function handleThumbError(e: React.SyntheticEvent<HTMLImageElement>): void {
+  const img = e.currentTarget;
+  if (img.src.endsWith(THUMB_FALLBACK)) return;
+  img.src = THUMB_FALLBACK;
+}
+
 export default function GamesPage() {
   const router = useRouter();
   const [cards, setCards] = useState<LobbyCard[]>([]);
@@ -66,6 +76,10 @@ export default function GamesPage() {
     provider: string;
   } | null>(null);
   const [launching, setLaunching] = useState(false);
+  // Guards the one-shot auto-launch triggered by the `?play=<slug>` query
+  // param (used by the navbar Aviator / JetX / Fast Keno shortcuts). Without
+  // it the game would re-open every time the card list refreshes.
+  const launchedFromQueryRef = useRef(false);
 
   const categories = ["all", ...new Set(cards.map((g) => g.type))].sort();
 
@@ -196,7 +210,7 @@ export default function GamesPage() {
       // engine reads the user JWT from URL and resolves the wallet itself.
       const slug = game.internalSlug ?? game.id;
       const token = typeof window !== "undefined"
-        ? localStorage.getItem("auth_token") ?? ""
+        ? getAccessToken() ?? localStorage.getItem("mezzobet_access_token") ?? ""
         : "";
       const url = `${GAME_ENGINE_URL.replace(/\/$/, "")}/games/${slug}?token=${encodeURIComponent(token)}`;
       setExternalLaunch({
@@ -254,6 +268,60 @@ export default function GamesPage() {
     }
     setExternalLaunch(null);
   };
+
+  // Navbar shortcuts (Aviator / JetX / Fast Keno) and the dedicated game
+  // routes funnel here via `/games?play=<slug>` so they use the exact same
+  // launch + permission flow as clicking a card. We only auto-open a game
+  // that actually exists in the loaded lobby — i.e. an Active / permitted
+  // internal game — so a shortcut can never bypass the catalogue or open a
+  // game that isn't allowed.
+  useEffect(() => {
+    if (loading || launchedFromQueryRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const play = params.get("play");
+    if (!play) return;
+
+    // Consume the param once and strip it from the URL so a refresh / back
+    // doesn't re-launch the game.
+    launchedFromQueryRef.current = true;
+    params.delete("play");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `/games${qs ? `?${qs}` : ""}`);
+
+    const card = cards.find(
+      (c) =>
+        c.source === "internal" &&
+        (c.internalSlug === play || c.id === play),
+    );
+    if (card) void openRealPlay(card);
+    // openRealPlay is recreated each render; the ref guard keeps this a
+    // one-shot effect so we intentionally exclude it from the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, cards]);
+
+  // The game engine runs inside the launch iframe. When the player taps the
+  // in-game back control it posts a message asking us to close the game and
+  // return to this list — instead of navigating the iframe to the engine's
+  // own lobby (which would expose every game directly).
+  useEffect(() => {
+    let engineOrigin: string | null = null;
+    try {
+      engineOrigin = new URL(GAME_ENGINE_URL).origin;
+    } catch {
+      engineOrigin = null;
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (engineOrigin && event.origin !== engineOrigin) return;
+      const data = event.data as { type?: string } | null;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "GAME_BACK" || data.type === "SESSION_END") {
+        setExternalLaunch(null);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-120px)] md:min-h-[calc(100vh-180px)]">
@@ -442,18 +510,16 @@ export default function GamesPage() {
       {/* Launch iframe overlay for internal-engine + external provider games */}
       {externalLaunch && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
-          <div className="flex items-center justify-between p-3 bg-gray-900 text-white">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold">{externalLaunch.name}</span>
-              <span className="text-xs text-gray-400">{externalLaunch.provider}</span>
-            </div>
+          <div className="flex items-center gap-3 p-3 bg-gray-900 text-white">
             <button
+              type="button"
               onClick={() => void closeLaunch()}
-              className="inline-flex items-center px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
+              aria-label="Back to games"
+              className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
             >
-              <X className="w-4 h-4 mr-1" />
-              Close
+              <ArrowLeft className="w-5 h-5" />
             </button>
+            <span className="font-semibold truncate">{externalLaunch.name}</span>
           </div>
           <iframe
             src={externalLaunch.launchUrl}
@@ -495,8 +561,14 @@ function ExpandedGameCard({ game, onOpen, onPlayReal }: GameCardProps) {
       style={{ background: "var(--mezzo-bg-secondary)" }}
       onClick={onOpen}
     >
-      <div className="aspect-[16/10] relative">
-        <img src={thumb} alt={game.name} className="w-full h-full object-cover" />
+      <div className="aspect-[3/2] relative">
+        <img
+          src={thumb}
+          alt={game.name}
+          onError={handleThumbError}
+          loading="lazy"
+          className="w-full h-full object-cover"
+        />
         <span
           className="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11px] font-semibold"
           style={{
@@ -559,8 +631,14 @@ function CompactGameCard({ game, onOpen, onPlayReal }: GameCardProps) {
       onClick={onOpen}
       title={`${game.name} — ${game.provider}`}
     >
-      <div className="aspect-square relative">
-        <img src={thumb} alt={game.name} className="w-full h-full object-cover" />
+      <div className="aspect-[3/2] relative">
+        <img
+          src={thumb}
+          alt={game.name}
+          onError={handleThumbError}
+          loading="lazy"
+          className="w-full h-full object-cover"
+        />
         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
           <button
             type="button"

@@ -680,35 +680,41 @@ router.post('/keno/bet', async (req, res, next) => {
   }
 });
 
-function slotsPayout(
-  reels: string[],
-  stake: number,
-  rtpMultiplier = 0.965
-): { payout: number; winLines: number[] } {
-  // Base table * rtpMultiplier so admin-controlled RTP shifts the average
-  // return. With rtpMultiplier = 0.965 (default) Multi Hot 5 returns 96.5%
-  // of stakes long-term. Admins lowering RTP via internal_games scales
-  // these payouts down proportionally on every spin.
-  const allSame = reels.every((s) => s === reels[0]);
-  if (allSame) {
-    return {
-      payout: Number((stake * 10 * rtpMultiplier).toFixed(2)),
-      winLines: [1],
-    };
-  }
-  const counts = reels.reduce<Record<string, number>>((acc, s) => {
-    acc[s] = (acc[s] ?? 0) + 1;
-    return acc;
-  }, {});
-  const best = Math.max(...Object.values(counts));
-  if (best >= 3) {
-    return {
-      payout: Number((stake * 2 * rtpMultiplier).toFixed(2)),
-      winLines: [1],
-    };
-  }
-  return { payout: 0, winLines: [] };
-}
+/**
+ * Multi Hot 5 reel symbols. These MUST match the symbol `id`s the
+ * Multi Hot 5 client renders (see SYMBOLS in
+ * game-engine-main/app/games/multi-hot-5/page.tsx). The previous default
+ * poker set (A/K/Q/J/10/WILD/SCATTER) didn't map to any client symbol, so
+ * every reel fell back to "seven" and the grid always showed 7-7-7.
+ */
+const MULTI_HOT_5_SYMBOLS = [
+  'seven',
+  'dollar',
+  'bell',
+  'watermelon',
+  'grapes',
+  'orange',
+  'cherry',
+  'lemon',
+  'plum',
+];
+
+/**
+ * Multi Hot 5 paytable — line-win multiple of bet-per-line for a 3-of-a-kind
+ * of each symbol. Mirrors the values shown on the in-game rules screen
+ * (77 ×15, $$ ×10, bells ×5, watermelon/grapes ×4, low fruits ×2).
+ */
+const MULTI_HOT_5_PAYTABLE: Record<string, number> = {
+  seven: 15,
+  dollar: 10,
+  bell: 5,
+  watermelon: 4,
+  grapes: 4,
+  orange: 2,
+  cherry: 2,
+  lemon: 2,
+  plum: 2,
+};
 
 async function readInternalGameRtp(
   tenantId: string,
@@ -756,14 +762,28 @@ router.post('/slots/spin', async (req, res, next) => {
       const seed = gameRngService.generateRoundSeed();
       const clientSeed = gameRngService.createClientSeed();
       const roundId = crypto.randomUUID();
-      const reels = gameRngService.generateSlotOutcome(
+      const outcome = gameRngService.generateMultiHot5Outcome(
         seed.serverSeed,
         clientSeed,
         roundId
       );
-      const rtp = { symbolWeights: ['A', 'K', 'Q', 'J', '10', 'WILD', 'SCATTER'] };
+      const reels = outcome.grid; // 3 reels × 3 rows
+      const multiplier = outcome.multiplier;
+      const rtp = { symbolWeights: MULTI_HOT_5_SYMBOLS };
       const rtpMultiplier = gameRngService.slotPayoutMultiplier(gameInfo?.rtp ?? null);
-      const { payout, winLines } = slotsPayout(reels, totalStake, rtpMultiplier);
+      // Pay per the client's rules paytable (line-multiple × bet-per-line ×
+      // multiplier reel), scaled by the admin RTP. The grid is built so the
+      // winning symbol sits on exactly one real payline, so the client's
+      // highlighted line always matches what we paid.
+      let payout = 0;
+      let winLines: number[] = [];
+      if (outcome.winSymbol && outcome.winLine !== null) {
+        const lineMultiple = MULTI_HOT_5_PAYTABLE[outcome.winSymbol] ?? 0;
+        payout = Number(
+          (body.bet_per_line * lineMultiple * multiplier * rtpMultiplier).toFixed(2)
+        );
+        winLines = [outcome.winLine + 1];
+      }
 
       await client.query(
         `INSERT INTO game_rounds
@@ -785,7 +805,7 @@ router.post('/slots/spin', async (req, res, next) => {
           body.lines,
           payout,
           payout > 0 ? 'won' : 'lost',
-          JSON.stringify({ reels, win_lines: winLines, bet_per_line: body.bet_per_line }),
+          JSON.stringify({ reels, win_lines: winLines, multiplier, bet_per_line: body.bet_per_line }),
         ]
       );
 
@@ -793,6 +813,7 @@ router.post('/slots/spin', async (req, res, next) => {
         roundId,
         betId: bet.rows[0].id as string,
         reels,
+        multiplier,
         payout,
         winLines,
         serverSeed: seed.serverSeed,
@@ -835,8 +856,9 @@ router.post('/slots/spin', async (req, res, next) => {
 
     res.status(201).json({
       round_id: round.roundId,
-      reels: [round.reels],
+      reels: round.reels,
       win_lines: round.winLines,
+      multiplier: round.multiplier,
       total_payout: round.payout,
       balance_after: Number(finalBalance.toFixed(2)),
       server_seed_hash: round.serverSeedHash,

@@ -27,34 +27,30 @@
   transition: transform 0.15s ease;
 }
 
-/* 1440px+ : no scale needed */
-@media (min-width: 1440px) {
-  .game-scale-inner { transform: scale(1); }
-}
-
-/* 1366px laptops */
-@media (max-width: 1439px) and (min-width: 1366px) {
-  .game-scale-inner { transform: scale(0.95); }
-}
-
-/* 1280px laptops */
-@media (max-width: 1365px) and (min-width: 1280px) {
-  .game-scale-inner { transform: scale(0.89); }
-}
-
-/* 1200px screens */
-@media (max-width: 1279px) and (min-width: 1200px) {
-  .game-scale-inner { transform: scale(0.83); }
-}
-
-/* 1024px small laptops / landscape tablets */
-@media (max-width: 1199px) and (min-width: 1024px) {
-  .game-scale-inner { transform: scale(0.71); }
-}
-
-/* 768px - 1023px tablets (iPad Mini 768x1024, iPad Air 820x1180, Asus Zenbook Fold 853x1280, Surface Pro 7 912x1368) */
-@media (max-width: 1023px) and (min-width: 768px) {
-  .game-scale-inner { transform: scale(0.53); }
+/* ------------------------------------------------------------------
+   DESKTOP / LAPTOP (>= 768px): lock the game to its authored
+   1440x900 stage and scale that stage uniformly to fit the viewport
+   (contain), centred. `--game-scale` = min(vw/1440, vh/900) is set by
+   the useStageScale hook. This makes EVERY desktop/laptop resolution
+   (1440x900, 1920x1080, 1366x768, …) render the exact same layout,
+   just scaled up or down by one factor — no drift, no empty bands.
+   The < 768px mobile reflow is untouched (hook clears the variable).
+   ------------------------------------------------------------------ */
+@media (min-width: 768px) {
+  .game-scale-wrapper {
+    width: 100vw;
+    height: 100vh;
+    align-items: center;
+    justify-content: center;
+  }
+  .game-scale-inner {
+    flex: none;
+    width: 1440px;
+    height: 900px;
+    min-height: 900px;
+    transform-origin: center center;
+    transform: scale(var(--game-scale, 1));
+  }
 }
 
 /* ============================================================
@@ -67,33 +63,42 @@
    `.mh5-mobile` work or any other game.
    ============================================================ */
 
-/* 1366px laptops (e.g. typical Windows 14" / Asus Zenbook landscape) */
-@media (max-width: 1439px) and (min-width: 1366px) {
-  .fk-page { zoom: 0.95; }
-}
-/* 1280px laptops (incl. Nest Hub Max 1280×800, Asus Zenbook Fold 853×1280) */
-@media (max-width: 1365px) and (min-width: 1280px) {
-  .fk-page { zoom: 0.89; }
-}
-/* 1200px screens */
-@media (max-width: 1279px) and (min-width: 1200px) {
-  .fk-page { zoom: 0.83; }
-}
-/* 1024px small laptops / iPad Pro 1024×1366 / Nest Hub 1024×600 */
-@media (max-width: 1199px) and (min-width: 1024px) {
-  .fk-page { zoom: 0.71; }
-}
-/* 912px Surface Pro 7 portrait */
-@media (max-width: 1023px) and (min-width: 912px) {
-  .fk-page { zoom: 0.63; }
-}
-/* 853px Asus Zenbook Fold (folded landscape) */
-@media (max-width: 911px) and (min-width: 820px) {
-  .fk-page { zoom: 0.57; }
-}
-/* 768px iPad Mini portrait, iPad Air portrait */
-@media (max-width: 819px) and (min-width: 768px) {
-  .fk-page { zoom: 0.53; }
+/* ------------------------------------------------------------------
+   DESKTOP / LAPTOP (>= 768px): same 1440x900 stage-scale approach as
+   Multi Hot 5. Fast Keno's layout is fluid, so on big screens it used
+   to spread out with large gaps; locking it to a 1440x900 box and
+   scaling by `--game-scale` (= min(vw/1440, vh/900)) makes every
+   desktop/laptop show the identical packed 1440x900 layout, centred.
+   The .fk-stage-wrapper centres the stage; < 768px is untouched.
+   ------------------------------------------------------------------ */
+@media (min-width: 768px) {
+  .fk-stage-wrapper {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .fk-page {
+    flex: none;
+    width: 1440px;
+    height: 900px;
+    min-height: 900px;
+    transform-origin: center center;
+    transform: scale(var(--game-scale, 1));
+  }
+  /* The game's main/sidebar/chat columns are sized with `100vh` (the
+     viewport), but inside the fixed 900px stage that overflows and clips
+     the BET button. Re-base them to the 900px stage height so the full
+     game (incl. BET controls) fits exactly as in the 1440x900 design. */
+  .fk-page [data-fk-section="main"] {
+    height: calc(900px - 41px) !important;
+  }
+  .fk-page [data-fk-section="left-sidebar"],
+  .fk-page [data-fk-section="right-chat"] {
+    height: calc(900px - 73px) !important;
+  }
 }
 /* ============================================================
    Fast Keno — MOBILE REFLOW (< 768px)
@@ -1761,11 +1766,18 @@
 html {
   overflow-x: hidden;
   width: 100%;
+  /* The games are scaled/zoomed to fit and are all dark-themed, so any area
+     the scaled game doesn't cover (e.g. the gap below a down-scaled game)
+     would otherwise expose the default white `--background`. Pin the backdrop
+     to black so that gap blends with the dark game art and the host panel's
+     black launch overlay instead of flashing a disruptive white band. */
+  background-color: #000;
 }
 
 body {
   overflow-x: hidden;
   width: 100%;
+  background-color: #000;
 }
 
 /* ============================================================

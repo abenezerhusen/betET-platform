@@ -6,6 +6,7 @@ import { ArrowLeft, Heart, RotateCcw, Maximize2, Settings, Play, History, Check,
 import {
   connectGameSocket,
   disconnectGameSocket,
+  ensureGameToken,
   fetchPlayerMe,
   getKenoRound,
   placeKenoBet,
@@ -14,6 +15,9 @@ import {
   type KenoRoundCompleteEvent,
   type KenoRoundStartEvent,
 } from "@/lib/game-engine"
+import { goBackToParent } from "@/lib/embed-nav"
+import { useBalanceToast } from "@/components/balance-toast"
+import { useStageScale } from "@/hooks/use-stage-scale"
 
 // Bet type
 interface Bet {
@@ -39,6 +43,8 @@ interface GameRound {
 
 export default function FastKenoPage() {
   const router = useRouter()
+  const { notify: notifyBalance, toast: balanceToast } = useBalanceToast()
+  useStageScale()
   
   // Game state — drawnNumbers, gamePhase and roundId are populated by
   // Socket.io events emitted from the backend keno-loop worker (Section 17
@@ -157,37 +163,7 @@ export default function FastKenoPage() {
   // ============================================================
   useEffect(() => {
     let cancelled = false
-
-    fetchPlayerMe()
-      .then((me) => {
-        if (!cancelled) setBalance(readBalance(me))
-      })
-      .catch(() => {
-        /* unauthenticated — handled centrally in lib/api */
-      })
-
-    // Snapshot the current round in case the page joins mid-game.
-    getKenoRound()
-      .then((snap) => {
-        if (cancelled) return
-        if (snap.round_id) setRoundId(snap.round_id)
-        if (snap.phase === "betting" || snap.phase === "drawing" || snap.phase === "complete") {
-          setGamePhase(snap.phase === "complete" ? "result" : snap.phase)
-        }
-        if (Array.isArray(snap.numbers_drawn) && snap.numbers_drawn.length > 0) {
-          setDrawnNumbers(snap.numbers_drawn)
-          setCurrentDrawIndex(snap.numbers_drawn.length)
-        }
-        if (typeof snap.time_remaining === "number") {
-          setRoundTimer(Math.max(0, Math.min(30, snap.time_remaining)))
-        }
-      })
-      .catch(() => {
-        /* worker may not have spun up yet — ignore */
-      })
-
-    const socket = connectGameSocket("keno")
-    if (!socket) return
+    let socket: ReturnType<typeof connectGameSocket> = null
 
     const onStart = (ev: KenoRoundStartEvent) => {
       setRoundId(ev.round_id)
@@ -255,15 +231,55 @@ export default function FastKenoPage() {
         .catch(() => {})
     }
 
-    socket.on("keno:round_start", onStart)
-    socket.on("keno:number_drawn", onNumberDrawn)
-    socket.on("keno:round_complete", onComplete)
+    // Resolve a token first (live: iframe token; local dev: auto-minted
+    // seeded-player token) so the game always opens, then hydrate wallet +
+    // round and subscribe to the live feed.
+    void (async () => {
+      await ensureGameToken()
+      if (cancelled) return
+
+      fetchPlayerMe()
+        .then((me) => {
+          if (!cancelled) setBalance(readBalance(me))
+        })
+        .catch(() => {
+          /* unauthenticated — handled centrally in lib/api */
+        })
+
+      // Snapshot the current round in case the page joins mid-game.
+      getKenoRound()
+        .then((snap) => {
+          if (cancelled) return
+          if (snap.round_id) setRoundId(snap.round_id)
+          if (snap.phase === "betting" || snap.phase === "drawing" || snap.phase === "complete") {
+            setGamePhase(snap.phase === "complete" ? "result" : snap.phase)
+          }
+          if (Array.isArray(snap.numbers_drawn) && snap.numbers_drawn.length > 0) {
+            setDrawnNumbers(snap.numbers_drawn)
+            setCurrentDrawIndex(snap.numbers_drawn.length)
+          }
+          if (typeof snap.time_remaining === "number") {
+            setRoundTimer(Math.max(0, Math.min(30, snap.time_remaining)))
+          }
+        })
+        .catch(() => {
+          /* worker may not have spun up yet — ignore */
+        })
+
+      socket = connectGameSocket("keno")
+      if (!socket) return
+      socket.on("keno:round_start", onStart)
+      socket.on("keno:number_drawn", onNumberDrawn)
+      socket.on("keno:round_complete", onComplete)
+    })()
 
     return () => {
       cancelled = true
-      socket.off("keno:round_start", onStart)
-      socket.off("keno:number_drawn", onNumberDrawn)
-      socket.off("keno:round_complete", onComplete)
+      if (socket) {
+        socket.off("keno:round_start", onStart)
+        socket.off("keno:number_drawn", onNumberDrawn)
+        socket.off("keno:round_complete", onComplete)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -330,7 +346,10 @@ export default function FastKenoPage() {
 
   const placeBet = async () => {
     if (selectedNumbers.length === 0 || gamePhase !== "betting") return
-    if (balance < betAmount) return
+    if (balance < betAmount) {
+      notifyBalance("Insufficient balance — please deposit")
+      return
+    }
     if (!roundId) return
 
     try {
@@ -354,6 +373,8 @@ export default function FastKenoPage() {
       setSelectedNumbers([])
     } catch (err) {
       console.error("Keno bet failed", err)
+      const msg = err instanceof Error ? err.message : ""
+      notifyBalance(/insufficient/i.test(msg) ? "Insufficient balance — please deposit" : "Bet failed")
     }
   }
 
@@ -414,6 +435,7 @@ export default function FastKenoPage() {
   }, [])
 
   return (
+    <div className="fk-stage-wrapper">
     <div 
       className="fk-page min-h-screen text-white overflow-hidden"
       data-show-mobile-chat={showMobileChat ? "true" : undefined}
@@ -424,12 +446,13 @@ export default function FastKenoPage() {
         backgroundAttachment: "fixed",
       }}
     >
+      {balanceToast}
       {/* Header */}
       <div className="bg-[#1a1f2e]/95 border-b border-slate-700/50" data-fk-section="desktop-header">
         <div className="flex items-center justify-between px-3 py-2">
           {/* Left - Back Button */}
           <button 
-            onClick={() => router.push("/")}
+            onClick={() => goBackToParent(() => router.push("/"))}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-sm font-medium transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -1794,6 +1817,7 @@ export default function FastKenoPage() {
           </div>
         </>
       )}
+    </div>
     </div>
   )
 }

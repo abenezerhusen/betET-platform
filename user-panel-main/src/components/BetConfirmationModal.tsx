@@ -43,7 +43,7 @@ export function BetConfirmationModal({
   const handleShare = () => {
     if (navigator.share) {
       navigator.share({
-        title: 'Play Core Ticket',
+        title: '1birr.bet Ticket',
         text: `My bet slip: ${ticketNumber}\nStake: ${stake} ETB\nPotential Win: ${netPayout.toFixed(2)} ETB`,
       });
     } else {
@@ -127,7 +127,7 @@ export function BetConfirmationModal({
           <div className="no-print p-4 rounded-lg mb-4" style={{ background: "rgba(255, 193, 7, 0.1)", border: "1px solid var(--mezzo-accent-yellow)" }}>
             <div className="text-xs text-[var(--mezzo-accent-yellow)] font-semibold mb-2">📍 Next Steps:</div>
             <ul className="text-xs text-gray-300 space-y-1">
-              <li>• Visit any Play Core branch or shop</li>
+              <li>• Visit any 1birr.bet branch or shop</li>
               <li>• Show your ticket number: <span className="font-bold text-white">{ticketNumber}</span></li>
               <li>• Pay {stake} ETB to confirm your bet</li>
               <li>• Keep your receipt safe until results</li>

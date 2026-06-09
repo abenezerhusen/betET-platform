@@ -114,6 +114,7 @@ const menuItems: MenuItem[] = [
     icon: <Gamepad2 size={20} />,
     children: [
       { title: 'RTP Management', path: '/games/rtp', perm: 'games.rtp.view', icon: <Percent size={16} /> },
+      { title: 'Game Activity', path: '/games/activity', perm: 'games.activity.view', icon: <ChevronRight size={16} /> },
     ],
   },
   {

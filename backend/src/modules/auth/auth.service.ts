@@ -1240,4 +1240,77 @@ export async function changePasswordForUser(
   });
 }
 
+/**
+ * Development-only helper — mint a player access token for local testing.
+ *
+ * The internal game engine (Aviator / Fast Keno / Multi Hot 5) needs a
+ * player JWT to load the wallet and live rounds. On a live deployment the
+ * user panel hands this token to the iframe; when a developer opens the
+ * engine directly at http://localhost:3002 there is no token, so the game
+ * would otherwise hang on its loading screen.
+ *
+ * This issues a short-lived access token for a real seeded player so the
+ * game opens and is fully playable against the player's actual wallet. It
+ * is gated to NODE_ENV !== 'production' by the route layer, so it can never
+ * be reached on a production build.
+ *
+ * Player selection order:
+ *   1. The canonical seeded test player (`user@playcore.local`).
+ *   2. Otherwise the most-recently-created active `user`/`affiliate`.
+ */
+export async function issueDevGameToken(
+  tenantId: string
+): Promise<{
+  access_token: string;
+  access_token_expires_at: string;
+  user: { id: string; tenant_id: string; role: string; email: string | null; phone: string | null };
+} | null> {
+  return withTenantClient({ tenantId }, async (client) => {
+    const r = await client.query<{
+      id: string;
+      tenant_id: string;
+      role: string;
+      email: string | null;
+      phone: string | null;
+      metadata: Record<string, unknown> | null;
+    }>(
+      `SELECT id, tenant_id, role, email, phone, metadata
+         FROM users
+        WHERE tenant_id = $1
+          AND role IN ('user', 'affiliate')
+          AND status = 'active'
+        ORDER BY (email = 'user@playcore.local') DESC, created_at DESC
+        LIMIT 1`,
+      [tenantId]
+    );
+    const user = r.rows[0];
+    if (!user) return null;
+
+    const permissions = await loadEffectivePermissionsForUser(client, tenantId, {
+      role: user.role,
+      metadata: user.metadata,
+    });
+
+    const accessOut = signAccessToken({
+      sub: user.id,
+      tid: tenantId,
+      role: user.role,
+      permissions,
+      expiresIn: '12h',
+    });
+
+    return {
+      access_token: accessOut.token,
+      access_token_expires_at: accessOut.expiresAt.toISOString(),
+      user: {
+        id: user.id,
+        tenant_id: user.tenant_id,
+        role: user.role,
+        email: user.email,
+        phone: user.phone,
+      },
+    };
+  });
+}
+
 export { HttpError };

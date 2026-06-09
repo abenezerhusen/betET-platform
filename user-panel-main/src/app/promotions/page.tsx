@@ -136,7 +136,7 @@ export default function PromotionsPage() {
             <h3 className="text-lg font-bold mb-3">General Terms & Conditions</h3>
             <div className="text-sm text-gray-400 space-y-2">
               <p>• All promotions are subject to the general terms and conditions</p>
-              <p>• Play Core reserves the right to modify or cancel promotions at any time</p>
+              <p>• 1birr.bet reserves the right to modify or cancel promotions at any time</p>
               <p>• Only one promotion per person/household/IP address</p>
               <p>• Bonus funds must be wagered before withdrawal</p>
               <p>• 18+ only. Gamble responsibly.</p>

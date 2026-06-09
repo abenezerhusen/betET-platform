@@ -214,6 +214,10 @@ router.use(authRateLimiter);
 
 router.post('/register', requireTenant(), controller.register);
 router.post('/login', requireTenant(), loginRateLimiter, controller.login);
+// Development-only: mint a player token so the internal game engine opens
+// for local testing without the user-panel iframe handshake. The controller
+// returns 400 on production builds, so this is safe to leave registered.
+router.post('/dev/game-token', requireTenant(), controller.devGameToken);
 router.post(
   '/admin/login',
   requireTenant(),

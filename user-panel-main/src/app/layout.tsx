@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -10,15 +10,40 @@ import { AuthProvider } from "@/context/AuthContext";
 import { PerformanceOptimizer } from "@/components/PerformanceOptimizer";
 
 export const metadata: Metadata = {
-  title: "Play Core - Sports Betting",
-  description: "Play Core - online sports betting platform with live odds, football, basketball, tennis and more.",
+  metadataBase: new URL("https://1birr.bet"),
+  title: "1birr.bet — Sports Betting Ethiopia",
+  description:
+    "Bet on football, basketball, Aviator & more. Fast payouts, live betting, and big wins. Ethiopia's modern betting platform. Register now.",
+  applicationName: "1birr.bet",
   manifest: "/manifest.json",
   icons: {
-    icon: "/play-core-logo.png",
-    shortcut: "/play-core-logo.png",
-    apple: "/play-core-logo.png",
+    icon: [
+      { url: "/1birr-icon.svg", type: "image/svg+xml" },
+      { url: "/1birr-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/1birr-icon.svg",
+    apple: "/1birr-icon-512.png",
   },
-  themeColor: "#a8e063",
+  openGraph: {
+    type: "website",
+    siteName: "1birr.bet",
+    title: "1birr.bet — Sports Betting Ethiopia",
+    description:
+      "Bet on football, basketball, Aviator & more. Fast payouts, live betting, and big wins. Ethiopia's modern betting platform. Register now.",
+    url: "https://1birr.bet",
+    images: [{ url: "/1birr-icon-512.png", width: 512, height: 512, alt: "1birr.bet" }],
+  },
+  twitter: {
+    card: "summary",
+    title: "1birr.bet — Sports Betting Ethiopia",
+    description:
+      "Bet on football, basketball, Aviator & more. Fast payouts, live betting, and big wins.",
+    images: ["/1birr-icon-512.png"],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#22c55e",
 };
 
 export default function RootLayout({

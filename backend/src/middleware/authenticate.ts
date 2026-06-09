@@ -88,9 +88,21 @@ export function authenticateToken() {
 }
 
 /**
- * Accepts the short-lived game launch token from either:
- * - Authorization: Bearer <token>
- * - query string: ?token=<token> (iframe launch path)
+ * Game read-surface authentication.
+ *
+ * Accepts EITHER:
+ *  - a short-lived game launch token (`typ='game_launch'`), or
+ *  - a regular user/affiliate access token.
+ *
+ * Both arrive from the game iframe — the user panel launches the engine with
+ * the player's access token (`?token=`), while a provider-style launch flow
+ * uses a dedicated launch token. The money-moving routes (`/bet`, `/cashout`,
+ * `/spin`) already accept the plain access token via `authenticateToken()`,
+ * so allowing it for the read-only `/round/current` + `/slots/history`
+ * endpoints keeps the whole internal-game flow usable with a single token.
+ *
+ * Token source: Authorization: Bearer <token> first, then `?token=` (the
+ * iframe launch path cannot set an Authorization header on the initial load).
  */
 export function authenticateGameLaunchToken() {
   return (req: Request, _res: Response, next: NextFunction) => {
@@ -101,44 +113,59 @@ export function authenticateGameLaunchToken() {
         auth && /^bearer\s+/i.test(auth) ? auth.replace(/^bearer\s+/i, '').trim() : queryToken;
       if (!token) throw new UnauthorizedError('Missing game launch token');
 
-      let payload: GameLaunchTokenPayload;
+      let payload: GameLaunchTokenPayload | AccessTokenPayload;
       try {
         payload = jwt.verify(token, env.jwt.publicKey, {
           algorithms: ['RS256'],
           issuer: env.jwt.issuer,
           audience: env.jwt.audience,
-        }) as GameLaunchTokenPayload;
+        }) as GameLaunchTokenPayload | AccessTokenPayload;
       } catch (err) {
         const name = (err as { name?: string } | null)?.name;
         if (name === 'TokenExpiredError') {
-          throw new UnauthorizedError('Game launch token expired');
+          throw new UnauthorizedError('Game token expired');
         }
-        throw new UnauthorizedError('Invalid game launch token');
+        throw new UnauthorizedError('Invalid game token');
       }
 
-      if (
-        payload.typ !== 'game_launch' ||
-        !payload.sub ||
-        !payload.tid ||
-        !payload.role ||
-        !payload.sid ||
-        !payload.wid ||
-        !payload.gid ||
-        !payload.jti
-      ) {
-        throw new UnauthorizedError('Malformed game launch token');
+      if ((payload as GameLaunchTokenPayload).typ === 'game_launch') {
+        const launch = payload as GameLaunchTokenPayload;
+        if (
+          !launch.sub ||
+          !launch.tid ||
+          !launch.role ||
+          !launch.sid ||
+          !launch.wid ||
+          !launch.gid ||
+          !launch.jti
+        ) {
+          throw new UnauthorizedError('Malformed game launch token');
+        }
+        req.user = {
+          id: launch.sub,
+          tenantId: launch.tid,
+          role: launch.role,
+          jti: launch.jti,
+        };
+      } else {
+        // Fall back to a regular user/affiliate access token.
+        const access = payload as AccessTokenPayload;
+        if (!access.sub || !access.tid || !access.role || !access.jti) {
+          throw new UnauthorizedError('Malformed access token');
+        }
+        req.user = {
+          id: access.sub,
+          tenantId: access.tid,
+          role: access.role,
+          jti: access.jti,
+          permissions: Array.isArray(access.permissions) ? access.permissions : [],
+        };
       }
-
-      req.user = {
-        id: payload.sub,
-        tenantId: payload.tid,
-        role: payload.role,
-        jti: payload.jti,
-      };
+      const tokenTenantId = req.user.tenantId;
 
       if (!req.tenant) {
-        req.tenant = { id: payload.tid };
-      } else if (req.tenant.id !== payload.tid) {
+        req.tenant = { id: tokenTenantId };
+      } else if (req.tenant.id !== tokenTenantId) {
         throw new UnauthorizedError('Tenant mismatch between request and token');
       }
 

@@ -91,6 +91,61 @@ export function clearGameToken(): void {
   }
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+
+function isLocalHost(): boolean {
+  if (typeof window === "undefined") return false;
+  return LOCAL_HOSTS.has(window.location.hostname);
+}
+
+/**
+ * Ask the backend for a development player token. Only meaningful on a
+ * local machine — the backend route returns 400 on production builds. The
+ * fetched token is stashed in sessionStorage so the rest of the page (REST
+ * + socket) picks it up exactly like a user-panel launch token.
+ */
+async function fetchDevGameToken(): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/auth/dev/game-token`, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "x-tenant-id": TENANT_ID,
+      },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { access_token?: string };
+    const token = body.access_token ?? null;
+    if (token && typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(TOKEN_KEY, token);
+      } catch {
+        /* ignore */
+      }
+    }
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a usable game token, guaranteeing the game can always open:
+ *   • Live / user-panel launch  → the iframe `?token=` (or stored) token.
+ *   • Local development direct   → auto-mint a seeded player token so the
+ *     engine opens and is playable without the user-panel handshake.
+ *
+ * Returns null only when no token exists and we're not on a local host
+ * (i.e. a misconfigured live launch) — callers then surface the normal
+ * unauthenticated state.
+ */
+export async function ensureGameToken(): Promise<string | null> {
+  const existing = readGameToken();
+  if (existing) return existing;
+  if (!isLocalHost()) return null;
+  return fetchDevGameToken();
+}
+
 /* ------------------------------------------------------------------------ */
 /* Authenticated fetch                                                      */
 /* ------------------------------------------------------------------------ */
@@ -276,6 +331,7 @@ export interface SlotsSpinResponse {
   round_id: string;
   reels: string[][]; // outer = reel index, inner = symbols (length 3 per reel)
   win_lines: number[];
+  multiplier: number; // multiplier reel value (1–5) chosen server-side
   total_payout: number;
   balance_after: number;
   server_seed_hash: string;

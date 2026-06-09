@@ -1,13 +1,11 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { GameIframeWrapper } from "@/components/GameIframeWrapper";
-
+/**
+ * The Aviator route is a shortcut only. It must not embed the game engine
+ * directly (that would bypass the lobby's catalogue / permission checks), so
+ * it funnels into the standard `/games` launch flow, which validates the game
+ * against the loaded lobby before opening it through the Game Engine.
+ */
 export default function AviatorPage() {
-  return (
-    <GameIframeWrapper
-      slug="aviator"
-      title="Aviator"
-      subtitle="Crash multiplier — embedded from the game engine"
-    />
-  );
+  redirect("/games?play=aviator");
 }

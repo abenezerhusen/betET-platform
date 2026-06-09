@@ -81,8 +81,8 @@ export function ThermalTicket({
           the image. */}
       <div className="text-center" style={{ marginBottom: "6px" }}>
         <img
-          src="/play-core-logo.png"
-          alt="Play Core"
+          src="/1birr-icon.svg"
+          alt="1birr.bet"
           style={{
             width: "64px",
             height: "64px",
@@ -179,7 +179,7 @@ export function ThermalTicket({
       {/* Footer */}
       <div className="text-center" style={{ fontSize: "9.5px", lineHeight: 1.3 }}>
         <div>*** All bets after kick-off are invalid ***</div>
-        <div style={{ fontWeight: 700, marginTop: "2px" }}>playcore.bet</div>
+        <div style={{ fontWeight: 700, marginTop: "2px" }}>1birr.bet</div>
         <div style={{ marginTop: "4px" }}>Under 21s are strictly forbidden!</div>
         <div>Terms and Conditions apply.</div>
       </div>

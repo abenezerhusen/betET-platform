@@ -1,21 +1,27 @@
 {
-  "name": "Play Core - Sports Betting",
-  "short_name": "Play Core",
-  "description": "Play Core - fast and reliable sports betting platform",
+  "name": "1birr.bet — Sports Betting Ethiopia",
+  "short_name": "1birr.bet",
+  "description": "Bet on football, basketball, Aviator & more. Fast payouts, live betting, and big wins. Ethiopia's modern betting platform.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f0f23",
-  "theme_color": "#a8e063",
+  "background_color": "#0a0a12",
+  "theme_color": "#22c55e",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/play-core-logo.png",
+      "src": "/1birr-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/1birr-icon-512.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/play-core-logo.png",
+      "src": "/1birr-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
