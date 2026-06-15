@@ -70,7 +70,7 @@ export default function RootLayout({
                   layout. Content clearance is handled in globals.css. */}
               <MobileBottomNav />
               {/* Mobile sports / leagues filter sidebar. Triggered by the
-                  bottom-nav Menu tab via `mezzobet:open-sports-sidebar`.
+                  bottom-nav Menu tab via `1birr:open-sports-sidebar`.
                   Rendered globally so users can drill into a league from
                   any page, just like the desktop left sidebar allows. */}
               <MobileSportsSidebar />

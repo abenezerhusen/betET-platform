@@ -12,11 +12,11 @@ function getUserAccessToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem("betet.user.auth");
-    if (!raw) return window.localStorage.getItem("mezzobet_access_token");
+    if (!raw) return window.localStorage.getItem("1birr_access_token");
     const parsed = JSON.parse(raw) as AuthSnapshotLike;
-    return parsed.accessToken ?? window.localStorage.getItem("mezzobet_access_token");
+    return parsed.accessToken ?? window.localStorage.getItem("1birr_access_token");
   } catch {
-    return window.localStorage.getItem("mezzobet_access_token");
+    return window.localStorage.getItem("1birr_access_token");
   }
 }
 
@@ -24,13 +24,13 @@ function clearUserSessionStorage(): void {
   if (typeof window === "undefined") return;
   const keys = [
     "betet.user.auth",
-    "mezzobet_access_token",
-    "mezzobet_refresh_token",
-    "mezzobet_logged_in",
-    "mezzobet_balance",
-    "mezzobet_bonus_balance",
-    "mezzobet_current_user",
-    "mezzobet_current_user_fullname",
+    "1birr_access_token",
+    "1birr_refresh_token",
+    "1birr_logged_in",
+    "1birr_balance",
+    "1birr_bonus_balance",
+    "1birr_current_user",
+    "1birr_current_user_fullname",
     "user_token",
     "user_data",
   ];

@@ -1024,7 +1024,7 @@ router.post(
             // unchanged; only the multiplier (and therefore the potential
             // win) shrinks.
             selections.splice(index, 1);
-            const totalOdds = selections.reduce((acc, s) => {
+            const totalOdds = selections.reduce<number>((acc, s) => {
               const o = Number((s as Record<string, unknown>).odds ?? 0);
               return acc * (Number.isFinite(o) && o > 0 ? o : 1);
             }, 1);

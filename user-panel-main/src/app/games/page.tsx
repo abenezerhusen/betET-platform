@@ -13,6 +13,7 @@ import {
 import * as gamesApi from "@/lib/api/games";
 import type { GameSummary } from "@/lib/api/types";
 import { getAccessToken } from "@/lib/auth/session";
+import { useAuth } from "@/context/AuthContext";
 
 type ViewMode = "expanded" | "compact";
 
@@ -61,6 +62,7 @@ function handleThumbError(e: React.SyntheticEvent<HTMLImageElement>): void {
 
 export default function GamesPage() {
   const router = useRouter();
+  const { ready: authReady, isAuthenticated } = useAuth();
   const [cards, setCards] = useState<LobbyCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -205,12 +207,19 @@ export default function GamesPage() {
       : "grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3";
 
   const openRealPlay = async (game: LobbyCard) => {
+    // All games play against the user's single wallet balance, so the
+    // player must be logged in before any game can launch. Unauthenticated
+    // users are redirected to the login dialog instead.
+    if (authReady && !isAuthenticated) {
+      window.dispatchEvent(new Event("1birr:open-login"));
+      return;
+    }
     if (game.source === "internal") {
       // Internal engine — embed the game engine iframe directly. The game
       // engine reads the user JWT from URL and resolves the wallet itself.
       const slug = game.internalSlug ?? game.id;
       const token = typeof window !== "undefined"
-        ? getAccessToken() ?? localStorage.getItem("mezzobet_access_token") ?? ""
+        ? getAccessToken() ?? localStorage.getItem("1birr_access_token") ?? ""
         : "";
       const url = `${GAME_ENGINE_URL.replace(/\/$/, "")}/games/${slug}?token=${encodeURIComponent(token)}`;
       setExternalLaunch({
@@ -277,6 +286,7 @@ export default function GamesPage() {
   // game that isn't allowed.
   useEffect(() => {
     if (loading || launchedFromQueryRef.current) return;
+    if (!authReady) return; // wait for session hydration before gating launch
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const play = params.get("play");
@@ -298,7 +308,7 @@ export default function GamesPage() {
     // openRealPlay is recreated each render; the ref guard keeps this a
     // one-shot effect so we intentionally exclude it from the deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, cards]);
+  }, [loading, cards, authReady]);
 
   // The game engine runs inside the launch iframe. When the player taps the
   // in-game back control it posts a message asking us to close the game and

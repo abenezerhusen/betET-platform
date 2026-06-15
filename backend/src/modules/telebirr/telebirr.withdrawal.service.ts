@@ -30,6 +30,7 @@ import {
   NotFoundError,
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
+import { assertWithdrawalAllowed } from '../../services/deposit-wagering.service';
 import { loadTelebirrSettings } from './telebirr.settings';
 import * as withdrawalRepo from './telebirr.withdrawal.repository';
 
@@ -230,6 +231,15 @@ export async function initiateWithdrawal(
           status: wallet.status,
         });
       }
+
+      // Deposit wagering rule — deposited funds must be turned over
+      // before they can be withdrawn.
+      await assertWithdrawalAllowed(
+        client,
+        wallet.id,
+        Number(wallet.balance),
+        amountNum
+      );
 
       const beforeBalance = wallet.balance;
       const debit = await client.query<{ balance: string }>(

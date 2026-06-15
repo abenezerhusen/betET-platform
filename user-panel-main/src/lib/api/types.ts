@@ -57,6 +57,14 @@ export interface WalletSummaryLine {
   bonus_balance: string;
   locked_balance: string;
   total: string;
+  /** Deposit-wagering rule — lifetime completed deposits. */
+  total_deposited?: string;
+  /** Deposit-wagering rule — lifetime stake turnover. */
+  total_wagered?: string;
+  /** Deposited amount that still has to be wagered before withdrawal. */
+  wagering_remaining?: string;
+  /** Portion of `balance` that can be withdrawn right now. */
+  withdrawable_balance?: string;
 }
 
 export interface WalletApiResponse {

@@ -57,12 +57,20 @@ function requireTenantId(req: Request): string {
 const selectionHintSchema = z.object({
   home_team: z.string().trim().min(1),
   away_team: z.string().trim().min(1),
-  /** "Match Result", "1x2", "Both Teams to Score", etc. */
+  /** "Match Result", "1x2", "Double Chance", "Both Teams to Score", etc. */
   market_label: z.string().trim().min(1).optional(),
-  /** "Home" | "Draw" | "Away" | "1" | "X" | "2" — case insensitive */
+  /**
+   * Outcome label. Case-insensitive. Accepts any of:
+   *   - 1x2:           "1" | "X" | "2" | "Home" | "Draw" | "Away"
+   *   - Double Chance: "1X" | "12" | "X2"
+   *   - BTTS:          "Yes" | "No"
+   *   - Over/Under:    "Over" | "Under"  (line implied by market_label)
+   */
   selection_label: z.string().trim().min(1),
   /** Optional disambiguator when several events share team names */
   starts_at: z.string().datetime().optional(),
+  /** Real league name (e.g. "England - FA Cup"). Falls back to "Mock League". */
+  league: z.string().trim().min(1).optional(),
 });
 
 const legSchema = z
@@ -103,29 +111,164 @@ interface ResolvedSelection {
   market_status: 'open' | 'locked' | 'settled' | 'cancelled';
 }
 
+/* -------------------------------------------------------------------------- */
+/* Market / selection normalisation                                           */
+/*                                                                            */
+/* The user panel exposes four headline markets straight from the home /      */
+/* category lists (no need to drill into a match detail page):                */
+/*                                                                            */
+/*   - Match Result / 1x2:    labels  1  | X  | 2   (or Home/Draw/Away)       */
+/*   - Double Chance:         labels  1X | 12 | X2                            */
+/*   - Both Teams to Score:   labels  Yes | No                                */
+/*   - Over/Under (totals):   labels  Over | Under   (line in market label)   */
+/*                                                                            */
+/* For offline / branch-pay tickets the cashier needs every one of those      */
+/* picks to map to a real row in sports_selections, so we materialise the     */
+/* missing market + selections the first time a leg of that kind is reserved  */
+/* for a given event. Repeat bets reuse the rows (no duplicates).             */
+/* -------------------------------------------------------------------------- */
+
+type MarketKind = 'match_result' | 'double_chance' | 'btts' | 'over_under';
+
+interface NormalisedMarket {
+  kind: MarketKind;
+  /** Stable internal type for sports_markets.market_type */
+  type: string;
+  /** Human label for sports_markets.label */
+  label: string;
+  /** Canonical outcome labels created on this market (in display order). */
+  outcomes: string[];
+  /** Default odds for the placeholder outcomes the player didn't pick. */
+  defaultOdds: Record<string, number>;
+}
+
+/** Recognised market labels → canonical market metadata. */
+function classifyMarket(rawLabel: string | undefined): NormalisedMarket {
+  const m = (rawLabel ?? '').trim().toLowerCase();
+
+  if (/double\s*chance|dc/.test(m) || /^(1x|12|x2)$/.test(m)) {
+    return {
+      kind: 'double_chance',
+      type: 'double_chance',
+      label: 'Double Chance',
+      outcomes: ['1X', '12', 'X2'],
+      defaultOdds: { '1X': 1.35, '12': 1.25, X2: 1.6 },
+    };
+  }
+  if (/both\s*teams\s*to\s*score|btts|goal\s*goal|gg\s*\/?\s*ng/.test(m)) {
+    return {
+      kind: 'btts',
+      type: 'btts',
+      label: 'Both Teams to Score',
+      outcomes: ['Yes', 'No'],
+      defaultOdds: { Yes: 1.85, No: 1.85 },
+    };
+  }
+  if (/over[\s/]*under|total\s*goals?/.test(m)) {
+    return {
+      kind: 'over_under',
+      type: 'over_under',
+      // Keep the line if the caller embedded one (e.g. "Over/Under 2.5")
+      label: rawLabel?.trim() || 'Over / Under 2.5',
+      outcomes: ['Over', 'Under'],
+      defaultOdds: { Over: 1.9, Under: 1.9 },
+    };
+  }
+  // Default — Match Result / 1x2
+  return {
+    kind: 'match_result',
+    type: '1x2',
+    label: 'Full Time Result',
+    outcomes: ['Home', 'Draw', 'Away'],
+    defaultOdds: { Home: 2.0, Draw: 3.2, Away: 3.5 },
+  };
+}
+
 /**
- * Resolve a single leg-hint to a `selection_id`. We tolerate either the
- * Home/Draw/Away or 1/X/2 label conventions on both the seed and the
- * caller. Falls back to ordinal position (1=home, 2=away) so the lookup
- * stays correct even on imported league data with non-standard labels.
+ * Map any selection label the frontend may send into the canonical label
+ * stored on `sports_selections.label` for the given market. Returns `null`
+ * if the label doesn't belong to that market.
+ */
+function canonicalSelectionLabel(
+  market: NormalisedMarket,
+  rawLabel: string
+): string | null {
+  const s = rawLabel.trim().toLowerCase();
+  switch (market.kind) {
+    case 'match_result': {
+      if (s === '1' || s === 'home') return 'Home';
+      if (s === 'x' || s === 'draw') return 'Draw';
+      if (s === '2' || s === 'away') return 'Away';
+      return null;
+    }
+    case 'double_chance': {
+      if (s === '1x' || s === '1 or x' || s === 'home or draw') return '1X';
+      if (s === '12' || s === '1 or 2' || s === 'home or away') return '12';
+      if (s === 'x2' || s === 'x or 2' || s === 'draw or away') return 'X2';
+      return null;
+    }
+    case 'btts': {
+      if (s === 'yes' || s === 'gg' || s === 'goal/goal') return 'Yes';
+      if (s === 'no' || s === 'ng' || s === 'no/goal') return 'No';
+      return null;
+    }
+    case 'over_under': {
+      if (s.startsWith('over') || s === 'o') return 'Over';
+      if (s.startsWith('under') || s === 'u') return 'Under';
+      return null;
+    }
+  }
+}
+
+/** SQL fragment matching `sports_markets` for the given canonical kind. */
+function marketMatchSql(kind: MarketKind): string {
+  switch (kind) {
+    case 'match_result':
+      return `(
+        LOWER(market_type) LIKE '%1x2%'
+        OR LOWER(market_type) LIKE '%match%result%'
+        OR LOWER(market_type) = 'match_result'
+        OR LOWER(label) LIKE '%match result%'
+        OR LOWER(label) LIKE '%full time%'
+        OR LOWER(label) LIKE '%1x2%'
+      )`;
+    case 'double_chance':
+      return `(
+        LOWER(market_type) LIKE '%double%chance%'
+        OR LOWER(market_type) = 'double_chance'
+        OR LOWER(label) LIKE '%double%chance%'
+      )`;
+    case 'btts':
+      return `(
+        LOWER(market_type) LIKE '%btts%'
+        OR LOWER(market_type) = 'btts'
+        OR LOWER(label) LIKE '%both teams to score%'
+      )`;
+    case 'over_under':
+      return `(
+        LOWER(market_type) LIKE '%over%under%'
+        OR LOWER(market_type) = 'over_under'
+        OR LOWER(market_type) LIKE '%total%'
+        OR LOWER(label) LIKE '%over%under%'
+        OR LOWER(label) LIKE '%total%goals%'
+      )`;
+  }
+}
+
+/**
+ * Resolve a single leg-hint to a `selection_id` if a matching selection
+ * already exists. Returns `null` when nothing matches — the caller falls
+ * back to `ensureSelectionFromHint` to lazily materialise the rows.
  */
 async function resolveSelectionIdFromHint(
   client: PoolClient,
   tenantId: string,
   hint: z.infer<typeof selectionHintSchema>
 ): Promise<string | null> {
-  const pickRaw = hint.selection_label.trim().toLowerCase();
-  // Normalise 1/X/2 → home/draw/away
-  const pick =
-    pickRaw === '1' || pickRaw === 'home'
-      ? 'home'
-      : pickRaw === 'x' || pickRaw === 'draw'
-        ? 'draw'
-        : pickRaw === '2' || pickRaw === 'away'
-          ? 'away'
-          : pickRaw; // any other custom market label is matched directly
+  const market = classifyMarket(hint.market_label);
+  const canonical = canonicalSelectionLabel(market, hint.selection_label);
+  if (!canonical) return null;
 
-  // Find the event by team names (case insensitive, ignore-trim).
   const eventRow = await client.query<{ id: string }>(
     `SELECT id
        FROM sports_events
@@ -140,22 +283,13 @@ async function resolveSelectionIdFromHint(
   if (!eventRow.rows[0]) return null;
   const eventId = eventRow.rows[0].id;
 
-  // Find the 1x2 / Match Result market on that event. We accept any market
-  // whose type contains '1x2' / 'match_result' or whose label contains
-  // 'match result' so both seeded and imported feeds keep working.
   const marketRow = await client.query<{ id: string }>(
     `SELECT id
        FROM sports_markets
       WHERE tenant_id = $1
         AND event_id = $2
         AND status = 'open'
-        AND (
-          LOWER(market_type) LIKE '%1x2%'
-          OR LOWER(market_type) LIKE '%match%result%'
-          OR LOWER(market_type) = 'match_result'
-          OR LOWER(label) LIKE '%match result%'
-          OR LOWER(label) LIKE '%1x2%'
-        )
+        AND ${marketMatchSql(market.kind)}
       ORDER BY created_at ASC
       LIMIT 1`,
     [tenantId, eventId]
@@ -163,14 +297,15 @@ async function resolveSelectionIdFromHint(
   if (!marketRow.rows[0]) return null;
   const marketId = marketRow.rows[0].id;
 
-  // Pick by label first (Home / Draw / Away or 1 / X / 2), then by ordinal
-  // position if the label match misses (some imports use team names as
-  // selection labels).
-  const labelToOrdinal: Record<string, number> = {
-    home: 1,
-    draw: 2,
-    away: 3,
-  };
+  // Match by canonical label first; tolerate '1'/'X'/'2' seeds for 1x2.
+  const altLabel =
+    market.kind === 'match_result'
+      ? canonical === 'Home'
+        ? '1'
+        : canonical === 'Draw'
+          ? 'x'
+          : '2'
+      : canonical.toLowerCase();
 
   const byLabel = await client.query<{ id: string }>(
     `SELECT id
@@ -183,31 +318,28 @@ async function resolveSelectionIdFromHint(
           OR LOWER(label) LIKE $3 || '%'
         )
       LIMIT 1`,
-    [
-      tenantId,
-      marketId,
-      pick,
-      // 1/X/2 mapping for seeds that store '1', 'X', '2' as labels
-      pick === 'home' ? '1' : pick === 'draw' ? 'x' : pick === 'away' ? '2' : pick,
-    ]
+    [tenantId, marketId, canonical.toLowerCase(), altLabel]
   );
   if (byLabel.rows[0]) return byLabel.rows[0].id;
 
-  const ordinal = labelToOrdinal[pick];
-  if (!ordinal) return null;
+  // For 1x2 only — final fallback by ordinal position in case the seed
+  // stored team names as selection labels. Other markets have stable,
+  // well-known labels so an ordinal fallback would be ambiguous.
+  if (market.kind === 'match_result') {
+    const ordinal = canonical === 'Home' ? 1 : canonical === 'Draw' ? 2 : 3;
+    const byOrdinal = await client.query<{ id: string }>(
+      `SELECT id
+         FROM sports_selections
+        WHERE tenant_id = $1
+          AND market_id = $2
+        ORDER BY created_at ASC
+        OFFSET $3 LIMIT 1`,
+      [tenantId, marketId, ordinal - 1]
+    );
+    return byOrdinal.rows[0]?.id ?? null;
+  }
 
-  // Final fallback: pick the Nth selection in the market (1-based) ordered
-  // by created_at. Seeds insert Home → Draw → Away in that order.
-  const byOrdinal = await client.query<{ id: string }>(
-    `SELECT id
-       FROM sports_selections
-      WHERE tenant_id = $1
-        AND market_id = $2
-      ORDER BY created_at ASC
-      OFFSET $3 LIMIT 1`,
-    [tenantId, marketId, ordinal - 1]
-  );
-  return byOrdinal.rows[0]?.id ?? null;
+  return null;
 }
 
 /**
@@ -215,13 +347,19 @@ async function resolveSelectionIdFromHint(
  * the catalog.
  *
  * The user panel renders a large catalog of sample fixtures (per-league
- * generated data) that are NOT seeded in the backend. To let players reserve
- * a real branch-pay ticket on any displayed match — the whole point of the
- * offline-reserve flow — we create the missing `sports_events` →
- * `sports_markets` → `sports_selections` rows on demand, keyed by the team
- * names so repeat bets on the same fixture reuse the same rows (no
- * duplicates). The picked selection takes the odds the player saw; the other
- * 1x2 outcomes get sensible placeholders.
+ * generated data) that are NOT seeded in the backend. To let players
+ * reserve a real branch-pay ticket on any displayed match — the whole
+ * point of the offline-reserve flow — we create the missing
+ * `sports_events` → `sports_markets` → `sports_selections` rows on demand,
+ * keyed by the team names + market kind so repeat bets reuse the same
+ * rows (no duplicates). The picked selection takes the odds the player
+ * saw; siblings get sensible placeholders.
+ *
+ * Supports the four headline markets exposed by the home/category lists:
+ *   - Match Result (1x2)
+ *   - Double Chance (1X / 12 / X2)
+ *   - Both Teams to Score (Yes / No)
+ *   - Over/Under totals (Over / Under)
  *
  * Scoped to this offline-reserve endpoint only.
  */
@@ -231,21 +369,13 @@ async function ensureSelectionFromHint(
   hint: z.infer<typeof selectionHintSchema>,
   oddsSeen: number | undefined
 ): Promise<string | null> {
-  const pickRaw = hint.selection_label.trim().toLowerCase();
-  const pick =
-    pickRaw === '1' || pickRaw === 'home'
-      ? 'home'
-      : pickRaw === 'x' || pickRaw === 'draw'
-        ? 'draw'
-        : pickRaw === '2' || pickRaw === 'away'
-          ? 'away'
-          : null;
-  // Only the standard 1x2 outcomes are auto-creatable; anything else needs a
-  // real seeded market.
-  if (!pick) return null;
+  const market = classifyMarket(hint.market_label);
+  const canonical = canonicalSelectionLabel(market, hint.selection_label);
+  if (!canonical) return null;
 
   const home = hint.home_team.trim();
   const away = hint.away_team.trim();
+  const leagueName = hint.league?.trim() || 'Mock League';
 
   // 1. Reuse an existing event for these teams (any non-cancelled status),
   //    else create one. Push kickoff into the future so the "match started"
@@ -271,16 +401,17 @@ async function ensureSelectionFromHint(
       `INSERT INTO sports_events (tenant_id, sport, league, home_team, away_team, starts_at, status)
        VALUES ($1, 'football', $2, $3, $4, $5, 'scheduled')
        RETURNING id`,
-      [tenantId, 'Mock League', home, away, startsAt.toISOString()]
+      [tenantId, leagueName, home, away, startsAt.toISOString()]
     );
     eventId = created.rows[0].id;
   }
 
-  // 2. Reuse / create the 1x2 market.
+  // 2. Reuse / create the market of the requested kind.
   const existingMarket = await client.query<{ id: string }>(
     `SELECT id FROM sports_markets
-      WHERE tenant_id = $1 AND event_id = $2
-        AND (LOWER(market_type) LIKE '%1x2%' OR LOWER(label) LIKE '%match result%')
+      WHERE tenant_id = $1
+        AND event_id = $2
+        AND ${marketMatchSql(market.kind)}
       ORDER BY created_at ASC
       LIMIT 1`,
     [tenantId, eventId]
@@ -289,22 +420,21 @@ async function ensureSelectionFromHint(
   if (!marketId) {
     const created = await client.query<{ id: string }>(
       `INSERT INTO sports_markets (tenant_id, event_id, market_type, label, status)
-       VALUES ($1, $2, '1x2', 'Full Time Result', 'open')
+       VALUES ($1, $2, $3, $4, 'open')
        RETURNING id`,
-      [tenantId, eventId]
+      [tenantId, eventId, market.type, market.label]
     );
     marketId = created.rows[0].id;
   }
 
-  // 3. Ensure all three 1x2 selections exist; the picked one carries the
-  //    player's seen odds.
-  const labelFor: Record<string, string> = { home: 'Home', draw: 'Draw', away: 'Away' };
-  const defaultOdds: Record<string, number> = { home: 2.0, draw: 3.2, away: 3.5 };
-  const pickOdds = oddsSeen && oddsSeen > 1 ? oddsSeen : defaultOdds[pick];
+  // 3. Ensure every canonical outcome for this market exists; the picked
+  //    one carries the player's seen odds.
+  const pickOdds = oddsSeen && oddsSeen > 1
+    ? oddsSeen
+    : market.defaultOdds[canonical];
 
-  for (const outcome of ['home', 'draw', 'away'] as const) {
-    const label = labelFor[outcome];
-    const odds = outcome === pick ? pickOdds : defaultOdds[outcome];
+  for (const outcome of market.outcomes) {
+    const odds = outcome === canonical ? pickOdds : market.defaultOdds[outcome];
     await client.query(
       `INSERT INTO sports_selections (tenant_id, market_id, label, odds_decimal)
        SELECT $1, $2, $3, $4
@@ -312,7 +442,7 @@ async function ensureSelectionFromHint(
           SELECT 1 FROM sports_selections
            WHERE tenant_id = $1 AND market_id = $2 AND lower(label) = lower($3)
         )`,
-      [tenantId, marketId, label, odds]
+      [tenantId, marketId, outcome, odds]
     );
   }
 
@@ -320,7 +450,7 @@ async function ensureSelectionFromHint(
     `SELECT id FROM sports_selections
       WHERE tenant_id = $1 AND market_id = $2 AND lower(label) = lower($3)
       LIMIT 1`,
-    [tenantId, marketId, labelFor[pick]]
+    [tenantId, marketId, canonical.toLowerCase()]
   );
   return sel.rows[0]?.id ?? null;
 }

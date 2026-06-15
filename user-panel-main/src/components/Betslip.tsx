@@ -4,20 +4,13 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 import {
   Trash2,
-  Minus,
-  Plus,
   X,
-  Copy,
-  Share2,
   Gift,
   Wallet,
   Lock,
   AlertCircle,
   ShoppingCart,
-  Ticket,
-  Search,
 } from "lucide-react";
-import { ThermalTicket } from "@/components/ThermalTicket";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -26,6 +19,7 @@ import { BetConfirmationModal } from "@/components/BetConfirmationModal";
 import { FastButton } from "@/components/FastButton";
 import { betsApi, gamesApi } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { BetCodePanel } from "@/components/BetCodePanel";
 
 const stakeSchema = z
   .number({ message: "Stake is required" })
@@ -37,15 +31,13 @@ interface BetslipProps {
 }
 
 export function Betslip({ onClose }: BetslipProps = {}) {
-  const { bets, removeBet, clearBets, activeSlip, setActiveSlip } = useBets();
+  const { bets, addBet, removeBet, clearBets, isBetAdded, activeSlip, setActiveSlip } = useBets();
   // Local mirror of the active slip for purely visual highlighting. Kept
   // in sync with the context so each Bet Slip tab (1/2/3) is fully
   // isolated — picks made on one tab never appear in the others.
   const [activeTab, setActiveTab] = useState<number>(activeSlip);
-  const [copyTicket, setCopyTicket] = useState(false);
   const [sortByTime, setSortByTime] = useState(false);
   const [ticketNumber, setTicketNumber] = useState("");
-  const [showCopyTicketInput, setShowCopyTicketInput] = useState(false);
   const [mobileCouponNumber, setMobileCouponNumber] = useState("");
 
   const handleCheckMobileCoupon = () => {
@@ -56,11 +48,10 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       setMobileCouponNumber("");
     }
   };
-  const [showTicketPreview, setShowTicketPreview] = useState(false);
   const [placingBet, setPlacingBet] = useState(false);
+  const [loadingTicket, setLoadingTicket] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmationData, setConfirmationData] = useState<any>(null);
-  const [lastCouponCode, setLastCouponCode] = useState<string | null>(null);
   // Balance-source chooser. Only shown when the user actually has a bonus
   // wallet > 0, because bonus funds follow admin rules (non-withdrawable,
   // min-odds, rollover, etc.) and must not be mixed with real balance.
@@ -68,45 +59,116 @@ export function Betslip({ onClose }: BetslipProps = {}) {
   const [pendingBetMode, setPendingBetMode] = useState<"offline" | "online" | null>(null);
   const [bonusBalanceSnapshot, setBonusBalanceSnapshot] = useState(0);
   const [mainBalanceSnapshot, setMainBalanceSnapshot] = useState(0);
-  const [previewTicketNumber, setPreviewTicketNumber] = useState("");
-  const { refreshWallet } = useAuth();
+  const { isAuthenticated, refreshWallet } = useAuth();
 
-  const handleCopyTicket = () => {
-    if (ticketNumber.trim()) {
-      if (typeof window !== "undefined") {
-        window.location.href = `/coupon-check?code=${encodeURIComponent(ticketNumber.trim())}`;
+  // Inline messages for the Bet Code / Check Coupon panels so we don't
+  // need to fire window.alert popups for routine feedback (loaded N picks,
+  // unknown code, etc.). Cleared automatically on next interaction.
+  const [loadInfo, setLoadInfo] = useState<
+    { kind: "ok" | "warn" | "err"; text: string } | null
+  >(null);
+
+  /**
+   * Ticket reload — resolve the pasted bet code against the sportsbook and
+   * append every still-bettable selection from that ticket into the active
+   * slip. The user can then remove individual picks or add new ones and
+   * place the slip as their own brand-new bet.
+   *
+   * This is the "friend shares me a code" flow: any authenticated user in
+   * the same tenant can reload any code — the backend route is shareable
+   * by design.
+   */
+  const handleLoadTicket = async () => {
+    const code = ticketNumber.trim();
+    if (!code) return;
+    if (!isAuthenticated) {
+      window.dispatchEvent(new Event("1birr:open-login"));
+      return;
+    }
+    setLoadInfo(null);
+    setLoadingTicket(true);
+    try {
+      const ticket = await betsApi.reloadTicket(code);
+      const replayable = ticket.selections.filter((s) => s.replayable);
+      const skipped = ticket.selections.length - replayable.length;
+
+      if (replayable.length === 0) {
+        // The friend's ticket exists but every leg is locked (kicked off
+        // or settled) — keep the slip untouched and link the user to the
+        // coupon checker so they can at least see the ticket status.
+        setLoadInfo({
+          kind: "warn",
+          text: `Ticket ${ticket.bet.coupon_code} has no replayable picks (all matches started or settled). Use Check Coupon to view its status.`,
+        });
+        return;
       }
+
+      // `addBet` toggles off when the same id is already in the slip — so
+      // we have to skip duplicates explicitly during reload. Different
+      // selections on the same event will replace the current pick (this
+      // is the existing one-selection-per-match rule and is what the user
+      // expects when they choose to load a friend's slip on top of theirs).
+      let added = 0;
+      let duplicates = 0;
+      for (const s of replayable) {
+        if (isBetAdded(s.selection_id)) {
+          duplicates += 1;
+          continue;
+        }
+        const starts = new Date(s.starts_at);
+        addBet({
+          id: s.selection_id,
+          match: `${s.home_team} vs ${s.away_team}`,
+          homeTeam: s.home_team,
+          awayTeam: s.away_team,
+          league: s.league,
+          market: s.market_label,
+          selection: s.selection_label,
+          odds: Number(s.current_odds) || Number(s.odds_at_placement) || 0,
+          time: Number.isNaN(starts.getTime())
+            ? ""
+            : starts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          date: Number.isNaN(starts.getTime()) ? "" : starts.toLocaleDateString(),
+          selectionId: s.selection_id,
+          eventId: s.event_id,
+          marketId: s.market_id,
+          startsAt: s.starts_at,
+        });
+        added += 1;
+      }
+
+      const parts: string[] = [];
+      parts.push(`Loaded ${added} pick(s) from ${ticket.bet.coupon_code}.`);
+      if (duplicates > 0) parts.push(`${duplicates} already in your slip.`);
+      if (skipped > 0) parts.push(`${skipped} skipped (started / closed).`);
+      if (added > 0) parts.push("Edit the slip and place your bet.");
+      setLoadInfo({
+        kind: added > 0 ? "ok" : "warn",
+        text: parts.join(" "),
+      });
       setTicketNumber("");
-      setShowCopyTicketInput(false);
+    } catch (err) {
+      setLoadInfo({
+        kind: "err",
+        text:
+          (err as Error)?.message?.includes("not found")
+            ? `No ticket found for code "${code}". Double-check the bet code and try again.`
+            : (err as Error)?.message || "Could not load this ticket.",
+      });
+    } finally {
+      setLoadingTicket(false);
     }
-  };
-
-  const handleTicketPreview = () => {
-    if (totalBetAmount === 0) {
-      alert("Please add at least one bet to your betslip!");
-      return;
-    }
-
-    const parsedStake = stakeSchema.safeParse(stake);
-    if (!parsedStake.success) {
-      alert(parsedStake.error.issues[0]?.message ?? "Invalid stake");
-      return;
-    }
-
-    const generated = crypto.randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase();
-    setPreviewTicketNumber(`${generated.slice(0, 5)}-${generated.slice(5)}`);
-    setShowTicketPreview(true);
   };
 
   // Read the current bonus wallet. Kept as a helper so the chooser and the
   // actual placement read the *same* snapshot and cannot race each other.
   const readBonusBalance = () =>
     typeof window !== "undefined"
-      ? parseFloat(localStorage.getItem("mezzobet_bonus_balance") || "0") || 0
+      ? parseFloat(localStorage.getItem("1birr_bonus_balance") || "0") || 0
       : 0;
   const readMainBalance = () =>
     typeof window !== "undefined"
-      ? parseFloat(localStorage.getItem("mezzobet_balance") || "0") || 0
+      ? parseFloat(localStorage.getItem("1birr_balance") || "0") || 0
       : 0;
 
   /** Sidebar / top-league sample rows use generated names like "Lithuania Cup Team 3". */
@@ -154,9 +216,14 @@ export function Betslip({ onClose }: BetslipProps = {}) {
             home_team: b.homeTeam,
             away_team: b.awayTeam,
             // Default to the 1x2 / Match Result market if no explicit
-            // label was attached. The backend recognises both.
+            // label was attached. The backend understands Match Result,
+            // Double Chance (1X/12/X2), Both Teams to Score (Yes/No)
+            // and Over/Under (Over/Under) and will lazily create the
+            // missing market + selections so any odds button the user
+            // sees in the catalog becomes a real cashier-payable ticket.
             market_label: b.market || "Match Result",
             selection_label: b.selection,
+            ...(b.league ? { league: b.league } : {}),
             ...(b.startsAt ? { starts_at: b.startsAt } : {}),
           },
           odds_seen: b.odds,
@@ -174,7 +241,6 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         },
       });
 
-      setLastCouponCode(reservation.coupon_code);
       setConfirmationData({
         ticketNumber: reservation.coupon_code,
         betId: reservation.bet_id,
@@ -198,8 +264,8 @@ export function Betslip({ onClose }: BetslipProps = {}) {
   };
 
   // Place an online bet debiting the selected wallet.
-  // `source` = "main" → deducts from mezzobet_balance (existing behaviour).
-  // `source` = "bonus" → deducts from mezzobet_bonus_balance (promo wallet).
+  // `source` = "main" → deducts from 1birr_balance (existing behaviour).
+  // `source` = "bonus" → deducts from 1birr_bonus_balance (promo wallet).
   const runOnlinePlacement = async (source: "main" | "bonus") => {
     if (typeof window === "undefined") return;
 
@@ -314,7 +380,6 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       await refreshWallet();
       const newBalance = readMainBalance();
       const newBonus = readBonusBalance();
-      setLastCouponCode(ticketNumber);
 
       setConfirmationData({
         ticketNumber,
@@ -369,12 +434,10 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       return;
     }
 
-    const isLoggedIn =
-      typeof window !== "undefined" &&
-      localStorage.getItem("mezzobet_logged_in") === "true";
-
-    if (!isLoggedIn) {
-      alert("Please login to place bets online!");
+    // Online bets debit the user's wallet, so the user must be logged in.
+    // Redirect unauthenticated users straight to the login dialog.
+    if (!isAuthenticated) {
+      window.dispatchEvent(new Event("1birr:open-login"));
       return;
     }
 
@@ -488,14 +551,14 @@ export function Betslip({ onClose }: BetslipProps = {}) {
   }, [mobileOpen]);
 
   // Let external UI (e.g. the mobile bottom navigation bar) request that the
-  // drawer opens by firing `mezzobet:open-betslip`. This keeps the drawer
+  // drawer opens by firing `1birr:open-betslip`. This keeps the drawer
   // state encapsulated here while still being controllable from siblings
   // mounted higher up in the tree.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const open = () => setMobileOpen(true);
-    window.addEventListener("mezzobet:open-betslip", open);
-    return () => window.removeEventListener("mezzobet:open-betslip", open);
+    window.addEventListener("1birr:open-betslip", open);
+    return () => window.removeEventListener("1birr:open-betslip", open);
   }, []);
 
   return (
@@ -590,85 +653,22 @@ export function Betslip({ onClose }: BetslipProps = {}) {
       </div>
 
       {/* Mobile-only — Bet Code and Check Coupon inputs always visible (no
-          expand/collapse) so nothing is mistaken for a “more” menu step.
-          Hidden on `xl+` where the desktop bottom panel handles both. */}
-      <div
-        className="xl:hidden border-b shrink-0"
-        style={{
-          borderColor: "var(--mezzo-border)",
-          background: "var(--mezzo-bg-secondary)",
-        }}
-      >
-        <div
-          className="px-3 pt-2 pb-2 border-b"
-          style={{ borderColor: "var(--mezzo-border)" }}
-        >
-          <div className="flex items-center gap-1.5 mb-1">
-            <Ticket className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            <span className="text-[11px] font-bold text-gray-200 tracking-wide">
-              BET CODE
-            </span>
-          </div>
-          <p className="text-[11px] text-gray-400 mb-2">
-            Paste a bet code to load it into your slip.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              inputMode="text"
-              placeholder="Bet code ..."
-              value={ticketNumber}
-              onChange={(e) => setTicketNumber(e.target.value)}
-              className="flex-1 min-w-0 px-3 py-2 rounded bg-[#2a2a4a] border border-gray-700 text-white text-sm outline-none focus:border-purple-500 transition-colors placeholder:text-gray-500"
-            />
-            <button
-              type="button"
-              onClick={handleCopyTicket}
-              className="shrink-0 px-4 py-2 rounded font-bold text-sm transition-all hover:opacity-80 touch-target"
-              style={{
-                background:
-                  "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)",
-                color: "#fff",
-              }}
-            >
-              LOAD
-            </button>
-          </div>
-        </div>
-        <div className="px-3 py-2">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            <span className="text-[11px] font-bold text-gray-200 tracking-wide">
-              CHECK COUPON
-            </span>
-          </div>
-          <p className="text-[11px] text-gray-400 mb-2">
-            Enter a coupon number to view its status.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              inputMode="text"
-              placeholder="Coupon number ..."
-              value={mobileCouponNumber}
-              onChange={(e) => setMobileCouponNumber(e.target.value)}
-              className="flex-1 min-w-0 px-3 py-2 rounded bg-[#2a2a4a] border border-gray-700 text-white text-sm outline-none focus:border-purple-500 transition-colors placeholder:text-gray-500"
-            />
-            <button
-              type="button"
-              onClick={handleCheckMobileCoupon}
-              className="shrink-0 px-4 py-2 rounded font-bold text-sm transition-all hover:opacity-80 touch-target"
-              style={{
-                background:
-                  "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)",
-                color: "#fff",
-              }}
-            >
-              CHECK
-            </button>
-          </div>
-        </div>
-      </div>
+          expand/collapse) so nothing is mistaken for a "more" menu step.
+          The desktop version of the same panel is rendered once at the
+          bottom of the aside (see `BetCodePanel` below) so it is always
+          available even when the slip is empty. */}
+      <BetCodePanel
+        layoutClass="xl:hidden border-b shrink-0"
+        ticketNumber={ticketNumber}
+        onTicketChange={setTicketNumber}
+        onLoad={handleLoadTicket}
+        loading={loadingTicket}
+        couponNumber={mobileCouponNumber}
+        onCouponChange={setMobileCouponNumber}
+        onCheck={handleCheckMobileCoupon}
+        loadInfo={loadInfo}
+        onDismissLoadInfo={() => setLoadInfo(null)}
+      />
 
       {hasBets ? (
         // Mobile: everything inside the slip scrolls together with the
@@ -854,27 +854,13 @@ export function Betslip({ onClose }: BetslipProps = {}) {
           </div>
 
           {/* Action Buttons — compact vertical rhythm on phones/tablets
-              so all four CTAs (Ticket Preview, Clear Slip, Place Bet,
-              Place Bet Online) stay inside the drawer without clipping.
-              Desktop (`xl+`) keeps the original generous spacing. */}
+              so all CTAs (Clear Slip, Place Bet, Place Bet Online) stay
+              inside the drawer without clipping. Desktop (`xl+`) keeps
+              the original generous spacing. */}
           <div
             className="shrink-0 border-t p-2.5 space-y-2 xl:space-y-3 xl:p-3"
             style={{ borderColor: "var(--mezzo-border)" }}
           >
-            {/* Ticket Preview Button */}
-            <button
-              onClick={handleTicketPreview}
-              disabled={totalBetAmount === 0}
-              className="w-full py-2.5 xl:py-3 rounded font-bold flex items-center justify-center gap-2 transition-all hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed touch-target"
-              style={{ background: "linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%)", color: "#000" }}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-              TICKET PREVIEW
-            </button>
-
             <div className="flex gap-2">
               <button
                 onClick={clearBets}
@@ -922,62 +908,6 @@ export function Betslip({ onClose }: BetslipProps = {}) {
               </svg>
             </FastButton>
 
-            {/* Bet Code Section — desktop only. On mobile both sections sit
-                in the always-visible block directly below the tabs. */}
-            <div className="hidden xl:block mt-4 pt-4 border-t" style={{ borderColor: "var(--mezzo-border)" }}>
-              <div className="mb-2">
-                <p className="text-xs font-semibold text-white mb-1">Bet Code:</p>
-                <p className="text-xs text-gray-400">You have a bet code? Paste it here to load.</p>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Bet code ..."
-                  value={ticketNumber}
-                  onChange={(e) => setTicketNumber(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded bg-[#2a2a4a] border border-gray-700 text-white text-sm outline-none focus:border-purple-500 transition-colors placeholder:text-gray-500"
-                />
-                <button
-                  onClick={handleCopyTicket}
-                  className="px-4 py-2 rounded font-bold text-sm transition-all hover:opacity-80"
-                  style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)", color: "#fff" }}
-                >
-                  LOAD
-                </button>
-              </div>
-            </div>
-
-            {/* Check Coupon Section — desktop only (see note above). */}
-            <div className="hidden xl:block mt-3">
-              <button
-                onClick={() => setShowCopyTicketInput(!showCopyTicketInput)}
-                className="w-full flex items-center justify-between py-2 text-white font-semibold text-sm"
-              >
-                <span>Check Coupon</span>
-                <svg
-                  className={`w-4 h-4 transition-transform ${showCopyTicketInput ? 'rotate-0' : 'rotate-180'}`}
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-              {showCopyTicketInput && (
-                <div className="flex gap-2 mt-2">
-                  <input
-                    type="text"
-                    placeholder="Coupon number ..."
-                    className="flex-1 px-3 py-2 rounded bg-[#2a2a4a] border border-gray-700 text-white text-sm outline-none focus:border-purple-500 transition-colors placeholder:text-gray-500"
-                  />
-                  <button
-                    className="px-4 py-2 rounded font-bold text-sm transition-all hover:opacity-80"
-                    style={{ background: "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)", color: "#fff" }}
-                  >
-                    CHECK
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       ) : (
@@ -991,11 +921,31 @@ export function Betslip({ onClose }: BetslipProps = {}) {
               {" "}Click ODDS to Start{" "}
               <span className="text-[var(--mezzo-accent-yellow)]">&gt;&gt;&gt;</span>
             </p>
+            <p className="text-xs text-gray-500 mt-2 max-w-[14rem]">
+              Got a bet code from a friend? Paste it in the
+              <span className="text-[var(--mezzo-accent-yellow)] font-semibold"> Bet Code </span>
+              box below to load their picks into your slip.
+            </p>
           </div>
-          {/* Bet Code / Check Coupon on phones are in the `xl:hidden` block
-              above the slip body for both empty and populated states. */}
         </div>
       )}
+
+      {/* Desktop-only Bet Code + Check Coupon — always visible at the
+          bottom of the aside so users can paste a friend's code even
+          when their own slip is empty. The mobile version of the same
+          panel sits above (just under the tab strip). */}
+      <BetCodePanel
+        layoutClass="hidden xl:block border-t shrink-0"
+        ticketNumber={ticketNumber}
+        onTicketChange={setTicketNumber}
+        onLoad={handleLoadTicket}
+        loading={loadingTicket}
+        couponNumber={mobileCouponNumber}
+        onCouponChange={setMobileCouponNumber}
+        onCheck={handleCheckMobileCoupon}
+        loadInfo={loadInfo}
+        onDismissLoadInfo={() => setLoadInfo(null)}
+      />
 
       {/* Bet Confirmation Modal */}
       {confirmationData && (
@@ -1096,59 +1046,6 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         </DialogContent>
       </Dialog>
 
-      {/* Ticket Preview Dialog */}
-      <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
-        <DialogContent className="bg-black border-gray-700 text-white max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader className="no-print">
-            <DialogTitle className="text-xl font-bold text-[var(--mezzo-accent-yellow)] text-center">
-              TICKET PREVIEW
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* Thermal Ticket Preview */}
-            <ThermalTicket
-              ticketNumber={lastCouponCode || previewTicketNumber || "PREVIEW-0000"}
-              stake={stake}
-              totalOdds={totalOdds}
-              potentialWin={potentialWin}
-              netPayout={netPayout}
-              stakeTax={stake * 0.15}
-              winTax={0}
-              betsCount={totalBetAmount}
-              timestamp={new Date().toISOString()}
-              buralNumber={`088${(previewTicketNumber || "00000").replace(/\D/g, "").slice(0, 5).padEnd(5, "0")}`}
-            />
-
-            {/* Action Buttons — `no-print` ensures these UI controls never
-                appear on the thermal printout. The ticket itself is the only
-                thing that survives `@media print`. */}
-            <div className="no-print flex gap-2 pt-2">
-              <button
-                onClick={() => {
-                  const ticketNumber =
-                    lastCouponCode || previewTicketNumber || "PREVIEW-0000";
-                  navigator.clipboard.writeText(ticketNumber);
-                  alert(`Ticket number ${ticketNumber} copied to clipboard!`);
-                }}
-                className="flex-1 py-2 rounded font-bold flex items-center justify-center gap-2"
-                style={{ background: "var(--mezzo-accent-yellow)", color: "#000" }}
-              >
-                <Share2 className="w-4 h-4" />
-                Share
-              </button>
-            </div>
-
-            <button
-              onClick={() => setShowTicketPreview(false)}
-              className="no-print w-full py-2 rounded font-bold"
-              style={{ background: "var(--mezzo-accent-green)", color: "#000" }}
-            >
-              CLOSE
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
       </aside>
     </>
   );

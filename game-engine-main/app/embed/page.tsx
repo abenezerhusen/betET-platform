@@ -43,7 +43,7 @@ function EmbedInner() {
 
   return (
     <div className="min-h-screen bg-[#0f1219] text-white flex flex-col items-center justify-center p-6">
-      <h1 className="text-xl font-bold mb-2">BetET embed shell</h1>
+      <h1 className="text-xl font-bold mb-2">1birr.bet game</h1>
       <p className="text-sm text-gray-400 mb-2 text-center max-w-md">
         Tenant <code className="text-gray-200">{tenant ?? "—"}</code>, currency{" "}
         <code className="text-gray-200">{currency ?? "—"}</code>

@@ -3,10 +3,10 @@ import { getRegisteredPaths } from './registry';
 const swaggerSpec = {
   openapi: '3.0.0',
   info: {
-    title: 'PlayCore API',
+    title: '1birr.bet API',
     version: '1.0.0',
     description:
-      'Betting platform API — Admin, User, Cashier, P2P, Games',
+      '1birr.bet betting platform API — Admin, User, Cashier, P2P, Games',
   },
   servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
   components: {

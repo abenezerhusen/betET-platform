@@ -952,6 +952,115 @@ async function listMyBets(
   });
 }
 
+/**
+ * Ticket reload — look a ticket up by coupon code (SBK-XXXXXXXX) or bet
+ * UUID and return its selections in a shape the betslip can replay as a
+ * brand-new bet. Any authenticated user may reload a code they hold
+ * (bet codes are shareable, mirroring the cashier ticket flow).
+ */
+async function reloadTicket(req: Request, rawCode: string) {
+  const scope = getUserScope(req);
+  const code = rawCode.trim();
+  if (!code) throw new BadRequestError('Ticket code required');
+
+  return withTenantClient({ tenantId: scope.tenantId }, async (client) => {
+    const bet = await client.query(
+      `SELECT b.id, b.coupon_code, b.status, b.bet_type,
+              b.stake::text AS stake, b.total_odds::text AS total_odds,
+              b.potential_payout::text AS potential_payout,
+              b.currency, b.placed_at
+         FROM sportsbook_bets b
+        WHERE b.tenant_id = $1
+          AND (upper(b.coupon_code) = upper($2) OR b.id::text = lower($2))
+        LIMIT 1`,
+      [scope.tenantId, code]
+    );
+    const b = bet.rows[0];
+    if (!b) throw new NotFoundError('Ticket not found');
+
+    const legs = await client.query<{
+      selection_id: string;
+      market_id: string;
+      event_id: string;
+      odds_at_placement: string;
+      current_odds: string;
+      selection_label: string;
+      selection_result: 'won' | 'lost' | 'void' | null;
+      market_label: string;
+      market_status: string;
+      home_team: string;
+      away_team: string;
+      league: string;
+      sport: string;
+      starts_at: Date;
+      event_status: string;
+    }>(
+      `SELECT l.selection_id,
+              m.id AS market_id,
+              ev.id AS event_id,
+              l.odds_at_placement::text,
+              s.odds_decimal::text AS current_odds,
+              s.label AS selection_label,
+              s.result AS selection_result,
+              m.label AS market_label,
+              m.status AS market_status,
+              ev.home_team, ev.away_team, ev.league, ev.sport,
+              ev.starts_at, ev.status AS event_status
+         FROM sportsbook_bet_legs l
+         JOIN sports_selections s ON s.id = l.selection_id
+         JOIN sports_markets m    ON m.id = s.market_id
+         JOIN sports_events ev    ON ev.id = m.event_id
+        WHERE l.bet_id = $1
+        ORDER BY l.created_at ASC`,
+      [b.id]
+    );
+
+    return {
+      bet: {
+        id: b.id,
+        coupon_code: b.coupon_code,
+        status: b.status,
+        bet_type: b.bet_type,
+        stake: b.stake,
+        total_odds: b.total_odds,
+        potential_payout: b.potential_payout,
+        currency: b.currency,
+        placed_at: b.placed_at,
+      },
+      selections: legs.rows.map((l) => {
+        const startsAt = new Date(l.starts_at);
+        const replayable =
+          l.selection_result === null &&
+          l.market_status === 'open' &&
+          l.event_status === 'scheduled' &&
+          startsAt.getTime() > Date.now();
+        return {
+          selection_id: l.selection_id,
+          market_id: l.market_id,
+          event_id: l.event_id,
+          home_team: l.home_team,
+          away_team: l.away_team,
+          league: l.league,
+          sport: l.sport,
+          market_label: l.market_label,
+          selection_label: l.selection_label,
+          odds_at_placement: l.odds_at_placement,
+          current_odds: l.current_odds,
+          starts_at: l.starts_at,
+          event_status: l.event_status,
+          market_status: l.market_status,
+          /**
+           * Per-leg settlement result. null = still pending; settled bets
+           * carry 'won' | 'lost' | 'void' from `sports_selections.result`.
+           */
+          selection_result: l.selection_result,
+          replayable,
+        };
+      }),
+    };
+  });
+}
+
 async function getMyBet(req: Request, betId: string) {
   const scope = getUserScope(req);
   return withTenantClient({ tenantId: scope.tenantId }, async (client) => {
@@ -1022,6 +1131,12 @@ router.post(
 );
 
 router.get('/', wrap((req) => listMyBets(req, listQuery.parse(req.query))));
+
+// Must be registered before `/:id` so "reload" isn't parsed as a UUID.
+router.get(
+  '/reload/:code',
+  wrap((req) => reloadTicket(req, String(req.params.code ?? '')))
+);
 
 router.get(
   '/:id',

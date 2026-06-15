@@ -29,7 +29,7 @@ export function LobbyFooter() {
             {/* About */}
             <div className="min-w-0">
               <h3 className="text-slate-300 font-semibold mb-2 sm:mb-3 md:mb-4 tracking-wide text-sm sm:text-base md:text-lg">ABOUT THE COMPANY</h3>
-              <p className="text-slate-500 text-sm sm:text-base break-words">Play Core ©2026</p>
+              <p className="text-slate-500 text-sm sm:text-base break-words">1birr.bet ©2026</p>
             </div>
 
             {/* Important Links */}

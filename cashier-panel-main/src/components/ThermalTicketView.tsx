@@ -25,6 +25,7 @@
  */
 
 import type { CashierTicket } from "@/lib/api";
+import { renderCode128Svg } from "@/lib/barcode";
 
 interface ThermalTicketViewProps {
   ticket: CashierTicket;
@@ -148,6 +149,18 @@ export function ThermalTicketView({
         fontFamily: "'Courier New', Courier, monospace",
         fontSize: "10.5px",
         lineHeight: 1.25,
+        // Every line of the ticket is rendered at full font-weight so
+        // small text (league names, kick-off times, cashier / branch
+        // labels) is just as legible as the bold headers when printed
+        // on an 80 mm thermal head — thin regular-weight Courier New
+        // tends to fade to gray on low-DPI thermal output. Font sizes
+        // are unchanged; only the stroke weight is increased.
+        fontWeight: 700,
+        // Force the browser to print exact colours (full black ink)
+        // even when the user has "print backgrounds = off" or a
+        // monochrome economy mode that grayscales regular weight text.
+        WebkitPrintColorAdjust: "exact",
+        printColorAdjust: "exact",
       }}
     >
       <div style={{ textAlign: "center", marginBottom: "6px" }}>
@@ -158,7 +171,7 @@ export function ThermalTicketView({
             letterSpacing: "2px",
           }}
         >
-          PLAYCORE
+          1BIRR.BET
         </div>
         <div style={{ fontSize: "9.5px", letterSpacing: "0.5px" }}>
           Sports Betting
@@ -250,9 +263,22 @@ export function ThermalTicketView({
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 
+      {/* Code 128 barcode of the printed ticket id. Scanned by any
+          commodity USB / Bluetooth HID barcode scanner so the cashier
+          can verify, payout or cancel a ticket without re-typing the
+          coupon code. The human-readable value sits under the bars so
+          manual entry remains an option on damaged prints. */}
+      <div
+        aria-hidden
+        style={{ margin: "6px 0 4px", width: "100%", textAlign: "center" }}
+        dangerouslySetInnerHTML={{ __html: renderCode128Svg(coupon) }}
+      />
+
+      <div style={{ margin: "4px 0" }}>{dashedLine}</div>
+
       <div style={{ textAlign: "center", fontSize: "9.5px", lineHeight: 1.3 }}>
         <div>*** All bets after kick-off are invalid ***</div>
-        <div style={{ fontWeight: 700, marginTop: "2px" }}>playcore.bet</div>
+        <div style={{ fontWeight: 700, marginTop: "2px" }}>1birr.bet</div>
         <div style={{ marginTop: "4px" }}>Under 21s are strictly forbidden!</div>
         <div>Terms and Conditions apply.</div>
       </div>
@@ -355,12 +381,18 @@ export function buildThermalTicketPrintHtml(args: {
       font-family: 'Courier New', Courier, monospace;
       font-size: 10.5px;
       line-height: 1.25;
+      /* Bold every line (sizes unchanged) so small Courier New text
+         survives the thermal head without fading; visual hierarchy
+         is preserved via size + spacing. */
+      font-weight: 700;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
   </style>
 </head>
 <body>
   <div style="text-align:center;margin-bottom:6px;">
-    <div style="font-weight:700;font-size:13px;letter-spacing:2px;">PLAYCORE</div>
+    <div style="font-weight:700;font-size:13px;letter-spacing:2px;">1BIRR.BET</div>
     <div style="font-size:9.5px;letter-spacing:0.5px;">Sports Betting</div>
   </div>
 
@@ -401,9 +433,18 @@ export function buildThermalTicketPrintHtml(args: {
 
   <div style="margin:4px 0;">${dashedLine}</div>
 
+  <!-- Code 128 barcode of the coupon — scanned by the cashier panel's
+       Ticket ID inputs (USB scanners type the value + Enter, which the
+       existing Lookup / Check Ticket handlers already process). -->
+  <div style="margin:6px 0 4px;text-align:center;width:100%;">
+    ${renderCode128Svg(coupon)}
+  </div>
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
   <div style="text-align:center;font-size:9.5px;line-height:1.3;">
     <div>*** All bets after kick-off are invalid ***</div>
-    <div style="font-weight:700;margin-top:2px;">playcore.bet</div>
+    <div style="font-weight:700;margin-top:2px;">1birr.bet</div>
     <div style="margin-top:4px;">Under 21s are strictly forbidden!</div>
     <div>Terms and Conditions apply.</div>
   </div>

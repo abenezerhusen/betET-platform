@@ -77,6 +77,8 @@ router.get('/general', async (req: Request, res: Response, next: NextFunction) =
       },
       underage_disclaimer: cfg.underage_disclaimer,
       about_us: cfg.about_us,
+      terms_and_conditions: cfg.terms_and_conditions,
+      footer_text: cfg.footer_text,
     });
   } catch (err) {
     next(err);

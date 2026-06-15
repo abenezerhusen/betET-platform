@@ -27,7 +27,21 @@ export function Header() {
   return (
     <header className="bg-white border-b border-gray-200 h-16 flex items-center px-6 justify-between">
       <div className="flex items-center space-x-4">
-        <h1 className="text-xl font-semibold text-gray-800">Admin Dashboard</h1>
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-extrabold tracking-tight bg-emerald-500 text-black"
+            aria-hidden
+          >
+            1B
+          </span>
+          <span className="text-base font-bold tracking-tight text-gray-900">
+            1birr<span className="text-emerald-600">.bet</span>
+          </span>
+          <span className="hidden sm:inline text-gray-300">|</span>
+          <h1 className="hidden sm:inline text-xl font-semibold text-gray-800">
+            Admin Dashboard
+          </h1>
+        </div>
       </div>
       <button
         onClick={logout}

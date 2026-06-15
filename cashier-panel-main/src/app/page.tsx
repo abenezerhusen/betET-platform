@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -164,7 +164,7 @@ export default function CashierPanel() {
       <header className="bg-[#2d2d2d] text-white h-16 flex items-center justify-between px-6 shadow-md">
         <div className="flex items-center gap-3">
           <div className="bg-white text-[#2d2d2d] px-4 py-2 rounded-md font-bold text-base tracking-tight">
-            PLAY<span className="text-green-600">CORE</span>
+            1BIRR<span className="text-green-600">.BET</span>
           </div>
         </div>
         <div className="flex items-center gap-2 text-sm">
@@ -341,6 +341,14 @@ function TicketsPage() {
   const [activeTab, setActiveTab] = useState("sell");
   const [couponCode, setCouponCode] = useState("");
   const [payoutCode, setPayoutCode] = useState("");
+  // Refs used to auto-focus the Ticket ID input whenever the user switches
+  // tabs. USB / Bluetooth barcode scanners are HID keyboard-wedge devices
+  // that type the scanned text into whichever input has focus and send an
+  // Enter key. Both inputs already handle Enter to trigger Lookup / Check
+  // Ticket, so focusing them on tab change makes scanning a single-step
+  // operation with zero extra clicks. Manual typing is unchanged.
+  const sellInputRef = useRef<HTMLInputElement>(null);
+  const payoutInputRef = useRef<HTMLInputElement>(null);
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -361,6 +369,19 @@ function TicketsPage() {
     session?.user?.email ||
     session?.user?.phone ||
     "Cashier";
+
+  // Auto-focus the Ticket ID input for the active tab so a barcode scan
+  // is captured immediately — no need to click into the field first.
+  // Triggered on mount and whenever the user switches between Sell and
+  // Payout & Cancel. Wrapped in rAF so the input is mounted before we
+  // call .focus() (the inactive TabsContent unmounts in shadcn-ui).
+  useEffect(() => {
+    const target = activeTab === "payout" ? payoutInputRef : sellInputRef;
+    const handle = window.requestAnimationFrame(() => {
+      target.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(handle);
+  }, [activeTab]);
 
   const fmtDate = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleString() : "—";
@@ -555,11 +576,15 @@ function TicketsPage() {
         <TabsContent value="sell" className="space-y-6 mt-4">
           <div className="relative">
             <Input
-              placeholder="Enter Ticket ID"
+              ref={sellInputRef}
+              placeholder="Scan or type Ticket ID"
               value={couponCode}
               onChange={(e) => setCouponCode(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runLookup(couponCode)}
               className="pr-10 h-11 border-gray-300"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           </div>
@@ -736,11 +761,15 @@ function TicketsPage() {
           <div className="flex gap-3">
             <div className="relative flex-1">
               <Input
-                placeholder="Input Ticket ID"
+                ref={payoutInputRef}
+                placeholder="Scan or type Ticket ID"
                 value={payoutCode}
                 onChange={(e) => setPayoutCode(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void runCheckPayout(payoutCode)}
                 className="pr-10 h-11 border-gray-300"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
               />
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             </div>
@@ -1917,8 +1946,17 @@ function LoginPage({ onLogin }: { onLogin: (session: CashierSession) => void }) 
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-block bg-gray-800 text-white px-6 py-3 rounded-md font-bold text-2xl tracking-tight mb-4">
-            PLAY<span className="text-green-500">CORE</span>
+          <div className="inline-flex items-center gap-3 mb-4">
+            <img
+              src="/1birr-icon.svg"
+              alt="1birr.bet"
+              width={48}
+              height={48}
+              className="rounded-md"
+            />
+            <div className="bg-gray-800 text-white px-6 py-3 rounded-md font-bold text-2xl tracking-tight">
+              1BIRR<span className="text-green-500">.BET</span>
+            </div>
           </div>
           <h2 className="text-xl font-semibold text-gray-800 mt-4">Cashier Login</h2>
           <p className="text-sm text-gray-600 mt-2">Enter your credentials to access the system</p>

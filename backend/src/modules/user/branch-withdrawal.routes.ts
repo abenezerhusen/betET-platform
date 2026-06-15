@@ -27,6 +27,7 @@ import {
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
 import { emitWalletUpdated } from '../../realtime/socket';
+import { assertWithdrawalAllowed } from '../../services/deposit-wagering.service';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -113,6 +114,14 @@ router.post(
                 available: balance,
               });
             }
+            // Deposit wagering rule — deposited funds must be turned
+            // over before a cash-out code can reserve them.
+            await assertWithdrawalAllowed(
+              client,
+              w.rows[0].id,
+              balance,
+              body.amount
+            );
             const newBalance = balance - body.amount;
             const newLocked = Number(w.rows[0].locked_balance) + body.amount;
             await client.query(

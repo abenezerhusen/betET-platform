@@ -78,6 +78,10 @@ export default function WithdrawPage() {
 
   const balanceLine = wallet?.summary?.[0];
   const balance = Number(balanceLine?.balance ?? 0);
+  // Deposit-wagering rule: deposited funds must be wagered before they can
+  // be withdrawn — only the withdrawable portion may leave the wallet.
+  const withdrawable = Number(balanceLine?.withdrawable_balance ?? balanceLine?.balance ?? 0);
+  const wageringRemaining = Number(balanceLine?.wagering_remaining ?? 0);
   const parsedAmount = useMemo(() => Number(amount || 0), [amount]);
 
   useEffect(() => {
@@ -94,7 +98,7 @@ export default function WithdrawPage() {
   const canSubmit =
     Number.isFinite(parsedAmount) &&
     parsedAmount > 0 &&
-    parsedAmount <= balance &&
+    parsedAmount <= withdrawable &&
     !!telebirrNumber.trim() &&
     !!accountName.trim();
 
@@ -108,8 +112,12 @@ export default function WithdrawPage() {
       setValidationError(parsed.error.issues[0]?.message ?? "Invalid withdrawal input");
       return;
     }
-    if (parsed.data.amount > balance) {
-      setValidationError("Withdrawal exceeds available balance");
+    if (parsed.data.amount > withdrawable) {
+      setValidationError(
+        parsed.data.amount > balance
+          ? "Withdrawal exceeds available balance"
+          : `Deposited funds must be wagered before withdrawal. Withdrawable: ${withdrawable.toFixed(2)} ETB`
+      );
       return;
     }
     setValidationError("");
@@ -144,7 +152,22 @@ export default function WithdrawPage() {
             <span className="ml-auto text-xs px-2 py-1 rounded" style={{ background: "var(--mezzo-bg-secondary)" }}>
               Balance: <span className="text-[var(--mezzo-accent-green)] font-semibold">{balance.toFixed(2)} ETB</span>
             </span>
+            <span className="text-xs px-2 py-1 rounded" style={{ background: "var(--mezzo-bg-secondary)" }}>
+              Withdrawable: <span className="text-[var(--mezzo-accent-yellow)] font-semibold">{withdrawable.toFixed(2)} ETB</span>
+            </span>
           </div>
+          {wageringRemaining > 0 && (
+            <div className="px-3 py-2 rounded mb-3 text-xs bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>
+                Deposited funds must be wagered before they can be withdrawn.
+                You still need to wager{" "}
+                <strong>{wageringRemaining.toFixed(2)} ETB</strong> — until
+                then only winnings ({withdrawable.toFixed(2)} ETB) are
+                withdrawable.
+              </span>
+            </div>
+          )}
 
           {successMsg && (
             <div className="px-3 py-2 rounded mb-3 text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
@@ -223,12 +246,14 @@ export default function WithdrawPage() {
             </TabsContent>
 
             <TabsContent value="p2p">
-              <P2PWithdrawPanel balance={balance} refreshWallet={refreshWallet} />
+              {/* Panels cap requests at the withdrawable portion so the
+                  deposit-wagering rule is reflected client-side too. */}
+              <P2PWithdrawPanel balance={withdrawable} refreshWallet={refreshWallet} />
             </TabsContent>
 
             <TabsContent value="branch">
               <BranchWithdrawalPanel
-                balance={balance}
+                balance={withdrawable}
                 refreshWallet={refreshWallet}
               />
             </TabsContent>

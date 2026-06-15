@@ -15,26 +15,48 @@ export function PerformanceOptimizer() {
 
   useEffect(() => {
     // In local development we must avoid stale cached bundles/API responses.
-    // Older SW caches were serving outdated UI (e.g. old Print button and
-    // pre-fix /games behavior), so explicitly unregister all workers in dev.
-    if ("serviceWorker" in navigator && process.env.NODE_ENV !== "production") {
-      navigator.serviceWorker
-        .getRegistrations()
-        .then((registrations) => {
-          registrations.forEach((registration) => {
-            void registration.unregister();
-          });
-        })
-        .catch(() => {});
-    } else if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((registration) => {
-          console.log("[ServiceWorker] Registered successfully:", registration.scope);
-        })
-        .catch((error) => {
-          console.log("[ServiceWorker] Registration failed:", error);
-        });
+    // Older SW installs aggressively cached Next.js chunks under their old
+    // hashes — after the next `next dev` run those chunks return 404 and
+    // the page dies with "client-side exception". So in dev:
+    //   1. Unregister every active service worker.
+    //   2. Wipe every CacheStorage entry, not just the SW registration —
+    //      otherwise the cached responses survive the unregister.
+    //   3. Reload once if we actually killed a worker, so the next request
+    //      bypasses the now-defunct controller and hits the dev server.
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      const isProd = process.env.NODE_ENV === "production";
+      if (!isProd) {
+        const wipeCaches = async () => {
+          if (!("caches" in window)) return;
+          try {
+            const keys = await window.caches.keys();
+            await Promise.all(keys.map((k) => window.caches.delete(k)));
+          } catch {
+            /* ignore */
+          }
+        };
+        navigator.serviceWorker
+          .getRegistrations()
+          .then(async (registrations) => {
+            const hadWorker = registrations.length > 0;
+            await Promise.all(registrations.map((r) => r.unregister()));
+            await wipeCaches();
+            if (hadWorker) {
+              // One-shot reload so the no-controller dev page is what
+              // actually runs, instead of whatever the SW just served.
+              const flag = "1birr-sw-cleared";
+              if (!sessionStorage.getItem(flag)) {
+                sessionStorage.setItem(flag, "1");
+                window.location.reload();
+              }
+            }
+          })
+          .catch(() => undefined);
+      } else {
+        navigator.serviceWorker
+          .register("/sw.js")
+          .catch(() => undefined);
+      }
     }
 
     // DNS Prefetching for external domains

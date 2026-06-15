@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Gift } from "lucide-react";
-import { bonusesApi, promotionsApi, tournamentsApi } from "@/lib/api";
+import { bonusesApi, promotionsApi, publicConfigApi, tournamentsApi } from "@/lib/api";
 
 type PromoView = {
   id: string;
@@ -17,10 +17,35 @@ type PromoView = {
   ctaLabel: string;
 };
 
+const CATEGORY_TABS: Array<{ key: "all" | PromoView["type"]; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "bonus", label: "Bonuses" },
+  { key: "raffle", label: "Raffles" },
+  { key: "tournament", label: "Tournaments" },
+];
+
 export default function PromotionsPage() {
   const router = useRouter();
   const [promotions, setPromotions] = useState<PromoView[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<"all" | PromoView["type"]>("all");
+  // Admin-managed Terms & Conditions text (falls back to the static copy).
+  const [adminTerms, setAdminTerms] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .getPublicGeneral()
+      .then((cfg) => {
+        if (!cancelled) setAdminTerms(cfg.terms_and_conditions ?? "");
+      })
+      .catch(() => {
+        /* keep static fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +77,22 @@ export default function PromotionsPage() {
   }, []);
 
   const hasPromos = useMemo(() => promotions.length > 0, [promotions]);
+  // Only surface category tabs that actually have promotions (plus "All"),
+  // so the section stays clean when the admin runs a single campaign type.
+  const visibleTabs = useMemo(
+    () =>
+      CATEGORY_TABS.filter(
+        (t) => t.key === "all" || promotions.some((p) => p.type === t.key)
+      ),
+    [promotions]
+  );
+  const visiblePromotions = useMemo(
+    () =>
+      activeCategory === "all"
+        ? promotions
+        : promotions.filter((p) => p.type === activeCategory),
+    [promotions, activeCategory]
+  );
   return (
     <div className="flex flex-col min-h-[calc(100vh-120px)] md:min-h-[calc(100vh-180px)]">
       {/* Promotions Content */}
@@ -73,6 +114,29 @@ export default function PromotionsPage() {
             <h1 className="text-2xl sm:text-3xl font-bold">PROMOTIONS</h1>
           </div>
 
+          {/* Category tabs — shown when more than one category is active */}
+          {!loading && hasPromos && visibleTabs.length > 2 && (
+            <div className="flex gap-2 mb-6 overflow-x-auto">
+              {visibleTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveCategory(tab.key)}
+                  className={`px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-colors ${
+                    activeCategory === tab.key ? "text-black" : "text-gray-300 hover:text-white"
+                  }`}
+                  style={
+                    activeCategory === tab.key
+                      ? { background: "var(--mezzo-accent-green)" }
+                      : { background: "var(--mezzo-bg-secondary)" }
+                  }
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="space-y-6">
             {loading && <p className="text-sm text-gray-400">Loading promotions...</p>}
             {!loading && !hasPromos && (
@@ -80,7 +144,12 @@ export default function PromotionsPage() {
                 No promotions available right now.
               </p>
             )}
-            {promotions.map((promo) => (
+            {!loading && hasPromos && visiblePromotions.length === 0 && (
+              <p className="text-sm text-gray-400">
+                No promotions in this category right now.
+              </p>
+            )}
+            {visiblePromotions.map((promo) => (
               <div
                 key={promo.id}
                 className="rounded-lg overflow-hidden flex flex-col sm:flex-row"
@@ -131,16 +200,20 @@ export default function PromotionsPage() {
             ))}
           </div>
 
-          {/* Terms & Conditions */}
+          {/* Terms & Conditions — admin-managed text when configured */}
           <div className="mt-8 p-6 rounded-lg" style={{ background: "var(--mezzo-bg-secondary)" }}>
             <h3 className="text-lg font-bold mb-3">General Terms & Conditions</h3>
-            <div className="text-sm text-gray-400 space-y-2">
-              <p>• All promotions are subject to the general terms and conditions</p>
-              <p>• 1birr.bet reserves the right to modify or cancel promotions at any time</p>
-              <p>• Only one promotion per person/household/IP address</p>
-              <p>• Bonus funds must be wagered before withdrawal</p>
-              <p>• 18+ only. Gamble responsibly.</p>
-            </div>
+            {adminTerms ? (
+              <div className="text-sm text-gray-400 whitespace-pre-line">{adminTerms}</div>
+            ) : (
+              <div className="text-sm text-gray-400 space-y-2">
+                <p>• All promotions are subject to the general terms and conditions</p>
+                <p>• 1birr.bet reserves the right to modify or cancel promotions at any time</p>
+                <p>• Only one promotion per person/household/IP address</p>
+                <p>• Bonus funds must be wagered before withdrawal</p>
+                <p>• 18+ only. Gamble responsibly.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

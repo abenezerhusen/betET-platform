@@ -175,63 +175,171 @@ async function seedGames(client: PoolClient, tenantId: string): Promise<void> {
   }
 }
 
+/**
+ * Permanent local fixture catalog.
+ *
+ * Hand-curated list of leagues × team pairs so a fresh local environment
+ * has plenty of pre-match fixtures to bet on without depending on the
+ * real odds provider. Every run distributes kickoffs across the next
+ * `SCHEDULE_WINDOW_HOURS` so matches stay "upcoming" no matter when the
+ * seed script is invoked — and existing events are recycled (matched on
+ * team names) so re-seeding never produces duplicates and never wipes
+ * markets that the cashier / public reservation flow already created
+ * on the fly.
+ *
+ * Replace this seed with the real odds-provider integration when it
+ * goes live; the schema is identical.
+ */
+const SCHEDULE_WINDOW_HOURS = 24 * 5; // spread fixtures over the next 5 days
+
+interface FixtureSpec {
+  league: string;
+  home_team: string;
+  away_team: string;
+  home_odds: number;
+  draw_odds: number;
+  away_odds: number;
+  live?: boolean;
+}
+
+const FOOTBALL_FIXTURES: FixtureSpec[] = [
+  // Ethiopian Premier League
+  { league: 'Ethiopian Premier League', home_team: 'St. George FC',       away_team: 'Fasil Kenema',         home_odds: 1.95, draw_odds: 3.20, away_odds: 3.80 },
+  { league: 'Ethiopian Premier League', home_team: 'Ethiopian Coffee FC', away_team: 'Adama City',           home_odds: 2.10, draw_odds: 3.10, away_odds: 3.40 },
+  { league: 'Ethiopian Premier League', home_team: 'Bahir Dar Kenema',    away_team: 'Hawassa City',         home_odds: 2.40, draw_odds: 3.05, away_odds: 2.80 },
+  { league: 'Ethiopian Premier League', home_team: 'Wolaita Dicha',       away_team: 'Sidama Coffee',        home_odds: 2.75, draw_odds: 3.00, away_odds: 2.45 },
+  { league: 'Ethiopian Premier League', home_team: 'Mekelle 70 Enderta',  away_team: 'Dire Dawa City',       home_odds: 1.85, draw_odds: 3.30, away_odds: 4.10 },
+  // English Premier League
+  { league: 'English Premier League',   home_team: 'Arsenal',             away_team: 'Chelsea',              home_odds: 1.92, draw_odds: 3.55, away_odds: 3.95, live: true },
+  { league: 'English Premier League',   home_team: 'Liverpool',           away_team: 'Manchester City',      home_odds: 2.10, draw_odds: 3.50, away_odds: 3.20 },
+  { league: 'English Premier League',   home_team: 'Manchester United',   away_team: 'Tottenham Hotspur',    home_odds: 2.45, draw_odds: 3.30, away_odds: 2.85 },
+  { league: 'English Premier League',   home_team: 'Newcastle United',    away_team: 'Aston Villa',          home_odds: 2.20, draw_odds: 3.20, away_odds: 3.25 },
+  { league: 'English Premier League',   home_team: 'Burton Albion',       away_team: 'West Ham United',      home_odds: 4.60, draw_odds: 3.65, away_odds: 1.70 },
+  { league: 'English Premier League',   home_team: 'Brighton',            away_team: 'Crystal Palace',       home_odds: 2.05, draw_odds: 3.35, away_odds: 3.65 },
+  // La Liga
+  { league: 'Spanish La Liga',          home_team: 'Real Madrid',         away_team: 'Barcelona',            home_odds: 2.15, draw_odds: 3.60, away_odds: 3.05 },
+  { league: 'Spanish La Liga',          home_team: 'Atletico Madrid',     away_team: 'Sevilla',              home_odds: 1.78, draw_odds: 3.50, away_odds: 4.30 },
+  { league: 'Spanish La Liga',          home_team: 'Real Sociedad',       away_team: 'Real Betis',           home_odds: 2.30, draw_odds: 3.10, away_odds: 3.05 },
+  { league: 'Spanish La Liga',          home_team: 'Villarreal',          away_team: 'Valencia',             home_odds: 2.05, draw_odds: 3.20, away_odds: 3.55 },
+  // Serie A
+  { league: 'Italian Serie A',          home_team: 'Inter Milan',         away_team: 'Juventus',             home_odds: 2.00, draw_odds: 3.30, away_odds: 3.65 },
+  { league: 'Italian Serie A',          home_team: 'AC Milan',            away_team: 'Napoli',               home_odds: 2.30, draw_odds: 3.25, away_odds: 2.95 },
+  { league: 'Italian Serie A',          home_team: 'AS Roma',             away_team: 'Lazio',                home_odds: 2.20, draw_odds: 3.15, away_odds: 3.20 },
+  { league: 'Italian Serie A',          home_team: 'Atalanta',            away_team: 'Fiorentina',           home_odds: 1.95, draw_odds: 3.45, away_odds: 3.80 },
+  // Bundesliga
+  { league: 'German Bundesliga',        home_team: 'Bayern Munich',       away_team: 'Borussia Dortmund',    home_odds: 1.65, draw_odds: 4.10, away_odds: 4.50 },
+  { league: 'German Bundesliga',        home_team: 'RB Leipzig',          away_team: 'Bayer Leverkusen',     home_odds: 2.50, draw_odds: 3.40, away_odds: 2.65 },
+  { league: 'German Bundesliga',        home_team: 'Eintracht Frankfurt', away_team: 'VfB Stuttgart',        home_odds: 2.20, draw_odds: 3.30, away_odds: 3.10 },
+  // Ligue 1
+  { league: 'French Ligue 1',           home_team: 'Paris Saint-Germain', away_team: 'Marseille',            home_odds: 1.55, draw_odds: 4.20, away_odds: 5.50 },
+  { league: 'French Ligue 1',           home_team: 'AS Monaco',           away_team: 'Lyon',                 home_odds: 2.05, draw_odds: 3.40, away_odds: 3.50 },
+  { league: 'French Ligue 1',           home_team: 'Lille',               away_team: 'Nice',                 home_odds: 2.15, draw_odds: 3.20, away_odds: 3.30 },
+  // UEFA Champions League
+  { league: 'UEFA Champions League',    home_team: 'Manchester City',     away_team: 'Real Madrid',          home_odds: 2.30, draw_odds: 3.45, away_odds: 2.95 },
+  { league: 'UEFA Champions League',    home_team: 'Bayern Munich',       away_team: 'Paris Saint-Germain',  home_odds: 2.10, draw_odds: 3.55, away_odds: 3.20, live: true },
+  { league: 'UEFA Champions League',    home_team: 'Arsenal',             away_team: 'Inter Milan',          home_odds: 2.40, draw_odds: 3.30, away_odds: 2.90 },
+  // CAF Champions League
+  { league: 'CAF Champions League',     home_team: 'Al Ahly',             away_team: 'Mamelodi Sundowns',    home_odds: 2.10, draw_odds: 3.20, away_odds: 3.30 },
+  { league: 'CAF Champions League',     home_team: 'Wydad Casablanca',    away_team: 'Esperance Tunis',      home_odds: 2.50, draw_odds: 3.10, away_odds: 2.75 },
+  // South African Premier League
+  { league: 'South African PSL',        home_team: 'Kaizer Chiefs',       away_team: 'Orlando Pirates',      home_odds: 2.20, draw_odds: 3.10, away_odds: 3.15 },
+  { league: 'South African PSL',        home_team: 'Mamelodi Sundowns',   away_team: 'SuperSport United',    home_odds: 1.55, draw_odds: 4.10, away_odds: 5.20 },
+];
+
+const BASKETBALL_FIXTURES: FixtureSpec[] = [
+  { league: 'NBA',                home_team: 'Los Angeles Lakers',  away_team: 'Golden State Warriors', home_odds: 2.10, draw_odds: 15.0, away_odds: 1.75 },
+  { league: 'NBA',                home_team: 'Boston Celtics',      away_team: 'Miami Heat',            home_odds: 1.65, draw_odds: 15.0, away_odds: 2.30 },
+  { league: 'NBA',                home_team: 'Denver Nuggets',      away_team: 'Phoenix Suns',          home_odds: 1.80, draw_odds: 15.0, away_odds: 2.10 },
+  { league: 'EuroLeague',         home_team: 'Real Madrid',         away_team: 'Olympiacos',            home_odds: 1.85, draw_odds: 15.0, away_odds: 2.05 },
+  { league: 'EuroLeague',         home_team: 'Panathinaikos',       away_team: 'Fenerbahce',            home_odds: 1.95, draw_odds: 15.0, away_odds: 1.95 },
+];
+
 async function seedSports(client: PoolClient, tenantId: string): Promise<void> {
-  const now = Date.now();
-  const events = [
-    {
-      sport: 'football',
-      league: 'Ethiopian Premier League',
-      home_team: 'St. George FC',
-      away_team: 'Fasil Kenema',
-      starts_at: new Date(now + 60 * 60 * 1000).toISOString(),
-      status: 'scheduled',
-    },
-    {
-      sport: 'football',
-      league: 'Ethiopian Premier League',
-      home_team: 'Ethiopian Coffee FC',
-      away_team: 'Adama City',
-      starts_at: new Date(now + 2 * 60 * 60 * 1000).toISOString(),
-      status: 'scheduled',
-    },
-    {
-      sport: 'football',
-      league: 'English Premier League',
-      home_team: 'Arsenal',
-      away_team: 'Chelsea',
-      starts_at: new Date(now + 3 * 60 * 60 * 1000).toISOString(),
-      status: 'live',
-    },
+  const allFixtures: Array<FixtureSpec & { sport: string }> = [
+    ...FOOTBALL_FIXTURES.map((f) => ({ ...f, sport: 'football' })),
+    ...BASKETBALL_FIXTURES.map((f) => ({ ...f, sport: 'basketball' })),
   ];
 
-  for (const e of events) {
-    const existing = await client.query<{ id: string }>(
-      `SELECT id FROM sports_events
-       WHERE tenant_id = $1 AND sport = $2 AND league = $3 AND home_team = $4 AND away_team = $5
-       LIMIT 1`,
-      [tenantId, e.sport, e.league, e.home_team, e.away_team]
-    );
-    if (existing.rows[0]) continue;
+  // Spread kickoffs evenly across the visibility window so the lobby shows
+  // fixtures kicking off at varied times instead of all at once.
+  const now = Date.now();
+  const windowMs = SCHEDULE_WINDOW_HOURS * 60 * 60 * 1000;
+  const step = Math.max(1, Math.floor(windowMs / allFixtures.length));
 
-    const created = await client.query<{ id: string }>(
-      `INSERT INTO sports_events (tenant_id, sport, league, home_team, away_team, starts_at, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id`,
-      [tenantId, e.sport, e.league, e.home_team, e.away_team, e.starts_at, e.status]
-    );
+  for (let i = 0; i < allFixtures.length; i++) {
+    const f = allFixtures[i];
+    // Live matches: kicked off 5-25 min ago. Scheduled: distributed.
+    const startsAt = f.live
+      ? new Date(now - (5 + (i % 20)) * 60 * 1000)
+      : new Date(now + 30 * 60 * 1000 + step * i);
+    const status = f.live ? 'live' : 'scheduled';
 
+    // Idempotent upsert: same teams + same league = same event row, with
+    // its kickoff / status refreshed so re-running the seed pushes old
+    // matches forward into the future without orphaning their markets.
+    const upserted = await client.query<{ id: string }>(
+      `WITH updated AS (
+         UPDATE sports_events
+            SET starts_at = $6,
+                status = $7,
+                updated_at = now()
+          WHERE tenant_id = $1
+            AND sport = $2
+            AND league = $3
+            AND home_team = $4
+            AND away_team = $5
+          RETURNING id
+       ), inserted AS (
+         INSERT INTO sports_events (tenant_id, sport, league, home_team, away_team, starts_at, status)
+         SELECT $1, $2, $3, $4, $5, $6, $7
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+       )
+       SELECT id FROM updated UNION ALL SELECT id FROM inserted`,
+      [tenantId, f.sport, f.league, f.home_team, f.away_team, startsAt.toISOString(), status]
+    );
+    const eventId = upserted.rows[0].id;
+
+    // Ensure the 1x2 / Match Result market exists and is open.
     const market = await client.query<{ id: string }>(
-      `INSERT INTO sports_markets (tenant_id, event_id, market_type, label, status)
-       VALUES ($1, $2, '1x2', 'Full Time Result', 'open')
-       RETURNING id`,
-      [tenantId, created.rows[0].id]
+      `WITH updated AS (
+         UPDATE sports_markets
+            SET status = 'open', updated_at = now()
+          WHERE tenant_id = $1 AND event_id = $2
+            AND (LOWER(market_type) LIKE '%1x2%' OR LOWER(label) LIKE '%match result%')
+          RETURNING id
+       ), inserted AS (
+         INSERT INTO sports_markets (tenant_id, event_id, market_type, label, status)
+         SELECT $1, $2, '1x2', 'Full Time Result', 'open'
+          WHERE NOT EXISTS (SELECT 1 FROM updated)
+          RETURNING id
+       )
+       SELECT id FROM updated UNION ALL SELECT id FROM inserted
+        LIMIT 1`,
+      [tenantId, eventId]
     );
+    const marketId = market.rows[0].id;
 
-    await client.query(
-      `INSERT INTO sports_selections (tenant_id, market_id, label, odds_decimal)
-       VALUES ($1, $2, 'Home', 2.10), ($1, $2, 'Draw', 3.20), ($1, $2, 'Away', 3.50)`,
-      [tenantId, market.rows[0].id]
-    );
+    // Upsert each of Home / Draw / Away with the curated odds.
+    const outcomes: Array<{ label: string; odds: number }> = [
+      { label: 'Home', odds: f.home_odds },
+      { label: 'Draw', odds: f.draw_odds },
+      { label: 'Away', odds: f.away_odds },
+    ];
+    for (const o of outcomes) {
+      await client.query(
+        `WITH updated AS (
+           UPDATE sports_selections
+              SET odds_decimal = $4, updated_at = now()
+            WHERE tenant_id = $1 AND market_id = $2 AND lower(label) = lower($3)
+            RETURNING id
+         )
+         INSERT INTO sports_selections (tenant_id, market_id, label, odds_decimal)
+         SELECT $1, $2, $3, $4
+          WHERE NOT EXISTS (SELECT 1 FROM updated)`,
+        [tenantId, marketId, o.label, o.odds]
+      );
+    }
   }
 }
 

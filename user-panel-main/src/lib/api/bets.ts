@@ -177,3 +177,56 @@ export function listMyBets(query: {
 export function getBet(betId: string) {
   return apiRequest<Record<string, unknown>>(`/api/bets/${betId}`);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Ticket reload — load an existing ticket's selections back into the slip    */
+/* -------------------------------------------------------------------------- */
+
+export interface ReloadedSelection {
+  selection_id: string;
+  market_id: string;
+  event_id: string;
+  home_team: string;
+  away_team: string;
+  league: string;
+  sport: string;
+  market_label: string;
+  selection_label: string;
+  odds_at_placement: string;
+  current_odds: string;
+  starts_at: string;
+  event_status: string;
+  market_status: string;
+  /**
+   * Per-leg settlement result. `null` while pending; settled legs carry
+   * `'won' | 'lost' | 'void'` so the UI can render per-pick status.
+   */
+  selection_result: 'won' | 'lost' | 'void' | null;
+  /** True when the leg can still be placed as a fresh bet. */
+  replayable: boolean;
+}
+
+export interface ReloadedTicket {
+  bet: {
+    id: string;
+    coupon_code: string;
+    status: string;
+    bet_type: string;
+    stake: string;
+    total_odds: string;
+    potential_payout: string;
+    currency: string;
+    placed_at: string;
+  };
+  selections: ReloadedSelection[];
+}
+
+/**
+ * Look a ticket up by coupon code (SBK-XXXXXXXX) or bet UUID so the user
+ * can view it or replay the same selections as a new bet.
+ */
+export function reloadTicket(code: string): Promise<ReloadedTicket> {
+  return apiRequest<ReloadedTicket>(
+    `/api/bets/reload/${encodeURIComponent(code.trim())}`
+  );
+}

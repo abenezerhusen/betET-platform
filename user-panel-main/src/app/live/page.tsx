@@ -65,6 +65,11 @@ function toLiveCard(row: sportsApi.SportsMatchRow): LiveCard {
   const time = `${String(starts.getHours()).padStart(2, "0")}:${String(
     starts.getMinutes(),
   ).padStart(2, "0")}`;
+  // Postgres NUMERIC arrives as `string` from node-pg; coerce so all
+  // arithmetic below is on real numbers.
+  const home = Number(row.home_odds) || 0;
+  const draw = Number(row.draw_odds) || 0;
+  const away = Number(row.away_odds) || 0;
   return {
     id: row.id,
     league: row.league ?? row.sport,
@@ -77,12 +82,12 @@ function toLiveCard(row: sportsApi.SportsMatchRow): LiveCard {
     score: { home: row.home_score ?? 0, away: row.away_score ?? 0 },
     minute: row.minute ? `${row.minute}'` : "Live",
     odds: {
-      home: row.home_odds,
-      draw: row.draw_odds,
-      away: row.away_odds,
-      home1x: Math.max(1.05, +(row.home_odds * 0.55).toFixed(2)),
-      draw12: Math.max(1.05, +((row.home_odds + row.away_odds) * 0.3).toFixed(2)),
-      away2x: Math.max(1.05, +(row.away_odds * 0.55).toFixed(2)),
+      home,
+      draw,
+      away,
+      home1x: Math.max(1.05, +(home * 0.55).toFixed(2)),
+      draw12: Math.max(1.05, +((home + away) * 0.3).toFixed(2)),
+      away2x: Math.max(1.05, +(away * 0.55).toFixed(2)),
       yesScore: 1.85,
       noScore: 1.85,
     },

@@ -1,110 +1,123 @@
-const CACHE_NAME = '1birr-v17';
-const DYNAMIC_CACHE = '1birr-dynamic-v17';
+// 1birr.bet service worker.
+//
+// Bump the version every time you change ANY caching behaviour so existing
+// installs invalidate their old caches on `activate`. The `activate` step
+// below deletes every entry that doesn't start with the current prefix, so
+// stale chunks (especially Next.js `/_next/...` files from prior builds)
+// don't keep serving 404s after a deploy.
+const SW_VERSION = 'v25';
+const CACHE_NAME = `1birr-static-${SW_VERSION}`;
+const DYNAMIC_CACHE = `1birr-dynamic-${SW_VERSION}`;
 
-// Assets to cache on install
 const STATIC_ASSETS = [
-  '/',
   '/offline.html',
   '/manifest.json',
+  '/1birr-icon.svg',
 ];
 
-// Install event - cache static assets
 self.addEventListener('install', (event) => {
-  console.log('[ServiceWorker] Installing...');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[ServiceWorker] Caching static assets');
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(STATIC_ASSETS))
+      .catch(() => undefined)
   );
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches
+// Activate — wipe ALL previously created caches that don't match the
+// current version. This kills the stale-chunk problem at the source: any
+// time the SW is updated, every previously cached `/_next/static/...`
+// blob is dropped before the first fetch is intercepted.
 self.addEventListener('activate', (event) => {
-  console.log('[ServiceWorker] Activating...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME && cacheName !== DYNAMIC_CACHE) {
-            console.log('[ServiceWorker] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
+    caches.keys().then((names) =>
+      Promise.all(
+        names
+          .filter((n) => n !== CACHE_NAME && n !== DYNAMIC_CACHE)
+          .map((n) => caches.delete(n))
+      )
+    )
   );
   self.clients.claim();
 });
 
-// Fetch event - serve from cache, fallback to network
+function shouldBypassCache(url) {
+  // Next.js hashes every chunk and asset under `/_next/`, so its own cache
+  // busting is authoritative — never let the SW intercept these or we'll
+  // happily serve a stale chunk that no longer exists after a redeploy.
+  if (url.pathname.startsWith('/_next/')) return true;
+  // Hot-module-replacement pings during `next dev` must never be cached.
+  if (url.pathname.startsWith('/__next') || url.pathname.includes('hot-update')) {
+    return true;
+  }
+  return false;
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-
-  // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API requests - Network first, then cache
-  if (request.url.includes('/api/')) {
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch {
+    return;
+  }
+
+  // Only handle same-origin GETs; let everything else pass through.
+  if (url.origin !== self.location.origin) return;
+  if (shouldBypassCache(url)) return;
+
+  // API requests — network first, fall back to cached response only on
+  // network failure (so the UI keeps working offline for cached endpoints).
+  if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Clone response to cache
-          const responseClone = response.clone();
-          caches.open(DYNAMIC_CACHE).then((cache) => {
-            cache.put(request, responseClone);
-          });
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches
+              .open(DYNAMIC_CACHE)
+              .then((cache) => cache.put(request, clone))
+              .catch(() => undefined);
+          }
           return response;
         })
-        .catch(() => {
-          // If network fails, try cache
-          return caches.match(request);
-        })
+        .catch(() => caches.match(request))
     );
     return;
   }
 
-  // Static assets - Cache first, then network
+  // Static page navigations & assets — cache first, network fallback.
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
       return fetch(request)
         .then((response) => {
-          // Don't cache if not successful
           if (!response || response.status !== 200 || response.type === 'error') {
             return response;
           }
-
-          // Clone response to cache
-          const responseClone = response.clone();
-          caches.open(DYNAMIC_CACHE).then((cache) => {
-            cache.put(request, responseClone);
-          });
-
+          const clone = response.clone();
+          caches
+            .open(DYNAMIC_CACHE)
+            .then((cache) => cache.put(request, clone))
+            .catch(() => undefined);
           return response;
         })
         .catch(() => {
-          // Offline fallback page
-          if (request.headers.get('accept').includes('text/html')) {
+          const accept = request.headers.get('accept') || '';
+          if (accept.includes('text/html')) {
             return caches.match('/offline.html');
           }
+          return Response.error();
         });
     })
   );
 });
 
-// Background sync for offline actions
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-bets') {
-    event.waitUntil(syncBets());
+    event.waitUntil(Promise.resolve());
   }
 });
-
-async function syncBets() {
-  console.log('[ServiceWorker] Syncing offline bets...');
-  // This would sync any offline bets when connection is restored
-}

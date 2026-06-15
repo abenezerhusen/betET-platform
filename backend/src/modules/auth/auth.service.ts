@@ -562,7 +562,7 @@ export async function register(tenantId: string, input: RegisterInput) {
     sendEmailBestEffort({
       tenantId,
       to: created.email,
-      subject: 'Welcome to PlayCore',
+      subject: 'Welcome to 1birr.bet',
       body: `Hi ${fullName}, your account is ready.`,
     }),
   ]);

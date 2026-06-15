@@ -15,6 +15,12 @@ import {
 } from './user-shared';
 import * as repo from './user.repository';
 import { emitNewWithdrawal, emitWalletUpdated } from '../../realtime/socket';
+import {
+  assertWithdrawalAllowed,
+  getDepositWageringStatus,
+  withdrawableAmount,
+  type DepositWageringStatus,
+} from '../../services/deposit-wagering.service';
 import type {
   WalletQuery,
   WalletTransferInput,
@@ -24,7 +30,7 @@ import type {
 export async function getMyWallet(req: Request, query: WalletQuery) {
   const scope = getUserScope(req);
 
-  const wallets = await withTenantClient(
+  const { wallets, wagering } = await withTenantClient(
     { tenantId: scope.tenantId },
     async (client) => {
       const all = await repo.listUserWallets(
@@ -33,27 +39,48 @@ export async function getMyWallet(req: Request, query: WalletQuery) {
         scope.userId
       );
       const wanted = query.currency;
-      if (wanted) {
-        const upper = wanted.toUpperCase();
-        return all.filter((w) => w.currency === wanted || w.currency === upper);
+      const filtered = wanted
+        ? all.filter(
+            (w) => w.currency === wanted || w.currency === wanted.toUpperCase()
+          )
+        : all;
+      // Deposit-wagering snapshot per wallet — the user panel shows the
+      // withdrawable portion next to the balance.
+      const wagering = new Map<string, DepositWageringStatus>();
+      for (const w of filtered) {
+        wagering.set(w.id, await getDepositWageringStatus(client, w.id));
       }
-      return all;
+      return { wallets: filtered, wagering };
     }
   );
 
   return {
     items: wallets,
-    summary: wallets.map((w) => ({
-      currency: w.currency,
-      balance: w.balance,
-      bonus_balance: w.bonus_balance,
-      locked_balance: w.locked_balance,
-      total: (
-        Number(w.balance) +
-        Number(w.bonus_balance) +
-        Number(w.locked_balance)
-      ).toFixed(4),
-    })),
+    summary: wallets.map((w) => {
+      const status = wagering.get(w.id) ?? {
+        total_deposited: 0,
+        total_wagered: 0,
+        wagering_remaining: 0,
+      };
+      return {
+        currency: w.currency,
+        balance: w.balance,
+        bonus_balance: w.bonus_balance,
+        locked_balance: w.locked_balance,
+        total: (
+          Number(w.balance) +
+          Number(w.bonus_balance) +
+          Number(w.locked_balance)
+        ).toFixed(4),
+        total_deposited: status.total_deposited.toFixed(2),
+        total_wagered: status.total_wagered.toFixed(2),
+        wagering_remaining: status.wagering_remaining.toFixed(2),
+        withdrawable_balance: withdrawableAmount(
+          Number(w.balance),
+          status
+        ).toFixed(2),
+      };
+    }),
   };
 }
 
@@ -136,6 +163,14 @@ export async function submitWithdrawalRequest(
           wallet_status: before.status,
         });
       }
+      // Deposit wagering rule — deposited funds must be turned over before
+      // they can leave the wallet.
+      await assertWithdrawalAllowed(
+        client,
+        before.id,
+        Number(before.balance),
+        amountNum
+      );
       const after = await repo.lockWalletFunds(client, before.id, body.amount);
       if (!after) {
         throw new BadRequestError('Insufficient balance', {

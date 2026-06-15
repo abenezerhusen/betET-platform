@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ChevronUp,
@@ -9,8 +9,11 @@ import {
   Facebook,
   Instagram,
   Youtube,
+  Twitter,
   ShieldCheck,
 } from "lucide-react";
+import { publicConfigApi } from "@/lib/api";
+import type { PublicGeneral } from "@/lib/api/publicConfig";
 
 const BRAND_GREEN = "#22c55e";
 
@@ -36,19 +39,51 @@ const sportsLinks = [
   { name: "Volleyball", href: "/" },
 ];
 
-const socialLinks = [
-  { name: "Telegram", href: "https://t.me/1birr_support", Icon: Send },
-  { name: "Facebook", href: "#", Icon: Facebook },
-  { name: "Instagram", href: "#", Icon: Instagram },
-  { name: "YouTube", href: "#", Icon: Youtube },
-];
-
 const trustBadges = ["Licensed & Regulated", "18+ Only", "SSL Secured"];
+
+const DEFAULT_FOOTER_TEXT =
+  "Ethiopia's modern sports betting platform. Bet on football, basketball, and more. Fast payouts, secure accounts.";
+const DEFAULT_SUPPORT_EMAIL = "support@1birr.bet";
+const DEFAULT_TELEGRAM = "https://t.me/1birr_support";
 
 export function Footer() {
   // Always start collapsed on open/refresh so the footer does not cover
   // the betting content. The user can expand it with the toggle button.
   const [isOpen, setIsOpen] = useState(false);
+  // Admin-managed content (Settings → General). Static copy is the
+  // fallback so the footer renders identically until the admin saves.
+  const [cfg, setCfg] = useState<PublicGeneral | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .getPublicGeneral()
+      .then((res) => {
+        if (!cancelled) setCfg(res);
+      })
+      .catch(() => {
+        /* keep static fallbacks */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const footerText = cfg?.footer_text || DEFAULT_FOOTER_TEXT;
+  const supportEmail = cfg?.support?.email || cfg?.contact?.email || DEFAULT_SUPPORT_EMAIL;
+  const telegramHref = cfg?.social?.telegram || DEFAULT_TELEGRAM;
+  const telegramHandle = telegramHref.includes("t.me/")
+    ? `@${telegramHref.split("t.me/")[1]?.replace(/\/$/, "")}`
+    : telegramHref;
+
+  const socialLinks = [
+    { name: "Telegram", href: telegramHref, Icon: Send },
+    { name: "Facebook", href: cfg?.social?.facebook || "#", Icon: Facebook },
+    { name: "Instagram", href: cfg?.social?.instagram || "#", Icon: Instagram },
+    ...(cfg?.social?.twitter
+      ? [{ name: "Twitter", href: cfg.social.twitter, Icon: Twitter }]
+      : [{ name: "YouTube", href: "#", Icon: Youtube }]),
+  ];
 
   const toggleFooter = () => {
     setIsOpen(!isOpen);
@@ -103,9 +138,8 @@ export function Footer() {
                 </span>
               </Link>
 
-              <p className="mt-4 text-sm text-gray-400 leading-relaxed max-w-xs">
-                Ethiopia&apos;s modern sports betting platform. Bet on football,
-                basketball, and more. Fast payouts, secure accounts.
+              <p className="mt-4 text-sm text-gray-400 leading-relaxed max-w-xs whitespace-pre-line">
+                {footerText}
               </p>
 
               <div className="mt-5 flex flex-wrap gap-2">
@@ -132,11 +166,11 @@ export function Footer() {
                 >
                   <p className="text-[10px] uppercase tracking-wider text-gray-500">Email Support</p>
                   <a
-                    href="mailto:support@1birr.bet"
+                    href={`mailto:${supportEmail}`}
                     className="text-sm font-semibold hover:underline"
                     style={{ color: BRAND_GREEN }}
                   >
-                    support@1birr.bet
+                    {supportEmail}
                   </a>
                   <p className="text-xs text-gray-500 mt-0.5">Reply within 24 hours</p>
                 </div>
@@ -156,13 +190,13 @@ export function Footer() {
                 >
                   <p className="text-[10px] uppercase tracking-wider text-gray-500">Telegram</p>
                   <a
-                    href="https://t.me/1birr_support"
+                    href={telegramHref}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm font-semibold hover:underline"
                     style={{ color: BRAND_GREEN }}
                   >
-                    @1birr_support
+                    {telegramHandle}
                   </a>
                   <p className="text-xs text-gray-500 mt-0.5">Fast community support</p>
                 </div>

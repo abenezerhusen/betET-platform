@@ -12,8 +12,8 @@
  *    inline sidebar take over, so this component stays completely hidden
  *    to avoid altering the current desktop/tablet experience.
  *  - Side-effect-free with respect to the rest of the app. Tapping
- *    "Bet Slip" and "Menu" dispatches CustomEvents (`mezzobet:open-betslip`
- *    and `mezzobet:toggle-menu`) which the existing `Betslip` drawer and
+ *    "Bet Slip" and "Menu" dispatches CustomEvents (`1birr:open-betslip`
+ *    and `1birr:toggle-menu`) which the existing `Betslip` drawer and
  *    `Header` component listen for. All other tabs are plain `<Link>`s so
  *    routing behaviour is unchanged.
  */
@@ -44,8 +44,8 @@ export default function MobileBottomNav() {
     // Close the mobile menu drawer if it happens to be open, then ask the
     // Betslip drawer to open. If Betslip is not mounted on the current page
     // (e.g. stand-alone game pages), fall back to routing home where it is.
-    window.dispatchEvent(new Event("mezzobet:close-menu"));
-    window.dispatchEvent(new Event("mezzobet:open-betslip"));
+    window.dispatchEvent(new Event("1birr:close-menu"));
+    window.dispatchEvent(new Event("1birr:open-betslip"));
   };
 
   // Tapping "Menu" opens the dedicated sports filter sidebar (which
@@ -57,8 +57,8 @@ export default function MobileBottomNav() {
     if (typeof window === "undefined") return;
     // Close any other drawers that might be open so only one UI layer
     // is active at a time.
-    window.dispatchEvent(new Event("mezzobet:close-menu"));
-    window.dispatchEvent(new Event("mezzobet:open-sports-sidebar"));
+    window.dispatchEvent(new Event("1birr:close-menu"));
+    window.dispatchEvent(new Event("1birr:open-sports-sidebar"));
   };
 
   // Shared layout for the four flat tabs (everything except the raised
@@ -153,21 +153,22 @@ export default function MobileBottomNav() {
           </button>
         </div>
 
-        {/* My Bets — routes to the Sport History page per product spec. */}
+        {/* My Bets — the user's own ticket history (won/lost/pending/
+            cancelled with date-range search). */}
         <button
           type="button"
-          onClick={() => router.push("/sport-history")}
+          onClick={() => router.push("/bets-history")}
           aria-label="My Bets"
-          aria-current={isActive("/sport-history") ? "page" : undefined}
+          aria-current={isActive("/bets-history") ? "page" : undefined}
           className={tabBase}
         >
           <ClipboardList
             className={iconBase}
-            style={{ color: tabColor(isActive("/sport-history")) }}
+            style={{ color: tabColor(isActive("/bets-history")) }}
           />
           <span
             className={labelBase}
-            style={{ color: tabColor(isActive("/sport-history")) }}
+            style={{ color: tabColor(isActive("/bets-history")) }}
           >
             My Bets
           </span>

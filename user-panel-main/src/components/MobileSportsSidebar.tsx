@@ -11,8 +11,8 @@
  * inside a drawer rather than a fixed aside.
  *
  * Listens for:
- *   - `mezzobet:open-sports-sidebar`  — open the drawer
- *   - `mezzobet:close-sports-sidebar` — close the drawer (optional)
+ *   - `1birr:open-sports-sidebar`  — open the drawer
+ *   - `1birr:close-sports-sidebar` — close the drawer (optional)
  *
  * The component is a no-op on `lg+` breakpoints (desktop already shows
  * the sidebar inline), so it never interferes with the existing desktop
@@ -34,11 +34,11 @@ export default function MobileSportsSidebar() {
     if (typeof window === "undefined") return;
     const handleOpen = () => setOpen(true);
     const handleClose = () => setOpen(false);
-    window.addEventListener("mezzobet:open-sports-sidebar", handleOpen);
-    window.addEventListener("mezzobet:close-sports-sidebar", handleClose);
+    window.addEventListener("1birr:open-sports-sidebar", handleOpen);
+    window.addEventListener("1birr:close-sports-sidebar", handleClose);
     return () => {
-      window.removeEventListener("mezzobet:open-sports-sidebar", handleOpen);
-      window.removeEventListener("mezzobet:close-sports-sidebar", handleClose);
+      window.removeEventListener("1birr:open-sports-sidebar", handleOpen);
+      window.removeEventListener("1birr:close-sports-sidebar", handleClose);
     };
   }, []);
 

@@ -90,25 +90,25 @@ export function setSession(s: Partial<AuthSnapshot>): void {
   if (typeof window !== 'undefined') {
     try {
       if (state.accessToken) {
-        window.localStorage.setItem('mezzobet_access_token', state.accessToken);
+        window.localStorage.setItem('1birr_access_token', state.accessToken);
       } else {
-        window.localStorage.removeItem('mezzobet_access_token');
+        window.localStorage.removeItem('1birr_access_token');
       }
       if (state.refreshToken) {
-        window.localStorage.setItem('mezzobet_refresh_token', state.refreshToken);
+        window.localStorage.setItem('1birr_refresh_token', state.refreshToken);
       } else {
-        window.localStorage.removeItem('mezzobet_refresh_token');
+        window.localStorage.removeItem('1birr_refresh_token');
       }
       if (state.user?.phone) {
-        window.localStorage.setItem('mezzobet_current_user', state.user.phone);
+        window.localStorage.setItem('1birr_current_user', state.user.phone);
       }
       if (state.user?.phone ?? state.user?.email) {
         window.localStorage.setItem(
-          'mezzobet_current_user_fullname',
+          '1birr_current_user_fullname',
           state.user.phone ?? state.user.email ?? ''
         );
       }
-      window.localStorage.setItem('mezzobet_logged_in', state.accessToken ? 'true' : 'false');
+      window.localStorage.setItem('1birr_logged_in', state.accessToken ? 'true' : 'false');
     } catch {
       /* ignore */
     }
@@ -121,16 +121,16 @@ export function clearSession(): void {
   persist(state);
   if (typeof window !== 'undefined') {
     try {
-      const legacy = [
-        'mezzobet_access_token',
-        'mezzobet_refresh_token',
-        'mezzobet_logged_in',
-        'mezzobet_balance',
-        'mezzobet_bonus_balance',
-        'mezzobet_current_user',
-        'mezzobet_current_user_fullname',
+      const keys = [
+        '1birr_access_token',
+        '1birr_refresh_token',
+        '1birr_logged_in',
+        '1birr_balance',
+        '1birr_bonus_balance',
+        '1birr_current_user',
+        '1birr_current_user_fullname',
       ];
-      for (const k of legacy) window.localStorage.removeItem(k);
+      for (const k of keys) window.localStorage.removeItem(k);
     } catch {
       /* ignore */
     }

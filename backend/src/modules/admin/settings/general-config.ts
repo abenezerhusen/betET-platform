@@ -57,6 +57,10 @@ export interface GeneralConfig {
   support_email: string;
   underage_disclaimer: string;
   about_us: string;
+  /** Full Terms & Conditions body shown on the user panel. */
+  terms_and_conditions: string;
+  /** Short footer blurb/description rendered in the user-panel footer. */
+  footer_text: string;
   /** Set of event codes for which SMS is allowed. Empty set means no
    *  per-event gating (all events allowed when SMS provider is enabled). */
   sms_events: Set<string>;
@@ -96,6 +100,8 @@ const DEFAULTS: GeneralConfig = {
   support_email: '',
   underage_disclaimer: '',
   about_us: '',
+  terms_and_conditions: '',
+  footer_text: '',
   sms_events: new Set<string>(),
   sms_max_win_limit: 0,
   cashier_max_daily_cancel_volume: 0,
@@ -202,6 +208,11 @@ export async function loadGeneralConfig(
     support_email: asString(raw.support_email, DEFAULTS.support_email),
     underage_disclaimer: asString(raw.underage_disclaimer, DEFAULTS.underage_disclaimer),
     about_us: asString(raw.about_us, DEFAULTS.about_us),
+    terms_and_conditions: asString(
+      raw.terms_and_conditions,
+      DEFAULTS.terms_and_conditions
+    ),
+    footer_text: asString(raw.footer_text, DEFAULTS.footer_text),
     sms_events: smsEvents,
     sms_max_win_limit: asNumber(raw.sms_max_win_limit, DEFAULTS.sms_max_win_limit),
     cashier_max_daily_cancel_volume: asNumber(

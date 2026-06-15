@@ -149,12 +149,25 @@ export function Header() {
   useEffect(() => {
     const toggle = () => setMobileMenuOpen((prev) => !prev);
     const close = () => setMobileMenuOpen(false);
-    window.addEventListener("mezzobet:toggle-menu", toggle);
-    window.addEventListener("mezzobet:close-menu", close);
+    window.addEventListener("1birr:toggle-menu", toggle);
+    window.addEventListener("1birr:close-menu", close);
     return () => {
-      window.removeEventListener("mezzobet:toggle-menu", toggle);
-      window.removeEventListener("mezzobet:close-menu", close);
+      window.removeEventListener("1birr:toggle-menu", toggle);
+      window.removeEventListener("1birr:close-menu", close);
     };
+  }, []);
+
+  // Let any other component (game launcher, betslip, deposit page…) request
+  // the login dialog by firing `1birr:open-login`. This is how
+  // unauthenticated users are redirected to login before playing a game or
+  // placing an online bet.
+  useEffect(() => {
+    const open = () => {
+      setMobileMenuOpen(false);
+      setLoginOpen(true);
+    };
+    window.addEventListener("1birr:open-login", open);
+    return () => window.removeEventListener("1birr:open-login", open);
   }, []);
 
   useEffect(() => {
@@ -409,6 +422,18 @@ export function Header() {
                   className="w-56 bg-black border-gray-700"
                   style={{ backgroundColor: "#000000", borderColor: "#333" }}
                 >
+                  <DropdownMenuItem
+                    asChild
+                    className="text-white hover:bg-gray-800 cursor-pointer focus:bg-gray-800 focus:text-white"
+                  >
+                    <Link
+                      href="/bets-history"
+                      className="flex items-center gap-2 w-full px-3 py-2"
+                    >
+                      <Ticket className="w-4 h-4" />
+                      My Bets
+                    </Link>
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     asChild
                     className="text-white hover:bg-gray-800 cursor-pointer focus:bg-gray-800 focus:text-white"

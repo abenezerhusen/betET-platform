@@ -22,9 +22,9 @@ function syncLegacyBetSlipBalances(wallet: WalletApiResponse | null): void {
     wallet.summary.find((s: WalletSummaryLine) => s.currency.toUpperCase() === cur) ??
     wallet.summary[0];
   try {
-    window.localStorage.setItem('mezzobet_balance', line.balance);
-    window.localStorage.setItem('mezzobet_bonus_balance', line.bonus_balance);
-    window.dispatchEvent(new Event('mezzobet:balance'));
+    window.localStorage.setItem('1birr_balance', line.balance);
+    window.localStorage.setItem('1birr_bonus_balance', line.bonus_balance);
+    window.dispatchEvent(new Event('1birr:balance'));
   } catch {
     /* ignore */
   }
@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refreshWallet();
   }, [ready, snapshot.accessToken, refreshWallet]);
 
-  // NOTE: We intentionally do NOT listen for our own `mezzobet:balance` event
+  // NOTE: We intentionally do NOT listen for our own `1birr:balance` event
   // here. `refreshWallet()` dispatches that event (via syncLegacyBetSlipBalances)
   // to notify the legacy betslip UI that reads balance from localStorage. If we
   // also refetched on it, every successful fetch would re-dispatch the event and

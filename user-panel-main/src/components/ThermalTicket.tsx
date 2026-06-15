@@ -1,6 +1,7 @@
 "use client";
 
 import { useBets } from "@/context/BetContext";
+import { renderCode128Svg } from "@/lib/barcode";
 
 interface ThermalTicketProps {
   ticketNumber: string;
@@ -74,6 +75,14 @@ export function ThermalTicket({
         fontFamily: "'Courier New', Courier, monospace",
         fontSize: "10.5px",
         lineHeight: "1.25",
+        // Bold every line (sizes unchanged) so small text such as
+        // league names, kick-off times and the meta rows survives the
+        // thermal print head as legibly as the bold headers — thin
+        // Courier New regular weight tends to render as faint gray on
+        // 80 mm thermal printers.
+        fontWeight: 700,
+        WebkitPrintColorAdjust: "exact",
+        printColorAdjust: "exact",
       }}
     >
       {/* Logo + brand header — clean, structured, prints reliably even on
@@ -99,7 +108,7 @@ export function ThermalTicket({
             marginTop: "4px",
           }}
         >
-          PLAYCORE
+          1BIRR.BET
         </div>
         <div style={{ fontSize: "9.5px", letterSpacing: "0.5px" }}>
           Sports Betting
@@ -173,6 +182,20 @@ export function ThermalTicket({
           <span>{netPayout.toFixed(2)}</span>
         </div>
       </div>
+
+      <div style={{ margin: "4px 0" }}>{dashedLine}</div>
+
+      {/* Code 128 barcode of the ticket number. Cashiers scan this with
+          a standard USB / Bluetooth barcode reader to populate the
+          Ticket ID field in the cashier panel without manual entry —
+          identical workflow to typing the coupon, just faster. The
+          human-readable coupon prints below the bars so the cashier can
+          fall back to manual entry on a damaged print. */}
+      <div
+        aria-hidden
+        style={{ margin: "6px 0 4px", width: "100%", textAlign: "center" }}
+        dangerouslySetInnerHTML={{ __html: renderCode128Svg(ticketNumber) }}
+      />
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 

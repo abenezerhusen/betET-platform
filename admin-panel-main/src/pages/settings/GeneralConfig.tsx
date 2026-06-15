@@ -252,11 +252,11 @@ export function GeneralConfig() {
             footer, age disclaimer, and the public <code>GET /api/public/general</code> endpoint.
           </p>
           <form onSubmit={saveGeneral} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <Field label="Platform name" value={general.platform_name ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, platform_name: v }))} placeholder="PlayCore" />
+            <Field label="Platform name" value={general.platform_name ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, platform_name: v }))} placeholder="1birr.bet" />
             <Field label="Currency" value={general.currency ?? 'ETB'} onChange={(v) => setGeneral((p) => ({ ...p, currency: v }))} placeholder="ETB" />
             <Field label="Country" value={general.country ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, country: v }))} placeholder="Ethiopia" />
             <Field label="Country code" value={general.country_code ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, country_code: v }))} placeholder="ET" />
-            <Field label="Website URL" value={general.website_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, website_url: v }))} placeholder="https://playcore.example" />
+            <Field label="Website URL" value={general.website_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, website_url: v }))} placeholder="https://1birr.bet" />
             <Field label="Logo URL" value={general.logo_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, logo_url: v }))} placeholder="https://cdn.example.com/logo.png" />
             <Field label="Timezone" value={general.timezone ?? 'Africa/Addis_Ababa'} onChange={(v) => setGeneral((p) => ({ ...p, timezone: v }))} />
             <ToggleField
@@ -306,6 +306,28 @@ export function GeneralConfig() {
                 value={general.about_us ?? ''}
                 onChange={(e) => setGeneral((p) => ({ ...p, about_us: e.target.value }))}
                 className="w-full rounded-md border-gray-300"
+              />
+            </label>
+
+            <SectionHeader title="Website Content" />
+            <label className="md:col-span-2 space-y-1">
+              <span className="text-gray-700">Terms &amp; Conditions</span>
+              <textarea
+                rows={8}
+                value={general.terms_and_conditions ?? ''}
+                onChange={(e) => setGeneral((p) => ({ ...p, terms_and_conditions: e.target.value }))}
+                className="w-full rounded-md border-gray-300"
+                placeholder="Full terms & conditions text shown on the user panel (Terms page and Promotions page)."
+              />
+            </label>
+            <label className="md:col-span-2 space-y-1">
+              <span className="text-gray-700">Footer Content</span>
+              <textarea
+                rows={3}
+                value={general.footer_text ?? ''}
+                onChange={(e) => setGeneral((p) => ({ ...p, footer_text: e.target.value }))}
+                className="w-full rounded-md border-gray-300"
+                placeholder="Short description rendered in the user-panel footer."
               />
             </label>
 

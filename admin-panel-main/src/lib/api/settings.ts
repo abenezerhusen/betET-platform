@@ -75,6 +75,9 @@ export interface GeneralConfig {
   // Copy
   underage_disclaimer?: string;
   about_us?: string;
+  // Website content (user panel Terms page + footer)
+  terms_and_conditions?: string;
+  footer_text?: string;
   // Legacy / shared
   vip_threshold?: number;
   min_withdrawal?: number;

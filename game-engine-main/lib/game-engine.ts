@@ -74,7 +74,7 @@ export function readGameToken(): string | null {
       const parsed = JSON.parse(raw) as { accessToken?: string };
       if (parsed.accessToken) return parsed.accessToken;
     }
-    const direct = window.localStorage.getItem("mezzobet_access_token");
+    const direct = window.localStorage.getItem("1birr_access_token");
     if (direct) return direct;
   } catch {
     /* ignore */

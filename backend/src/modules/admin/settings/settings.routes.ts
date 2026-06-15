@@ -128,6 +128,8 @@ const generalConfigSchema = z
     /* Copy */
     underage_disclaimer: z.string().trim().max(2000).optional(),
     about_us: z.string().trim().max(10_000).optional(),
+    terms_and_conditions: z.string().trim().max(50_000).optional(),
+    footer_text: z.string().trim().max(5000).optional(),
     /* Legacy fields the user panel/cashier still consume */
     vip_threshold: z.number().nonnegative().optional(),
     min_withdrawal: z.number().nonnegative().optional(),

@@ -120,11 +120,11 @@ export default function ProfilePage() {
 
   const shareReferral = async () => {
     if (!referralCode) return;
-    const text = `Join me on betET! Use my referral code ${referralCode} when you sign up.`;
+    const text = `Join me on 1birr.bet! Use my referral code ${referralCode} when you sign up.`;
     if (typeof navigator !== "undefined" && (navigator as Navigator & { share?: (data: ShareData) => Promise<void> }).share) {
       try {
         await (navigator as Navigator & { share: (data: ShareData) => Promise<void> }).share({
-          title: "betET referral",
+          title: "1birr.bet referral",
           text,
         });
       } catch {

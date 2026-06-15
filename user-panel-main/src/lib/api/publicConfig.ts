@@ -30,6 +30,10 @@ export interface PublicGeneral {
   support: { phone: string; email: string };
   underage_disclaimer: string;
   about_us: string;
+  /** Admin-managed Terms & Conditions body (Settings → General → Company). */
+  terms_and_conditions: string;
+  /** Admin-managed footer blurb (Settings → General → Company). */
+  footer_text: string;
 }
 
 export interface TopBetEntry {
