@@ -101,3 +101,41 @@ export function listPromotionBanners(): Promise<{ items: PromotionBanner[] }> {
 export function getOperationHours(): Promise<OperationHoursPayload> {
   return apiRequest<OperationHoursPayload>('/api/public/operation-hours');
 }
+
+/* -------------------------------------------------------------------------- */
+/* Footer Links                                                               */
+/* -------------------------------------------------------------------------- */
+
+export interface FooterLinkItem {
+  name: string;
+  href: string;
+}
+
+export interface FooterLinks {
+  company_links?: FooterLinkItem[];
+  legal_links?: FooterLinkItem[];
+  sports_links?: FooterLinkItem[];
+  copyright_text?: string;
+  company_description?: string;
+  live_chat_text?: string;
+}
+
+export function getFooterLinks(): Promise<FooterLinks> {
+  return apiRequest<FooterLinks>('/api/public/footer-links');
+}
+
+/* -------------------------------------------------------------------------- */
+/* Game Thumbnails                                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface GameThumbnailOverride {
+  game_id: string;
+  game_name?: string;
+  thumbnail_url: string;
+  promo_url?: string;
+  is_active?: boolean;
+}
+
+export function listGameThumbnails(): Promise<{ items: GameThumbnailOverride[] }> {
+  return apiRequest<{ items: GameThumbnailOverride[] }>('/api/public/game-thumbnails');
+}

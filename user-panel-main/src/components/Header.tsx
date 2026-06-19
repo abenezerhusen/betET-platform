@@ -10,6 +10,7 @@ import { debounce } from "@/lib/performance";
 import { SportsCatalog } from "@/components/SportsCatalog";
 import { useAuth } from "@/context/AuthContext";
 import type { WalletSummaryLine } from "@/lib/api/types";
+import { publicConfigApi } from "@/lib/api";
 import {
   Collapsible,
   CollapsibleContent,
@@ -45,7 +46,6 @@ import {
   ArrowDownCircle,
   FileText,
   LogOut,
-  ScrollText,
   Plane,
   Zap,
   Hash,
@@ -127,6 +127,29 @@ export function Header() {
     ) ??
     wallet?.summary?.[0];
   const userBalance = walletLine ? Number(walletLine.balance) : 0;
+
+  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [platformName, setPlatformName] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchConfig = () => {
+      publicConfigApi.getPublicGeneral()
+        .then((cfg) => {
+          if (cancelled) return;
+          setLogoUrl(cfg.logo_url ?? "");
+          setPlatformName(cfg.platform_name ?? "");
+        })
+        .catch(() => { /* keep defaults */ });
+    };
+    fetchConfig();
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchConfig(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   const [loginOpen, setLoginOpen] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -295,16 +318,27 @@ export function Header() {
 
           {/* Brand logo — clicking still routes to home (unchanged). */}
           <Link href="/" className="flex items-center gap-2" aria-label="1birr.bet home">
-            <span
-              className="flex items-center justify-center rounded-lg font-extrabold text-black h-8 w-8 sm:h-10 sm:w-10 text-sm sm:text-base shrink-0"
-              style={{ background: "#22c55e" }}
-            >
-              1B
-            </span>
-            <span className="font-extrabold text-lg sm:text-2xl leading-none tracking-tight">
-              <span className="text-white">1birr</span>
-              <span style={{ color: "#22c55e" }}>.bet</span>
-            </span>
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={platformName || "1birr.bet"}
+                className="h-8 sm:h-10 w-auto max-w-[160px] object-contain shrink-0"
+                onError={(e) => { e.currentTarget.style.display = "none"; }}
+              />
+            ) : (
+              <>
+                <span
+                  className="flex items-center justify-center rounded-lg font-extrabold text-black h-8 w-8 sm:h-10 sm:w-10 text-sm sm:text-base shrink-0"
+                  style={{ background: "#22c55e" }}
+                >
+                  1B
+                </span>
+                <span className="font-extrabold text-lg sm:text-2xl leading-none tracking-tight">
+                  <span className="text-white">{platformName ? platformName.replace(/\.bet$/i, "") : "1birr"}</span>
+                  <span style={{ color: "#22c55e" }}>.bet</span>
+                </span>
+              </>
+            )}
           </Link>
 
           {/* Desktop Search */}
@@ -432,18 +466,6 @@ export function Header() {
                     >
                       <Ticket className="w-4 h-4" />
                       My Bets
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    asChild
-                    className="text-white hover:bg-gray-800 cursor-pointer focus:bg-gray-800 focus:text-white"
-                  >
-                    <Link
-                      href="/sport-history"
-                      className="flex items-center gap-2 w-full px-3 py-2"
-                    >
-                      <ScrollText className="w-4 h-4" />
-                      Sport History
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem

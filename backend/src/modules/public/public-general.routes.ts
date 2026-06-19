@@ -45,6 +45,7 @@ swagger.registerPath({
 
 router.get('/general', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const tenantId = requireTenantId(req);
     const cfg = await withTenantClient({ tenantId }, async (client) =>
       loadGeneralConfig(client, tenantId)
@@ -149,6 +150,7 @@ swagger.registerPath({
 
 router.get('/promotions', async (req, res, next) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const tenantId = requireTenantId(req);
     const items = await readListSetting(tenantId, 'general.promotions');
     res.json({ items });
@@ -177,6 +179,45 @@ router.get('/operation-hours', async (req, res, next) => {
       timezone: cfg.timezone,
       hours: cfg.operation_hours,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/footer-links
+ * Returns the admin-managed footer link groups (company, legal, sports) plus
+ * copyright text and company description. Defaults to an empty object so the
+ * user panel falls back to its built-in static lists gracefully.
+ */
+router.get('/footer-links', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const result = await withTenantClient({ tenantId }, async (client) => {
+      const r = await client.query<{ value: unknown }>(
+        `SELECT value FROM settings WHERE tenant_id = $1 AND key = $2 LIMIT 1`,
+        [tenantId, 'general.footer_links']
+      );
+      return r.rows[0]?.value ?? {};
+    });
+    res.json(result && typeof result === 'object' ? result : {});
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/game-thumbnails
+ * Returns the admin-managed game thumbnail overrides so the user panel can
+ * replace default engine thumbnails without a code deploy.
+ */
+router.get('/game-thumbnails', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const items = await readListSetting(tenantId, 'general.game_thumbnails');
+    res.json({ items });
   } catch (err) {
     next(err);
   }

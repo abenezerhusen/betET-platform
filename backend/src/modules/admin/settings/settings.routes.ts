@@ -105,7 +105,7 @@ const generalConfigSchema = z
   .object({
     // Company Info
     platform_name: z.string().trim().max(160).optional(),
-    logo_url: z.string().trim().max(2048).optional(),
+    logo_url: z.string().trim().optional(),   // may be a base64 data URL
     currency: z.string().trim().max(8).optional(),
     country: z.string().trim().max(80).optional(),
     country_code: z.string().trim().max(8).optional(),
@@ -348,7 +348,7 @@ const topMatchEntrySchema = z.object({
 
 const promotionBannerSchema = z.object({
   id: z.string().trim().min(1).max(120).optional(),
-  image_url: z.string().trim().min(1).max(2048),
+  image_url: z.string().trim().min(1),  // may be a base64 data URL
   bonus_type: z.string().trim().max(80).optional(),
   title: z.string().trim().min(1).max(240),
   description: z.string().trim().max(2000).optional(),
@@ -416,6 +416,67 @@ router.put('/top-matches', writeListBlockHandler('general.top_matches', topMatch
 router.get('/promotions', listBlockHandler('general.promotions'));
 router.post('/promotions', writeListBlockHandler('general.promotions', promotionsBodySchema));
 router.put('/promotions', writeListBlockHandler('general.promotions', promotionsBodySchema));
+
+/* -------------------------------------------------------------------------- */
+/* Footer Links — admin-managed link groups shown in the user-panel footer.   */
+/* -------------------------------------------------------------------------- */
+
+const footerLinkItemSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  href: z.string().trim().max(2048),
+});
+
+const footerLinksObjectSchema = z.object({
+  company_links: z.array(footerLinkItemSchema).optional(),
+  legal_links: z.array(footerLinkItemSchema).optional(),
+  sports_links: z.array(footerLinkItemSchema).optional(),
+  copyright_text: z.string().trim().max(500).optional(),
+  company_description: z.string().trim().max(2000).optional(),
+  live_chat_text: z.string().trim().max(500).optional(),
+});
+
+router.get('/footer-links', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const out = await service.getSetting(req, 'general.footer_links').catch(() => null);
+    const value = out?.value;
+    res.json(value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/footer-links', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const body = footerLinksObjectSchema.parse(req.body);
+    const out = await service.upsertSetting(req, 'general.footer_links', { value: body });
+    res.json(out.value ?? {});
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* Game Thumbnails — per-game thumbnail/promo image overrides.                */
+/* -------------------------------------------------------------------------- */
+
+const gameThumbnailSchema = z.object({
+  id: z.string().trim().max(120).optional(),
+  game_id: z.string().trim().min(1).max(120),
+  game_name: z.string().trim().max(240).optional(),
+  thumbnail_url: z.string().trim(),   // may be a base64 data URL
+  promo_url: z.string().trim().optional(),
+  is_active: z.boolean().optional(),
+  display_order: z.number().int().nonnegative().optional(),
+});
+
+const gameThumbnailsBodySchema = z.union([
+  z.array(gameThumbnailSchema),
+  z.object({ items: z.array(gameThumbnailSchema) }),
+]);
+
+router.get('/game-thumbnails', listBlockHandler('general.game_thumbnails'));
+router.post('/game-thumbnails', writeListBlockHandler('general.game_thumbnails', gameThumbnailsBodySchema));
+router.put('/game-thumbnails', writeListBlockHandler('general.game_thumbnails', gameThumbnailsBodySchema));
 
 /* -------------------------------------------------------------------------- */
 /* Section 21 — Payment Configuration                                          */

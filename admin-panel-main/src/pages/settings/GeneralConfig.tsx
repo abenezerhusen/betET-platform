@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataTable';
 import { TabGroup } from '../../components/TabGroup';
-import { Settings, Plus, Save, Trash2 } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from '../../lib/toast';
 import * as settingsApi from '../../lib/api/settings';
 import * as paymentMethodsApi from '../../lib/api/payment-methods';
@@ -90,6 +90,31 @@ export function GeneralConfig() {
   const [topBets, setTopBets] = useState<settingsApi.TopBetEntry[]>([]);
   const [topMatches, setTopMatches] = useState<settingsApi.TopMatchEntry[]>([]);
   const [promotions, setPromotions] = useState<settingsApi.PromotionBanner[]>([]);
+  const [gameThumbnails, setGameThumbnails] = useState<settingsApi.GameThumbnail[]>([]);
+  const [footerLinks, setFooterLinks] = useState<settingsApi.FooterLinks>({
+    company_description: "Ethiopia's modern sports betting platform. Bet on football, basketball, and more. Fast payouts, secure accounts.",
+    live_chat_text: 'Available 24/7',
+    copyright_text: '',
+    company_links: [
+      { name: 'About Us', href: '/about' },
+      { name: 'Careers', href: '/about' },
+      { name: 'Responsible Gaming', href: '/rules' },
+      { name: 'Press', href: '/about' },
+    ],
+    legal_links: [
+      { name: 'Terms & Conditions', href: '/rules' },
+      { name: 'Privacy Policy', href: '/privacy' },
+      { name: 'Cookies Policy', href: '/cookies' },
+      { name: 'Account Rules', href: '/account-rules' },
+    ],
+    sports_links: [
+      { name: 'Football', href: '/' },
+      { name: 'Basketball', href: '/' },
+      { name: 'Tennis', href: '/' },
+      { name: 'Cricket', href: '/' },
+      { name: 'Volleyball', href: '/' },
+    ],
+  });
   const [methods, setMethods] = useState<paymentMethodsApi.PaymentMethodRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -110,24 +135,41 @@ export function GeneralConfig() {
   const [newPromoImage, setNewPromoImage] = useState('');
   const [newPromoBonus, setNewPromoBonus] = useState('');
   const [newPromoDesc, setNewPromoDesc] = useState('');
+  const [newPromoCta, setNewPromoCta] = useState('');
+
+  /* Game thumbnails entry form */
+  const [newThumbGameId, setNewThumbGameId] = useState('');
+  const [newThumbGameName, setNewThumbGameName] = useState('');
+  const [newThumbUrl, setNewThumbUrl] = useState('');
+  const [newThumbPromoUrl, setNewThumbPromoUrl] = useState('');
 
   const load = async () => {
     if (!isAuth) return;
     setLoading(true);
     try {
-      const [generalRes, betsRes, matchesRes, promosRes, methodsRes] = await Promise.all([
-        settingsApi.getGeneralConfig().catch(() => ({} as settingsApi.GeneralConfig)),
-        settingsApi.listTopBets().catch(() => ({ items: [] })),
-        settingsApi.listTopMatches().catch(() => ({ items: [] })),
-        settingsApi.listPromotions().catch(() => ({ items: [] })),
-        paymentMethodsApi.listPaymentMethods(),
-      ]);
+      const [generalRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, methodsRes] =
+        await Promise.all([
+          settingsApi.getGeneralConfig().catch(() => ({} as settingsApi.GeneralConfig)),
+          settingsApi.listTopBets().catch(() => ({ items: [] })),
+          settingsApi.listTopMatches().catch(() => ({ items: [] })),
+          settingsApi.listPromotions().catch(() => ({ items: [] })),
+          settingsApi.getFooterLinks().catch(() => null),
+          settingsApi.listGameThumbnails().catch(() => ({ items: [] })),
+          paymentMethodsApi.listPaymentMethods(),
+        ]);
       setGeneral({ ...defaultGeneral, ...(generalRes ?? {}) });
       setTopBets((betsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `b-${i}` })));
       setTopMatches(
         (matchesRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `m-${i}` }))
       );
       setPromotions((promosRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `p-${i}` })));
+      if (footerRes && typeof footerRes === 'object') {
+        // Merge saved values over the defaults (so empty-saved fields keep defaults)
+        setFooterLinks((prev) => ({ ...prev, ...footerRes }));
+      }
+      setGameThumbnails(
+        (thumbsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `t-${i}` }))
+      );
       setMethods(methodsRes.items ?? []);
     } catch (err) {
       toast(`Failed to load settings: ${(err as Error)?.message ?? err}`, 'error');
@@ -186,6 +228,25 @@ export function GeneralConfig() {
     }
   };
 
+  const persistFooterLinks = async (data: settingsApi.FooterLinks) => {
+    setFooterLinks(data);
+    try {
+      await settingsApi.saveFooterLinks(data);
+      toast('Footer content saved.');
+    } catch (err) {
+      toast(`Failed to save footer content: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
+  const persistGameThumbnails = async (rows: settingsApi.GameThumbnail[]) => {
+    setGameThumbnails(rows);
+    try {
+      await settingsApi.saveGameThumbnails(rows);
+    } catch (err) {
+      toast(`Failed to save game thumbnails: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
   const toggleSmsEvent = (code: string) => {
     setGeneral((p) => {
       const set = new Set((p.sms_events ?? []).map((s) => s.toLowerCase()));
@@ -209,6 +270,7 @@ export function GeneralConfig() {
 
   const tabs = [
     { id: 'company', label: 'Company Info' },
+    { id: 'game-thumbnails', label: 'Game Thumbnails' },
     { id: 'top-bets', label: 'Top Bets' },
     { id: 'top-matches', label: 'Top Matches' },
     { id: 'promotions', label: 'Promotions' },
@@ -257,7 +319,7 @@ export function GeneralConfig() {
             <Field label="Country" value={general.country ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, country: v }))} placeholder="Ethiopia" />
             <Field label="Country code" value={general.country_code ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, country_code: v }))} placeholder="ET" />
             <Field label="Website URL" value={general.website_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, website_url: v }))} placeholder="https://1birr.bet" />
-            <Field label="Logo URL" value={general.logo_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, logo_url: v }))} placeholder="https://cdn.example.com/logo.png" />
+            <ImageUploadField label="Logo" value={general.logo_url ?? ''} onChange={(v) => setGeneral((p) => ({ ...p, logo_url: v }))} placeholder="https://cdn.example.com/logo.png" />
             <Field label="Timezone" value={general.timezone ?? 'Africa/Addis_Ababa'} onChange={(v) => setGeneral((p) => ({ ...p, timezone: v }))} />
             <ToggleField
               label="Offline Bet Support (enables Cashier Panel)"
@@ -342,6 +404,438 @@ export function GeneralConfig() {
               </button>
             </div>
           </form>
+
+          {/* ---- Footer Links -------------------------------------------- */}
+          <div className="mt-8 border-t pt-6 space-y-5">
+            <h3 className="font-semibold text-gray-800">Footer Content Management</h3>
+            <p className="text-xs text-gray-500">
+              Control everything shown in the user-panel footer. Saved immediately to
+              <code> /api/admin/settings/footer-links</code>. Changes appear on the user panel when
+              the browser tab is re-focused.
+            </p>
+
+            {/* Texts */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <label className="space-y-1">
+                <span className="text-gray-700 font-medium">Company Description</span>
+                <textarea
+                  rows={2}
+                  value={footerLinks.company_description ?? ''}
+                  onChange={(e) => setFooterLinks((p) => ({ ...p, company_description: e.target.value }))}
+                  className="w-full rounded-md border-gray-300"
+                  placeholder="Short tagline shown in the footer"
+                />
+              </label>
+              <div className="space-y-3">
+                <label className="block space-y-1">
+                  <span className="text-gray-700 font-medium">Live Chat Text</span>
+                  <input
+                    type="text"
+                    value={footerLinks.live_chat_text ?? ''}
+                    onChange={(e) => setFooterLinks((p) => ({ ...p, live_chat_text: e.target.value }))}
+                    className="w-full rounded-md border-gray-300"
+                    placeholder="Available 24/7"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-gray-700 font-medium">Copyright Text</span>
+                  <input
+                    type="text"
+                    value={footerLinks.copyright_text ?? ''}
+                    onChange={(e) => setFooterLinks((p) => ({ ...p, copyright_text: e.target.value }))}
+                    className="w-full rounded-md border-gray-300"
+                    placeholder={`© ${new Date().getFullYear()} 1birr.bet. All rights reserved.`}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Link groups */}
+            {(
+              [
+                { key: 'company_links', label: 'Company Links' },
+                { key: 'legal_links', label: 'Legal Links' },
+                { key: 'sports_links', label: 'Sports Links' },
+              ] as const
+            ).map(({ key, label }) => (
+              <FooterLinkEditor
+                key={key}
+                label={label}
+                items={(footerLinks[key] ?? []) as settingsApi.FooterLinkItem[]}
+                onChange={(items) => setFooterLinks((p) => ({ ...p, [key]: items }))}
+              />
+            ))}
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => void persistFooterLinks(footerLinks)}
+                className="inline-flex items-center px-4 py-2 rounded-md bg-green-600 text-white"
+              >
+                <Save className="h-4 w-4 mr-2" /> Save Footer Content
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Banner Slider tab removed — use existing Promotions tab instead */}
+      {activeTab === 'banners-removed' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <p className="text-xs text-gray-500">
+            These banners feed the homepage slider on the user panel. Changes take effect
+            immediately. Each banner needs a title and an image URL. Enable/disable individual
+            banners without deleting them. Saved to{' '}
+            <code>POST /api/admin/settings/promotions</code> (same key as Promotions page).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              value={newPromoTitle}
+              onChange={(e) => setNewPromoTitle(e.target.value)}
+              placeholder="Banner title (e.g. WIN UP TO 360,000)"
+              className="rounded-md border-gray-300"
+            />
+            <input
+              value={newPromoImage}
+              onChange={(e) => setNewPromoImage(e.target.value)}
+              placeholder="Image URL (desktop/mobile)"
+              className="rounded-md border-gray-300"
+            />
+            <input
+              value={newPromoCta}
+              onChange={(e) => setNewPromoCta(e.target.value)}
+              placeholder="CTA URL (optional, e.g. /games)"
+              className="rounded-md border-gray-300"
+            />
+            <input
+              value={newPromoBonus}
+              onChange={(e) => setNewPromoBonus(e.target.value)}
+              placeholder="Bonus type (optional)"
+              className="rounded-md border-gray-300"
+            />
+          </div>
+          <label className="block">
+            <span className="text-xs text-gray-600">Description (optional)</span>
+            <textarea
+              rows={2}
+              value={newPromoDesc}
+              onChange={(e) => setNewPromoDesc(e.target.value)}
+              className="w-full rounded-md border-gray-300"
+              placeholder="Short description shown below the banner title"
+            />
+          </label>
+          <button
+            onClick={() => {
+              if (!newPromoTitle.trim() || !newPromoImage.trim()) return;
+              void persistPromotions([
+                ...promotions,
+                {
+                  id: String(Date.now()),
+                  title: newPromoTitle.trim(),
+                  image_url: newPromoImage.trim(),
+                  bonus_type: newPromoBonus.trim() || undefined,
+                  description: newPromoDesc.trim() || undefined,
+                  cta_url: newPromoCta.trim() || undefined,
+                  is_active: true,
+                  display_order: promotions.length,
+                },
+              ]);
+              setNewPromoTitle('');
+              setNewPromoImage('');
+              setNewPromoBonus('');
+              setNewPromoDesc('');
+              setNewPromoCta('');
+            }}
+            className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white"
+          >
+            <Plus className="h-4 w-4 mr-2" /> Add Banner
+          </button>
+          <DataTable
+            columns={[
+              { header: 'Title', accessor: 'title' as const },
+              {
+                header: 'Image',
+                accessor: 'image_url' as const,
+                render: (value: string) => (
+                  <img src={value} alt="" className="h-10 w-20 object-cover rounded" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                ),
+              },
+              { header: 'Description', accessor: 'description' as const },
+              {
+                header: 'Active',
+                accessor: 'is_active' as const,
+                render: (value: boolean, row: settingsApi.PromotionBanner) => (
+                  <input
+                    type="checkbox"
+                    checked={Boolean(value)}
+                    onChange={(e) =>
+                      void persistPromotions(
+                        promotions.map((p) =>
+                          p.id === row.id ? { ...p, is_active: e.target.checked } : p
+                        )
+                      )
+                    }
+                  />
+                ),
+              },
+              {
+                header: 'Action',
+                accessor: 'id' as const,
+                render: (value: string) => (
+                  <button
+                    className="text-red-600"
+                    onClick={() => void persistPromotions(promotions.filter((r) => r.id !== value))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                ),
+              },
+            ]}
+            data={promotions}
+          />
+        </div>
+      )}
+
+      {/* Footer Links tab removed — use Company Info footer_text field instead */}
+      {activeTab === 'footer-links-removed' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-6">
+          <p className="text-xs text-gray-500">
+            Manage the link columns shown in the user panel footer. Changes are saved to{' '}
+            <code>PUT /api/admin/settings/footer-links</code> and rendered live on the user panel.
+            The <em>Footer Content</em> text (company description) is set in Company Info above.
+          </p>
+
+          {/* Copyright + description */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className="space-y-1 text-sm">
+              <span className="text-gray-700">Copyright Text</span>
+              <input
+                value={footerLinks.copyright_text ?? ''}
+                onChange={(e) => setFooterLinks((p) => ({ ...p, copyright_text: e.target.value }))}
+                placeholder="© 2026 1birr.bet. All rights reserved."
+                className="w-full rounded-md border-gray-300"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-gray-700">Live Chat Info</span>
+              <input
+                value={footerLinks.live_chat_text ?? ''}
+                onChange={(e) => setFooterLinks((p) => ({ ...p, live_chat_text: e.target.value }))}
+                placeholder="Available 24/7"
+                className="w-full rounded-md border-gray-300"
+              />
+            </label>
+            <label className="md:col-span-2 space-y-1 text-sm">
+              <span className="text-gray-700">Company Description (footer)</span>
+              <textarea
+                rows={3}
+                value={footerLinks.company_description ?? ''}
+                onChange={(e) => setFooterLinks((p) => ({ ...p, company_description: e.target.value }))}
+                placeholder="Ethiopia's modern sports betting platform..."
+                className="w-full rounded-md border-gray-300"
+              />
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={() => void persistFooterLinks(footerLinks)}
+              disabled={saving}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+            >
+              <Save className="h-4 w-4 mr-2" /> Save Text
+            </button>
+          </div>
+
+          {/* Add link */}
+          <div className="border-t pt-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Manage Footer Links</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <select
+                value={newFooterLinkSection}
+                onChange={(e) => setNewFooterLinkSection(e.target.value as typeof newFooterLinkSection)}
+                className="rounded-md border-gray-300"
+              >
+                <option value="company_links">Company Links</option>
+                <option value="legal_links">Legal Links</option>
+                <option value="sports_links">Sports Links</option>
+              </select>
+              <input
+                value={newFooterLinkName}
+                onChange={(e) => setNewFooterLinkName(e.target.value)}
+                placeholder="Link name (e.g. About Us)"
+                className="rounded-md border-gray-300"
+              />
+              <input
+                value={newFooterLinkHref}
+                onChange={(e) => setNewFooterLinkHref(e.target.value)}
+                placeholder="URL (e.g. /about)"
+                className="rounded-md border-gray-300"
+              />
+              <button
+                onClick={() => {
+                  if (!newFooterLinkName.trim() || !newFooterLinkHref.trim()) return;
+                  const newLink = { name: newFooterLinkName.trim(), href: newFooterLinkHref.trim() };
+                  const updated = {
+                    ...footerLinks,
+                    [newFooterLinkSection]: [
+                      ...(footerLinks[newFooterLinkSection] ?? []),
+                      newLink,
+                    ],
+                  };
+                  void persistFooterLinks(updated);
+                  setNewFooterLinkName('');
+                  setNewFooterLinkHref('');
+                }}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white"
+              >
+                <Plus className="h-4 w-4 mr-2" /> Add Link
+              </button>
+            </div>
+          </div>
+
+          {/* Current links per section */}
+          {(['company_links', 'legal_links', 'sports_links'] as const).map((section) => {
+            const items = footerLinks[section] ?? [];
+            const label = { company_links: 'Company Links', legal_links: 'Legal Links', sports_links: 'Sports Links' }[section];
+            return (
+              <div key={section}>
+                <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">{label}</h4>
+                {items.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">No links configured — using site defaults.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {items.map((link, idx) => (
+                      <div key={idx} className="flex items-center gap-3 text-sm border rounded-md px-3 py-1.5">
+                        <span className="h-3.5 w-3.5 text-gray-400 shrink-0">🔗</span>
+                        <span className="flex-1 font-medium">{link.name}</span>
+                        <span className="text-gray-500 text-xs">{link.href}</span>
+                        <button
+                          className="text-red-500"
+                          onClick={() => {
+                            const updated = {
+                              ...footerLinks,
+                              [section]: items.filter((_, i) => i !== idx),
+                            };
+                            void persistFooterLinks(updated);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */
+        /* Game Thumbnails                                                    */
+        /* ------------------------------------------------------------------ */}
+      {activeTab === 'game-thumbnails' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <p className="text-xs text-gray-500">
+            Override the default thumbnail shown for any game in the user panel lobby.
+            Enter the <em>game_id</em> (e.g. <code>aviator</code>, <code>fast-keno</code>) and
+            a custom image URL. Saved to{' '}
+            <code>POST /api/admin/settings/game-thumbnails</code> and consumed immediately
+            by the user panel Games page.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              value={newThumbGameId}
+              onChange={(e) => setNewThumbGameId(e.target.value)}
+              placeholder="Game ID (e.g. aviator, fast-keno, jetx)"
+              className="rounded-md border-gray-300"
+            />
+            <input
+              value={newThumbGameName}
+              onChange={(e) => setNewThumbGameName(e.target.value)}
+              placeholder="Game name (display label)"
+              className="rounded-md border-gray-300"
+            />
+          </div>
+          <ImageUploadField
+            label="Thumbnail Image"
+            value={newThumbUrl}
+            onChange={setNewThumbUrl}
+            placeholder="Upload a local image or paste a URL"
+          />
+          <ImageUploadField
+            label="Promo / Banner Image (optional)"
+            value={newThumbPromoUrl}
+            onChange={setNewThumbPromoUrl}
+            placeholder="Upload a local image or paste a URL"
+          />
+          <button
+            onClick={() => {
+              if (!newThumbGameId.trim() || !newThumbUrl.trim()) return;
+              void persistGameThumbnails([
+                ...gameThumbnails,
+                {
+                  id: String(Date.now()),
+                  game_id: newThumbGameId.trim(),
+                  game_name: newThumbGameName.trim() || newThumbGameId.trim(),
+                  thumbnail_url: newThumbUrl.trim(),
+                  promo_url: newThumbPromoUrl.trim() || undefined,
+                  is_active: true,
+                  display_order: gameThumbnails.length,
+                },
+              ]);
+              setNewThumbGameId('');
+              setNewThumbGameName('');
+              setNewThumbUrl('');
+              setNewThumbPromoUrl('');
+            }}
+            className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white"
+          >
+            <Plus className="h-4 w-4 mr-2" /> Add Thumbnail
+          </button>
+          <DataTable
+            columns={[
+              { header: 'Game ID', accessor: 'game_id' as const },
+              { header: 'Name', accessor: 'game_name' as const },
+              {
+                header: 'Thumbnail',
+                accessor: 'thumbnail_url' as const,
+                render: (value: string) => (
+                  <img src={value} alt="" className="h-10 w-16 object-cover rounded" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                ),
+              },
+              {
+                header: 'Active',
+                accessor: 'is_active' as const,
+                render: (value: boolean, row: settingsApi.GameThumbnail) => (
+                  <input
+                    type="checkbox"
+                    checked={Boolean(value)}
+                    onChange={(e) =>
+                      void persistGameThumbnails(
+                        gameThumbnails.map((t) =>
+                          t.id === row.id ? { ...t, is_active: e.target.checked } : t
+                        )
+                      )
+                    }
+                  />
+                ),
+              },
+              {
+                header: 'Action',
+                accessor: 'id' as const,
+                render: (value: string) => (
+                  <button
+                    className="text-red-600"
+                    onClick={() => void persistGameThumbnails(gameThumbnails.filter((r) => r.id !== value))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                ),
+              },
+            ]}
+            data={gameThumbnails}
+          />
         </div>
       )}
 
@@ -485,36 +979,20 @@ export function GeneralConfig() {
         <div className="bg-white rounded-lg shadow p-6 space-y-4">
           <p className="text-xs text-gray-500">
             Saved to <code>POST /api/admin/settings/promotions</code>. These banners feed the
-            hero carousel on the user panel promotions page.
+            homepage banner slider and the promotions page on the user panel.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input value={newPromoTitle} onChange={(e) => setNewPromoTitle(e.target.value)} placeholder="Title (e.g. 100% Welcome Bonus)" className="rounded-md border-gray-300" />
-            <input value={newPromoBonus} onChange={(e) => setNewPromoBonus(e.target.value)} placeholder="Bonus type (e.g. deposit_match)" className="rounded-md border-gray-300" />
-            <input value={newPromoImage} onChange={(e) => setNewPromoImage(e.target.value)} placeholder="Image URL" className="rounded-md border-gray-300" />
-            <button
-              onClick={() => {
-                if (!newPromoTitle.trim() || !newPromoImage.trim()) return;
-                void persistPromotions([
-                  ...promotions,
-                  {
-                    id: String(Date.now()),
-                    title: newPromoTitle.trim(),
-                    image_url: newPromoImage.trim(),
-                    bonus_type: newPromoBonus.trim() || 'deposit_match',
-                    description: newPromoDesc.trim(),
-                    is_active: true,
-                    display_order: promotions.length,
-                  },
-                ]);
-                setNewPromoTitle('');
-                setNewPromoBonus('');
-                setNewPromoImage('');
-                setNewPromoDesc('');
-              }}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white"
-            >
-              <Plus className="h-4 w-4 mr-2" /> Add Banner
-            </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input value={newPromoTitle} onChange={(e) => setNewPromoTitle(e.target.value)} placeholder="Title (e.g. WIN UP TO 360,000)" className="rounded-md border-gray-300" />
+            <input value={newPromoBonus} onChange={(e) => setNewPromoBonus(e.target.value)} placeholder="Bonus type (optional)" className="rounded-md border-gray-300" />
+          </div>
+          <ImageUploadField
+            label="Banner Image"
+            value={newPromoImage}
+            onChange={setNewPromoImage}
+            placeholder="Upload a local image or paste a URL"
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input value={newPromoCta} onChange={(e) => setNewPromoCta(e.target.value)} placeholder="CTA URL (optional, e.g. /games)" className="rounded-md border-gray-300" />
           </div>
           <label className="block">
             <span className="text-xs text-gray-600">Description (optional)</span>
@@ -523,8 +1001,35 @@ export function GeneralConfig() {
               value={newPromoDesc}
               onChange={(e) => setNewPromoDesc(e.target.value)}
               className="w-full rounded-md border-gray-300"
+              placeholder="Short description shown below the banner title"
             />
           </label>
+          <button
+            onClick={() => {
+              if (!newPromoTitle.trim() || !newPromoImage.trim()) return;
+              void persistPromotions([
+                ...promotions,
+                {
+                  id: String(Date.now()),
+                  title: newPromoTitle.trim(),
+                  image_url: newPromoImage.trim(),
+                  bonus_type: newPromoBonus.trim() || undefined,
+                  description: newPromoDesc.trim() || undefined,
+                  cta_url: newPromoCta.trim() || undefined,
+                  is_active: true,
+                  display_order: promotions.length,
+                },
+              ]);
+              setNewPromoTitle('');
+              setNewPromoBonus('');
+              setNewPromoImage('');
+              setNewPromoDesc('');
+              setNewPromoCta('');
+            }}
+            className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white"
+          >
+            <Plus className="h-4 w-4 mr-2" /> Add Banner
+          </button>
           <DataTable
             columns={[
               { header: 'Title', accessor: 'title' as const },
@@ -810,6 +1315,159 @@ function Field({
         className="w-full rounded-md border-gray-300"
       />
     </label>
+  );
+}
+
+/**
+ * FooterLinkEditor — inline CRUD for a single group of footer links
+ * (company_links / legal_links / sports_links).
+ */
+function FooterLinkEditor({
+  label,
+  items,
+  onChange,
+}: {
+  label: string;
+  items: settingsApi.FooterLinkItem[];
+  onChange: (items: settingsApi.FooterLinkItem[]) => void;
+}) {
+  const [newName, setNewName] = useState('');
+  const [newHref, setNewHref] = useState('');
+
+  const add = () => {
+    if (!newName.trim() || !newHref.trim()) return;
+    onChange([...items, { name: newName.trim(), href: newHref.trim() }]);
+    setNewName('');
+    setNewHref('');
+  };
+
+  return (
+    <div className="text-sm space-y-2">
+      <span className="font-medium text-gray-700">{label}</span>
+      <div className="space-y-1 max-h-48 overflow-y-auto border rounded-md p-2">
+        {items.length === 0 && (
+          <p className="text-xs text-gray-400 italic">No links — using site defaults.</p>
+        )}
+        {items.map((link, idx) => (
+          <div key={idx} className="flex items-center gap-2 text-xs">
+            <span className="flex-1 font-medium truncate">{link.name}</span>
+            <span className="text-gray-500 truncate max-w-[200px]">{link.href}</span>
+            <button
+              type="button"
+              className="text-red-500 hover:text-red-700"
+              onClick={() => onChange(items.filter((_, i) => i !== idx))}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Link name"
+          className="flex-1 min-w-0 rounded-md border-gray-300 text-xs"
+        />
+        <input
+          type="text"
+          value={newHref}
+          onChange={(e) => setNewHref(e.target.value)}
+          placeholder="/page or https://..."
+          className="flex-1 min-w-0 rounded-md border-gray-300 text-xs"
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+        />
+        <button
+          type="button"
+          onClick={add}
+          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600 text-white text-xs"
+        >
+          <Plus className="h-3 w-3" /> Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ImageUploadField — text input + "Upload" button that converts a locally
+ * chosen file to a base64 data URL and stores it in the bound value.
+ * Accepts any URL string too (paste a https:// URL directly).
+ * Shows a small live preview when a value is present.
+ */
+function ImageUploadField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = ev.target?.result;
+      if (typeof result === 'string') onChange(result);
+    };
+    reader.readAsDataURL(file);
+    // Reset so selecting the same file again still fires onChange
+    e.target.value = '';
+  };
+
+  return (
+    <div className="text-sm space-y-1">
+      <span className="text-gray-700 block">{label}</span>
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={value.startsWith('data:') ? '(uploaded image)' : value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? 'https://... or click Upload to pick a file'}
+          className="flex-1 min-w-0 rounded-md border-gray-300"
+          readOnly={value.startsWith('data:')}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border bg-gray-50 hover:bg-gray-100 text-xs font-medium text-gray-700"
+        >
+          <Upload className="h-3.5 w-3.5" /> Upload
+        </button>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="shrink-0 text-xs text-red-500 hover:text-red-700"
+            title="Remove image"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFile}
+      />
+      {value && (
+        <img
+          src={value}
+          alt="Preview"
+          className="mt-1 h-14 w-auto max-w-[200px] rounded border object-contain bg-gray-50"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      )}
+    </div>
   );
 }
 

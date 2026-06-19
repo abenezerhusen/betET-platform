@@ -168,6 +168,8 @@ export interface UserDetailsBet {
   actual_payout: string | null;
   status: string;
   placed_at: string;
+  coupon_code?: string | null;
+  legs_count?: number | null;
 }
 
 export interface UserDetailsTransaction {

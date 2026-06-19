@@ -17,6 +17,8 @@ import {
   type Sport,
 } from "@/data/sportsCatalog";
 import * as sportsApi from "@/lib/api/sports";
+import { publicConfigApi } from "@/lib/api";
+import type { PromotionBanner } from "@/lib/api/publicConfig";
 
 // ---------------------------------------------------------------------------
 // Time filter helpers
@@ -408,6 +410,38 @@ function HomePageInner() {
     };
   }, []);
 
+  // ---- Dynamic banner slider -----------------------------------------------
+  const [banners, setBanners] = useState<PromotionBanner[]>([]);
+  const [bannerIdx, setBannerIdx] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBanners = () => {
+      publicConfigApi
+        .listPromotionBanners()
+        .then((res) => {
+          if (cancelled) return;
+          const active = (res.items ?? []).filter((b) => b.is_active !== false);
+          setBanners(active.length > 0 ? active : []);
+        })
+        .catch(() => { /* keep static fallback */ });
+    };
+    fetchBanners();
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchBanners(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  // Auto-advance banner every 5 seconds when multiple banners are configured
+  useEffect(() => {
+    if (banners.length <= 1) return;
+    const id = setInterval(() => setBannerIdx((i) => (i + 1) % banners.length), 5000);
+    return () => clearInterval(id);
+  }, [banners.length]);
+
   // The hardcoded fallback uses an old DD/MM snapshot; rewrite those
   // entries so the time filters (1hr/2hr/3hr/6hr/Today/Calendar) keep
   // working even when the API is offline. Real backend rows already
@@ -779,30 +813,88 @@ function HomePageInner() {
 
       {/* Main Content */}
       <div className="flex-1 min-w-0 overflow-hidden" style={{ background: "var(--mezzo-bg-primary)" }}>
-        {/* Banner */}
+        {/* Banner Slider — dynamic when configured in admin, static fallback otherwise */}
         <div className="p-2 sm:p-4">
-          <div
-            className="relative h-24 sm:h-32 md:h-40 rounded-lg overflow-hidden"
-            style={{
-              background: "linear-gradient(135deg, var(--mezzo-accent-green) 0%, var(--mezzo-accent-yellow) 100%)",
-            }}
-          >
-            <div className="absolute inset-0 flex items-center justify-between px-3 sm:px-6 md:px-8 gap-3">
-              <div className="min-w-0">
-                <h2 className="text-base sm:text-xl md:text-3xl font-bold text-white mb-1 sm:mb-2 leading-tight">
-                  WIN UP TO 360,000
-                </h2>
-                <p className="text-[11px] sm:text-sm md:text-lg text-white/80 leading-tight">
-                  EVERY SECOND ON FASTKENO
-                </p>
-              </div>
-              <img
-                src="https://ext.same-assets.com/1203561035/2427311734.jpeg"
-                alt="Promo"
-                className="h-16 sm:h-24 md:h-32 w-auto object-contain shrink-0"
-              />
+          {banners.length > 0 ? (
+            <div className="relative h-24 sm:h-32 md:h-40 rounded-lg overflow-hidden">
+              {banners.map((banner, idx) => (
+                <div
+                  key={banner.id ?? idx}
+                  className="absolute inset-0 transition-opacity duration-700"
+                  style={{ opacity: idx === bannerIdx ? 1 : 0 }}
+                >
+                  {banner.image_url ? (
+                    <img
+                      src={banner.image_url}
+                      alt={banner.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full"
+                      style={{ background: "linear-gradient(135deg, var(--mezzo-accent-green) 0%, var(--mezzo-accent-yellow) 100%)" }}
+                    />
+                  )}
+                  <div className="absolute inset-0 flex items-center px-3 sm:px-6 md:px-8 gap-3 bg-black/20">
+                    <div className="min-w-0">
+                      <h2 className="text-base sm:text-xl md:text-3xl font-bold text-white mb-1 sm:mb-2 leading-tight drop-shadow">
+                        {banner.title}
+                      </h2>
+                      {banner.description && (
+                        <p className="text-[11px] sm:text-sm md:text-lg text-white/90 leading-tight drop-shadow">
+                          {banner.description}
+                        </p>
+                      )}
+                      {banner.cta_url && (
+                        <a
+                          href={banner.cta_url}
+                          className="mt-1 sm:mt-2 inline-block text-xs sm:text-sm font-semibold px-3 py-1 rounded text-black"
+                          style={{ background: "var(--mezzo-accent-yellow)" }}
+                        >
+                          Bet Now
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {/* Dot indicators */}
+              {banners.length > 1 && (
+                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
+                  {banners.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setBannerIdx(idx)}
+                      className="w-1.5 h-1.5 rounded-full transition-all"
+                      style={{ background: idx === bannerIdx ? "#fff" : "rgba(255,255,255,0.45)" }}
+                      aria-label={`Banner ${idx + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <div
+              className="relative h-24 sm:h-32 md:h-40 rounded-lg overflow-hidden"
+              style={{ background: "linear-gradient(135deg, var(--mezzo-accent-green) 0%, var(--mezzo-accent-yellow) 100%)" }}
+            >
+              <div className="absolute inset-0 flex items-center justify-between px-3 sm:px-6 md:px-8 gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-base sm:text-xl md:text-3xl font-bold text-white mb-1 sm:mb-2 leading-tight">
+                    WIN UP TO 360,000
+                  </h2>
+                  <p className="text-[11px] sm:text-sm md:text-lg text-white/80 leading-tight">
+                    EVERY SECOND ON FASTKENO
+                  </p>
+                </div>
+                <img
+                  src="https://ext.same-assets.com/1203561035/2427311734.jpeg"
+                  alt="Promo"
+                  className="h-16 sm:h-24 md:h-32 w-auto object-contain shrink-0"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Mobile main nav tabs — appears directly under the banner on

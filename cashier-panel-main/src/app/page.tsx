@@ -81,8 +81,13 @@ import {
 // User-panel base URL for the "Launch Fixtures" sidebar shortcut. The
 // cashier opens this in a new tab to build a bet slip on behalf of the
 // walk-in player, copies the Ticket ID, then pastes it into Sell Ticket.
+//
+// NOTE: the fallback is port 3001 (the user panel), NOT 3000 — the
+// cashier panel itself runs on 3000, so defaulting to 3000 would just
+// re-open the cashier panel in the new tab. Override via
+// NEXT_PUBLIC_USER_PANEL_URL for staging / production.
 const USER_PANEL_URL =
-  process.env.NEXT_PUBLIC_USER_PANEL_URL ?? "http://localhost:3000";
+  process.env.NEXT_PUBLIC_USER_PANEL_URL ?? "http://localhost:3001";
 
 type PageType = "tickets" | "super-jackpots" | "withdraw-deposit" | "dashboard" | "settings";
 
@@ -383,6 +388,92 @@ function TicketsPage() {
     return () => window.cancelAnimationFrame(handle);
   }, [activeTab]);
 
+  // ─── Global barcode-scanner capture ────────────────────────────────
+  // USB / Bluetooth barcode scanners are HID keyboard-wedge devices —
+  // they type the decoded text into whichever element has focus, then
+  // send Enter. The problem: focus on the cashier page can drift
+  // anywhere (action button, tab strip, etc.), and the scanner's
+  // keystrokes get lost.
+  //
+  // This handler watches `keydown` at the document root. When it sees
+  // characters arriving faster than humanly possible (gap ≤ 50 ms) it
+  // assembles a buffer until an Enter arrives, then runs the active
+  // tab's lookup directly with the decoded value. Manual typing is
+  // unaffected because human keystrokes are always > 50 ms apart so
+  // they never enter scanner mode.
+  //
+  // We intentionally read the latest values via refs so this effect
+  // does not re-bind on every render.
+  const activeTabRef = useRef(activeTab);
+  const couponLoadingRef = useRef(false);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { couponLoadingRef.current = couponLoading; }, [couponLoading]);
+  const runLookupRef = useRef<(code: string) => Promise<void>>(async () => {});
+  const runCheckPayoutRef = useRef<(code: string) => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    let buffer = "";
+    let lastKeyAt = 0;
+    const SCAN_GAP_MS = 50;
+
+    const handler = (e: KeyboardEvent) => {
+      // Ignore modifier/navigation keys — only printable chars + Enter
+      // should be treated as scanner input.
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isInput =
+        tag === "input" || tag === "textarea" || tag === "select";
+
+      const now = performance.now();
+      const gap = now - lastKeyAt;
+      lastKeyAt = now;
+
+      if (e.key === "Enter") {
+        if (buffer.length >= 4) {
+          // Looks like a scanner-completed code. Route it to the active
+          // tab's lookup regardless of what currently has focus.
+          const code = buffer;
+          buffer = "";
+          if (couponLoadingRef.current) return;
+          e.preventDefault();
+          if (activeTabRef.current === "payout") {
+            setPayoutCode(code);
+            void runCheckPayoutRef.current(code);
+          } else {
+            setCouponCode(code);
+            void runLookupRef.current(code);
+          }
+        } else {
+          buffer = "";
+        }
+        return;
+      }
+
+      // Only single-character printable keys count as data.
+      if (e.key.length !== 1) {
+        buffer = "";
+        return;
+      }
+
+      // First key starts the buffer; subsequent keys must arrive within
+      // SCAN_GAP_MS or we treat it as fresh human typing.
+      if (gap > SCAN_GAP_MS && buffer.length > 0) {
+        buffer = "";
+      }
+
+      // Don't interfere with a focused input that's already receiving
+      // characters at human speed (manual typing) — only intercept if
+      // the input isn't focused or the rate looks like a scanner.
+      const looksLikeScanner = gap <= SCAN_GAP_MS || buffer.length === 0;
+      if (!looksLikeScanner && isInput) return;
+
+      buffer += e.key;
+    };
+
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const fmtDate = (iso: string | null | undefined) =>
     iso ? new Date(iso).toLocaleString() : "—";
   const fmtDateOnly = (iso: string | null | undefined) =>
@@ -414,8 +505,9 @@ function TicketsPage() {
     win.document.write(html);
     win.document.close();
     win.focus();
-    win.print();
-    win.close();
+    // Print is triggered by the window.onload handler embedded in the
+    // HTML above. Calling win.print() synchronously here would race the
+    // PNG barcode decoder and print a blank barcode slot.
   };
 
   const runLookup = async (code: string) => {
@@ -442,6 +534,13 @@ function TicketsPage() {
       setCouponError((err as Error).message || "Ticket not found.");
     } finally {
       setCouponLoading(false);
+      // Re-focus the active Ticket ID input so the cashier can scan the
+      // next ticket immediately without clicking back into the field.
+      window.requestAnimationFrame(() => {
+        const ref = activeTabRef.current === "payout" ? payoutInputRef : sellInputRef;
+        ref.current?.focus({ preventScroll: true });
+        ref.current?.select?.();
+      });
     }
   };
 
@@ -492,8 +591,19 @@ function TicketsPage() {
       setCouponError((err as Error).message || "Ticket not found.");
     } finally {
       setCouponLoading(false);
+      // Re-focus the Payout input so the next scan goes straight in.
+      window.requestAnimationFrame(() => {
+        payoutInputRef.current?.focus({ preventScroll: true });
+        payoutInputRef.current?.select?.();
+      });
     }
   };
+
+  // Wire up the function refs used by the global scanner-capture
+  // listener installed above. We assign on every render so the refs
+  // always point at the latest closure (which captures up-to-date state).
+  runLookupRef.current = runLookup;
+  runCheckPayoutRef.current = runCheckPayout;
 
   const payTicket = async () => {
     if (!payoutInfo || payoutBusy) return;
@@ -580,7 +690,10 @@ function TicketsPage() {
               placeholder="Scan or type Ticket ID"
               value={couponCode}
               onChange={(e) => setCouponCode(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void runLookup(couponCode)}
+              onKeyDown={(e) =>
+                e.key === "Enter" &&
+                void runLookup((e.target as HTMLInputElement).value)
+              }
               className="pr-10 h-11 border-gray-300"
               autoComplete="off"
               autoCorrect="off"
@@ -765,7 +878,10 @@ function TicketsPage() {
                 placeholder="Scan or type Ticket ID"
                 value={payoutCode}
                 onChange={(e) => setPayoutCode(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void runCheckPayout(payoutCode)}
+                onKeyDown={(e) =>
+                  e.key === "Enter" &&
+                  void runCheckPayout((e.target as HTMLInputElement).value)
+                }
                 className="pr-10 h-11 border-gray-300"
                 autoComplete="off"
                 autoCorrect="off"

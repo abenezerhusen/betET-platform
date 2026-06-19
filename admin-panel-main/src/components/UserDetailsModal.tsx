@@ -134,16 +134,20 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     [details]
   );
 
-  // ---- Tickets (same bet feed, ticket-oriented columns) ------------------
+  // ---- Sports Bets (sportsbook tickets only) ----------------------------
   const ticketRows = useMemo(
     () =>
-      (details?.recent_bets ?? []).map((b) => ({
-        ticketId: b.id.slice(0, 8),
-        stake: fmtMoney(num(b.stake)),
-        possibleWin: fmtMoney(num(b.potential_payout)),
-        paidStatus: b.status,
-        createdDate: fmtDate(b.placed_at),
-      })),
+      (details?.recent_bets ?? [])
+        .filter((b) => b.source === 'sportsbook')
+        .map((b) => ({
+          couponCode: b.coupon_code || b.id.slice(0, 12).toUpperCase(),
+          selections: b.legs_count ?? '—',
+          stake: fmtMoney(num(b.stake)),
+          possibleWin: fmtMoney(num(b.potential_payout)),
+          paidOut: fmtMoney(num(b.actual_payout)),
+          paidStatus: b.status,
+          createdDate: fmtDate(b.placed_at),
+        })),
     [details]
   );
 
@@ -205,7 +209,7 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     { id: 'wins', label: 'Wins/Losses' },
     { id: 'bonus', label: 'Bonus History' },
     { id: 'referrals', label: 'Referrals' },
-    { id: 'tickets', label: 'Tickets' },
+    { id: 'tickets', label: 'Sports Bets' },
     { id: 'branch', label: 'Branch Transactions' },
   ];
 
@@ -289,15 +293,17 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
   ];
 
   const ticketColumns = [
-    { header: 'Ticket ID', accessor: 'ticketId' as const },
+    { header: 'Coupon Code', accessor: 'couponCode' as const },
+    { header: 'Selections', accessor: 'selections' as const },
     { header: 'Stake', accessor: 'stake' as const },
     { header: 'Possible Win', accessor: 'possibleWin' as const },
+    { header: 'Paid Out', accessor: 'paidOut' as const },
     {
       header: 'Status',
       accessor: 'paidStatus' as const,
       render: (s: string) => <StatusPill s={s} />,
     },
-    { header: 'Created Date', accessor: 'createdDate' as const },
+    { header: 'Placed At', accessor: 'createdDate' as const },
   ];
 
   const branchColumns = [

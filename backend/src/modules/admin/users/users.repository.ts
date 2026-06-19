@@ -378,6 +378,8 @@ export interface UserDetailsBet {
   actual_payout: string | null;
   status: string;
   placed_at: Date;
+  coupon_code?: string | null;
+  legs_count?: number | null;
 }
 
 export interface UserDetailsTransaction {
@@ -475,7 +477,9 @@ export async function getUserDetails(
             potential_payout::text                            AS potential_payout,
             actual_payout::text                               AS actual_payout,
             status::text                                      AS status,
-            placed_at
+            placed_at,
+            coupon_code,
+            legs_count
        FROM sportsbook_bets
       WHERE user_id = $1
       UNION ALL
@@ -485,7 +489,9 @@ export async function getUserDetails(
             potential_win::text                               AS potential_payout,
             payout::text                                      AS actual_payout,
             status::text                                      AS status,
-            placed_at
+            placed_at,
+            NULL::text                                        AS coupon_code,
+            NULL::int                                         AS legs_count
        FROM bets
       WHERE user_id = $1
       ORDER BY placed_at DESC

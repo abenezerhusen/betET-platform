@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useBets } from "@/context/BetContext";
-import { renderCode128Svg } from "@/lib/barcode";
+import { renderBarcode } from "@/lib/barcode";
 
 interface ThermalTicketProps {
   ticketNumber: string;
@@ -41,6 +42,15 @@ export function ThermalTicket({
   buralNumber,
 }: ThermalTicketProps) {
   const { bets } = useBets();
+
+  // Generate pixel-perfect PNG barcode after mount (canvas requires DOM).
+  // widthMm makes it print 1:1 at 203 DPI so bars aren't dropped by
+  // downscaling — which is what makes it reliably scannable.
+  const [barcode, setBarcode] = useState({ dataUrl: "", widthMm: 0 });
+  useEffect(() => {
+    const bc = renderBarcode(ticketNumber);
+    setBarcode({ dataUrl: bc.dataUrl, widthMm: bc.widthMm });
+  }, [ticketNumber]);
 
   const formatDate = (date: string) => {
     const d = new Date(date);
@@ -185,17 +195,24 @@ export function ThermalTicket({
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 
-      {/* Code 128 barcode of the ticket number. Cashiers scan this with
-          a standard USB / Bluetooth barcode reader to populate the
-          Ticket ID field in the cashier panel without manual entry —
-          identical workflow to typing the coupon, just faster. The
-          human-readable coupon prints below the bars so the cashier can
-          fall back to manual entry on a damaged print. */}
-      <div
-        aria-hidden
-        style={{ margin: "6px 0 4px", width: "100%", textAlign: "center" }}
-        dangerouslySetInnerHTML={{ __html: renderCode128Svg(ticketNumber) }}
-      />
+      {/* Canvas-generated PNG barcode — pixel-perfect on thermal printers,
+          scannable by any standard USB / Bluetooth HID barcode reader. */}
+      {barcode.dataUrl && (
+        <div aria-hidden style={{ margin: "6px 0 4px", textAlign: "center" }}>
+          <img
+            src={barcode.dataUrl}
+            alt={ticketNumber}
+            decoding="sync"
+            loading="eager"
+            style={{
+              display: "block",
+              margin: "0 auto",
+              width: `${barcode.widthMm.toFixed(1)}mm`,
+              height: "auto",
+            }}
+          />
+        </div>
+      )}
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 

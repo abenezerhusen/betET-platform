@@ -1,15 +1,13 @@
 "use client";
 
 /**
- * `/bets-history` — User's personal betting history (Section 15).
+ * `/bets-history` — User's personal sports betting history (Section 15).
  *
  * Data:
- *   GET /api/user/me/bets   (legacy/game bets)
- *   GET /api/bets           (sportsbook tickets)
+ *   GET /api/bets  (sportsbook tickets only)
  *
- * Both sources are normalised to the same display shape so the existing
- * card layout still works. Tickets can be filtered by status
- * (Won / Lost / Pending / Cancelled) and searched by date range.
+ * Tickets can be filtered by status (Won / Lost / Pending / Cancelled)
+ * and searched by date range. Legs are loaded lazily on first expand.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -27,9 +25,8 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { betsApi, profileApi } from "@/lib/api";
+import { betsApi } from "@/lib/api";
 import type { BetHistoryRow, ReloadedTicket } from "@/lib/api/bets";
-import type { BetSummaryItem } from "@/lib/api/types";
 
 type StatusLabel = "Won" | "Lost" | "Pending" | "Cancelled";
 
@@ -75,6 +72,7 @@ function toNumber(v: string | number | null | undefined): number {
 }
 
 function mapStatus(s: string): StatusLabel {
+
   const v = (s ?? "").toLowerCase();
   if (
     v === "won" ||
@@ -98,63 +96,6 @@ function formatDate(iso: string): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const mi = String(d.getMinutes()).padStart(2, "0");
   return `${dd}/${mm}/${yy} ${hh}:${mi}`;
-}
-
-function toDisplay(b: BetSummaryItem): DisplayBet {
-  const stake = toNumber(b.stake);
-  const potential = toNumber(b.potential_payout);
-  const actual = toNumber(b.actual_payout);
-  const oddsHeadline = toNumber(b.odds);
-  const totalOdds = oddsHeadline > 0
-    ? oddsHeadline
-    : stake > 0
-      ? Number((potential / stake).toFixed(2))
-      : 0;
-  const selections = Array.isArray(b.selections) && b.selections.length > 0
-    ? b.selections.map((sel) => {
-        const rec = sel as unknown as Record<string, unknown>;
-        const market = typeof rec.market === "string" ? rec.market : "";
-        const selection = typeof rec.selection === "string" ? rec.selection : "";
-        const homeTeam = typeof rec.home_team === "string" ? rec.home_team : "—";
-        const awayTeam = typeof rec.away_team === "string" ? rec.away_team : "—";
-        const legOdds = toNumber(
-          (rec.odds as number | string | null | undefined) ?? null,
-        );
-        const result = mapStatus(
-          (rec.status as string) ?? (rec.result as string) ?? b.status,
-        );
-        return {
-          homeTeam,
-          awayTeam,
-          bet: market ? `${market}${selection ? `: ${selection}` : ""}` : selection,
-          odd: legOdds > 0 ? legOdds : totalOdds,
-          result,
-        };
-      })
-    : [
-        {
-          homeTeam: "Casino / Game",
-          awayTeam: b.bet_type ?? "—",
-          bet: b.bet_type ?? "Bet",
-          odd: totalOdds,
-          result: mapStatus(b.status),
-        },
-      ];
-
-  return {
-    ticketId: b.id.slice(0, 12).toUpperCase(),
-    date: formatDate(b.placed_at),
-    placedAt: new Date(b.placed_at).getTime() || 0,
-    status: mapStatus(b.status),
-    stake,
-    totalOdds,
-    potentialWin: potential,
-    actualWin: actual,
-    accumulatorBonus: 0,
-    matches: selections,
-    reloadKey: null, // legs inlined
-    legsCount: selections.length,
-  };
 }
 
 /** Normalise a sportsbook ticket (GET /api/bets) to the same card shape.
@@ -226,7 +167,6 @@ export default function BetsHistoryPage() {
   const [filterStatus, setFilterStatus] = useState<string>("All");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
-  const [rawRows, setRawRows] = useState<BetSummaryItem[]>([]);
   const [sportsRows, setSportsRows] = useState<BetHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -277,20 +217,11 @@ export default function BetsHistoryPage() {
     const fromIso = fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined;
     const toIso = toDate ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined;
 
-    const legacyPromise = profileApi
-      .listBets({ page: 1, limit: 50, from: fromIso, to: toIso })
-      .then((res) => res.items ?? [])
-      .catch(() => [] as BetSummaryItem[]);
-    const sportsPromise = betsApi
-      .listMyBets({ page: 1, limit: 50, from: fromIso, to: toIso })
-      .then((res) => res.items ?? [])
-      .catch(() => [] as BetHistoryRow[]);
-
-    Promise.all([legacyPromise, sportsPromise])
-      .then(([legacy, sports]) => {
+    betsApi
+      .listMyBets({ page: 1, limit: 100, from: fromIso, to: toIso })
+      .then((res) => {
         if (cancelled) return;
-        setRawRows(legacy);
-        setSportsRows(sports);
+        setSportsRows(res.items ?? []);
         setError(null);
       })
       .catch((err) => {
@@ -305,14 +236,10 @@ export default function BetsHistoryPage() {
     };
   }, [fromDate, toDate]);
 
-  const betsHistory = useMemo(() => {
-    const merged = [
-      ...rawRows.map(toDisplay),
-      ...sportsRows.map(sportsbookToDisplay),
-    ];
-    // Newest first across both sources.
-    return merged.sort((a, b) => b.placedAt - a.placedAt);
-  }, [rawRows, sportsRows]);
+  const betsHistory = useMemo(
+    () => sportsRows.map(sportsbookToDisplay).sort((a, b) => b.placedAt - a.placedAt),
+    [sportsRows],
+  );
 
   const wonBets = betsHistory.filter((b) => b.status === "Won");
   const lostBets = betsHistory.filter((b) => b.status === "Lost");

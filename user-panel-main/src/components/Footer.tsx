@@ -13,25 +13,25 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { publicConfigApi } from "@/lib/api";
-import type { PublicGeneral } from "@/lib/api/publicConfig";
+import type { PublicGeneral, FooterLinks } from "@/lib/api/publicConfig";
 
 const BRAND_GREEN = "#22c55e";
 
-const companyLinks = [
+const DEFAULT_COMPANY_LINKS = [
   { name: "About Us", href: "/about" },
   { name: "Careers", href: "/about" },
   { name: "Responsible Gaming", href: "/rules" },
   { name: "Press", href: "/about" },
 ];
 
-const legalLinks = [
+const DEFAULT_LEGAL_LINKS = [
   { name: "Terms & Conditions", href: "/rules" },
   { name: "Privacy Policy", href: "/privacy" },
   { name: "Cookies Policy", href: "/cookies" },
   { name: "Account Rules", href: "/account-rules" },
 ];
 
-const sportsLinks = [
+const DEFAULT_SPORTS_LINKS = [
   { name: "Football", href: "/" },
   { name: "Basketball", href: "/" },
   { name: "Tennis", href: "/" },
@@ -53,28 +53,53 @@ export function Footer() {
   // Admin-managed content (Settings → General). Static copy is the
   // fallback so the footer renders identically until the admin saves.
   const [cfg, setCfg] = useState<PublicGeneral | null>(null);
+  const [footerLinks, setFooterLinks] = useState<FooterLinks | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    publicConfigApi
-      .getPublicGeneral()
-      .then((res) => {
-        if (!cancelled) setCfg(res);
-      })
-      .catch(() => {
-        /* keep static fallbacks */
+    const fetchConfig = () => {
+      Promise.all([
+        publicConfigApi.getPublicGeneral().catch(() => null),
+        publicConfigApi.getFooterLinks().catch(() => null),
+      ]).then(([general, links]) => {
+        if (cancelled) return;
+        if (general) setCfg(general);
+        if (links) setFooterLinks(links);
       });
+    };
+    fetchConfig();
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchConfig(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
-  const footerText = cfg?.footer_text || DEFAULT_FOOTER_TEXT;
+  const footerText =
+    footerLinks?.company_description || cfg?.footer_text || DEFAULT_FOOTER_TEXT;
   const supportEmail = cfg?.support?.email || cfg?.contact?.email || DEFAULT_SUPPORT_EMAIL;
   const telegramHref = cfg?.social?.telegram || DEFAULT_TELEGRAM;
   const telegramHandle = telegramHref.includes("t.me/")
     ? `@${telegramHref.split("t.me/")[1]?.replace(/\/$/, "")}`
     : telegramHref;
+  const liveChatText = footerLinks?.live_chat_text || "Available 24/7";
+  const copyrightText =
+    footerLinks?.copyright_text ||
+    `© ${new Date().getFullYear()} ${cfg?.platform_name || "1birr.bet"}. All rights reserved.`;
+
+  const companyLinks =
+    footerLinks?.company_links && footerLinks.company_links.length > 0
+      ? footerLinks.company_links
+      : DEFAULT_COMPANY_LINKS;
+  const legalLinks =
+    footerLinks?.legal_links && footerLinks.legal_links.length > 0
+      ? footerLinks.legal_links
+      : DEFAULT_LEGAL_LINKS;
+  const sportsLinks =
+    footerLinks?.sports_links && footerLinks.sports_links.length > 0
+      ? footerLinks.sports_links
+      : DEFAULT_SPORTS_LINKS;
 
   const socialLinks = [
     { name: "Telegram", href: telegramHref, Icon: Send },
@@ -126,16 +151,27 @@ export function Footer() {
             {/* Brand + description + trust badges */}
             <div>
               <Link href="/" className="flex items-center gap-2" aria-label="1birr.bet home">
-                <span
-                  className="flex items-center justify-center rounded-lg font-extrabold text-black h-9 w-9 text-base shrink-0"
-                  style={{ background: BRAND_GREEN }}
-                >
-                  1B
-                </span>
-                <span className="font-extrabold text-xl leading-none tracking-tight">
-                  <span className="text-white">1birr</span>
-                  <span style={{ color: BRAND_GREEN }}>.bet</span>
-                </span>
+                {cfg?.logo_url ? (
+                  <img
+                    src={cfg.logo_url}
+                    alt={cfg.platform_name || "1birr.bet"}
+                    className="h-9 w-auto max-w-[140px] object-contain shrink-0"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ) : (
+                  <>
+                    <span
+                      className="flex items-center justify-center rounded-lg font-extrabold text-black h-9 w-9 text-base shrink-0"
+                      style={{ background: BRAND_GREEN }}
+                    >
+                      1B
+                    </span>
+                    <span className="font-extrabold text-xl leading-none tracking-tight">
+                      <span className="text-white">{cfg?.platform_name?.replace(/\.bet$/i, "") || "1birr"}</span>
+                      <span style={{ color: BRAND_GREEN }}>.bet</span>
+                    </span>
+                  </>
+                )}
               </Link>
 
               <p className="mt-4 text-sm text-gray-400 leading-relaxed max-w-xs whitespace-pre-line">
@@ -180,7 +216,7 @@ export function Footer() {
                   style={{ background: "var(--mezzo-bg-tertiary)", border: "1px solid var(--mezzo-border)" }}
                 >
                   <p className="text-[10px] uppercase tracking-wider text-gray-500">Live Chat</p>
-                  <p className="text-sm font-semibold text-blue-400">Available 24/7</p>
+                  <p className="text-sm font-semibold text-blue-400">{liveChatText}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Instant help anytime</p>
                 </div>
 
@@ -282,7 +318,7 @@ export function Footer() {
             className="mt-10 pt-6 border-t text-center text-xs text-gray-500"
             style={{ borderColor: "var(--mezzo-border)" }}
           >
-            <p>© 2026 1birr.bet. All rights reserved.</p>
+            <p>{copyrightText}</p>
           </div>
         </div>
       </div>

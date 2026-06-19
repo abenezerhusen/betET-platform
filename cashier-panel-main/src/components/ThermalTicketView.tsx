@@ -24,8 +24,9 @@
  *       NET PAY = WIN * 0.85
  */
 
+import { useEffect, useState } from "react";
 import type { CashierTicket } from "@/lib/api";
-import { renderCode128Svg } from "@/lib/barcode";
+import { renderBarcode, renderBarcodeImgTag } from "@/lib/barcode";
 
 interface ThermalTicketViewProps {
   ticket: CashierTicket;
@@ -112,6 +113,25 @@ export function ThermalTicketView({
 }: ThermalTicketViewProps) {
   const legs = normaliseSelections(ticket.selections);
   const numBets = legs.length || 1;
+  // The barcode encodes the SHORT ticket code (TKT-XXXXXXXX /
+  // SBK-XXXXXXXX, ~12 chars), NOT the long printed_ticket_code
+  // (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}, ~22-30 chars). A 22+ char Code 128
+  // is too long/dense to print scannably on thermal paper. The cashier
+  // lookup matches ticket_code / coupon_code / printed_ticket_code
+  // interchangeably, so scanning the short code finds the same ticket.
+  const couponForBarcode =
+    ticket.ticket_code ||
+    ticket.coupon_code ||
+    ticket.ticket_id;
+
+  // Generate the barcode PNG after mount so the canvas API is available.
+  // We keep the computed width (mm) so the <img> prints 1:1 at 203 DPI —
+  // a downscaled barcode bitmap drops bars and won't scan.
+  const [barcode, setBarcode] = useState({ dataUrl: "", widthMm: 0 });
+  useEffect(() => {
+    const bc = renderBarcode(couponForBarcode);
+    setBarcode({ dataUrl: bc.dataUrl, widthMm: bc.widthMm });
+  }, [couponForBarcode]);
   const totalOdds =
     legs.length > 0
       ? legs.reduce((acc, leg) => acc * (leg.odds || 1), 1)
@@ -263,16 +283,25 @@ export function ThermalTicketView({
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 
-      {/* Code 128 barcode of the printed ticket id. Scanned by any
-          commodity USB / Bluetooth HID barcode scanner so the cashier
-          can verify, payout or cancel a ticket without re-typing the
-          coupon code. The human-readable value sits under the bars so
-          manual entry remains an option on damaged prints. */}
-      <div
-        aria-hidden
-        style={{ margin: "6px 0 4px", width: "100%", textAlign: "center" }}
-        dangerouslySetInnerHTML={{ __html: renderCode128Svg(coupon) }}
-      />
+      {/* Canvas-based Code 128 barcode. Rendered as a PNG data-URL so
+          bars are pixel-perfect on-screen and on the thermal printout —
+          no SVG anti-aliasing or GDI rounding artifacts. */}
+      {barcode.dataUrl && (
+        <div aria-hidden style={{ margin: "6px 0 4px", textAlign: "center" }}>
+          <img
+            src={barcode.dataUrl}
+            alt={couponForBarcode}
+            decoding="sync"
+            loading="eager"
+            style={{
+              display: "block",
+              margin: "0 auto",
+              width: `${barcode.widthMm.toFixed(1)}mm`,
+              height: "auto",
+            }}
+          />
+        </div>
+      )}
 
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 
@@ -317,6 +346,12 @@ export function buildThermalTicketPrintHtml(args: {
     ticket.printed_ticket_code ||
     ticket.coupon_code ||
     ticket.ticket_code ||
+    ticket.ticket_id;
+  // Short code for the barcode (see note in ThermalTicketView) — keeps
+  // the printed symbol within a scannable width on thermal paper.
+  const barcodeValue =
+    ticket.ticket_code ||
+    ticket.coupon_code ||
     ticket.ticket_id;
   const timestamp = formatTimestamp(
     ticket.sold_at || ticket.placed_at || ticket.issued_at
@@ -372,6 +407,7 @@ export function buildThermalTicketPrintHtml(args: {
   <style>
     @page { size: 80mm auto; margin: 0; }
     * { box-sizing: border-box; }
+    img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body {
       width: 80mm;
       margin: 0;
@@ -433,12 +469,10 @@ export function buildThermalTicketPrintHtml(args: {
 
   <div style="margin:4px 0;">${dashedLine}</div>
 
-  <!-- Code 128 barcode of the coupon — scanned by the cashier panel's
-       Ticket ID inputs (USB scanners type the value + Enter, which the
-       existing Lookup / Check Ticket handlers already process). -->
-  <div style="margin:6px 0 4px;text-align:center;width:100%;">
-    ${renderCode128Svg(coupon)}
-  </div>
+  <!-- PNG barcode — pixel-perfect on thermal printers; no SVG
+       anti-aliasing. Scanned by USB/Bluetooth HID scanners which type
+       the Ticket ID + Enter into the focused Ticket ID input. -->
+  ${renderBarcodeImgTag(barcodeValue)}
 
   <div style="margin:4px 0;">${dashedLine}</div>
 
@@ -448,6 +482,21 @@ export function buildThermalTicketPrintHtml(args: {
     <div style="margin-top:4px;">Under 21s are strictly forbidden!</div>
     <div>Terms and Conditions apply.</div>
   </div>
+
+  <!--
+    Trigger print only after the page (including the inline PNG barcode)
+    has fully loaded. Calling window.print() synchronously from the
+    opener right after document.write() races the image decoder and
+    causes the barcode slot to print blank.
+  -->
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
+      // Close the popup after a short delay so the OS print spooler
+      // has received the job before the window disappears.
+      setTimeout(function () { window.close(); }, 800);
+    });
+  </script>
 </body>
 </html>`;
 }

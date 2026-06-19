@@ -14,6 +14,8 @@ import * as gamesApi from "@/lib/api/games";
 import type { GameSummary } from "@/lib/api/types";
 import { getAccessToken } from "@/lib/auth/session";
 import { useAuth } from "@/context/AuthContext";
+import { publicConfigApi } from "@/lib/api";
+import type { GameThumbnailOverride } from "@/lib/api/publicConfig";
 
 type ViewMode = "expanded" | "compact";
 
@@ -39,7 +41,7 @@ interface LobbyCard {
 }
 
 const GAME_ENGINE_URL =
-  process.env.NEXT_PUBLIC_GAME_ENGINE_URL ?? "http://localhost:3002";
+  process.env.NEXT_PUBLIC_GAME_ENGINE_URL ?? "http://localhost:3003";
 
 function gameThumbnail(g: GameSummary): string {
   const cfg = g.config as { thumbnail_url?: string; banner_url?: string };
@@ -65,6 +67,23 @@ export default function GamesPage() {
   const { ready: authReady, isAuthenticated } = useAuth();
   const [cards, setCards] = useState<LobbyCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [thumbOverrides, setThumbOverrides] = useState<Map<string, GameThumbnailOverride>>(new Map());
+
+  useEffect(() => {
+    const fetchThumbs = () => {
+      publicConfigApi
+        .listGameThumbnails()
+        .then((res) => {
+          const active = (res.items ?? []).filter((t) => t.is_active !== false);
+          setThumbOverrides(new Map(active.map((t) => [t.game_id.toLowerCase(), t])));
+        })
+        .catch(() => { /* use game defaults */ });
+    };
+    fetchThumbs();
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchThumbs(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { document.removeEventListener('visibilitychange', onVisible); };
+  }, []);
   const [loadError, setLoadError] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [activeGame, setActiveGame] = useState<LobbyCard | null>(null);
@@ -196,10 +215,18 @@ export default function GamesPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  // Apply admin thumbnail overrides (from Settings → General → Game Thumbnails)
+  // on top of the default engine/provider thumbnails.
+  const cardsWithOverrides = thumbOverrides.size === 0 ? cards : cards.map((c) => {
+    const override = thumbOverrides.get(c.id.toLowerCase()) ?? thumbOverrides.get(c.internalSlug?.toLowerCase() ?? "");
+    if (override) return { ...c, thumbnail_url: override.thumbnail_url };
+    return c;
+  });
+
   const filteredGames =
     selectedCategory === "all"
-      ? cards
-      : cards.filter((g) => g.type === selectedCategory);
+      ? cardsWithOverrides
+      : cardsWithOverrides.filter((g) => g.type === selectedCategory);
 
   const gridClass =
     viewMode === "expanded"

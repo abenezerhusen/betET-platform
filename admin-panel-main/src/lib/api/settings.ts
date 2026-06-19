@@ -252,3 +252,45 @@ export const listPromotions = () =>
   http.get<{ items: PromotionBanner[] }>('/api/admin/settings/promotions');
 export const savePromotions = (items: PromotionBanner[]) =>
   http.post<{ items: PromotionBanner[] }>('/api/admin/settings/promotions', { items });
+
+/* -------------------------------------------------------------------------- */
+/* Footer Links                                                               */
+/* -------------------------------------------------------------------------- */
+
+export interface FooterLinkItem {
+  name: string;
+  href: string;
+}
+
+export interface FooterLinks {
+  company_links?: FooterLinkItem[];
+  legal_links?: FooterLinkItem[];
+  sports_links?: FooterLinkItem[];
+  copyright_text?: string;
+  company_description?: string;
+  live_chat_text?: string;
+}
+
+export const getFooterLinks = () =>
+  http.get<FooterLinks>('/api/admin/settings/footer-links');
+export const saveFooterLinks = (v: FooterLinks) =>
+  http.put<FooterLinks>('/api/admin/settings/footer-links', v);
+
+/* -------------------------------------------------------------------------- */
+/* Game Thumbnails                                                             */
+/* -------------------------------------------------------------------------- */
+
+export interface GameThumbnail {
+  id?: string;
+  game_id: string;
+  game_name?: string;
+  thumbnail_url: string;
+  promo_url?: string;
+  is_active?: boolean;
+  display_order?: number;
+}
+
+export const listGameThumbnails = () =>
+  http.get<{ items: GameThumbnail[] }>('/api/admin/settings/game-thumbnails');
+export const saveGameThumbnails = (items: GameThumbnail[]) =>
+  http.post<{ items: GameThumbnail[] }>('/api/admin/settings/game-thumbnails', { items });
