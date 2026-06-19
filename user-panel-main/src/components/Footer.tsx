@@ -39,12 +39,11 @@ const DEFAULT_SPORTS_LINKS = [
   { name: "Volleyball", href: "/" },
 ];
 
-const trustBadges = ["Licensed & Regulated", "18+ Only", "SSL Secured"];
-
 const DEFAULT_FOOTER_TEXT =
   "Ethiopia's modern sports betting platform. Bet on football, basketball, and more. Fast payouts, secure accounts.";
 const DEFAULT_SUPPORT_EMAIL = "support@1birr.bet";
 const DEFAULT_TELEGRAM = "https://t.me/1birr_support";
+const DEFAULT_18_PLUS_TEXT = "18+ Only";
 
 export function Footer() {
   // Always start collapsed on open/refresh so the footer does not cover
@@ -78,8 +77,9 @@ export function Footer() {
 
   const footerText =
     footerLinks?.company_description || cfg?.footer_text || DEFAULT_FOOTER_TEXT;
-  const supportEmail = cfg?.support?.email || cfg?.contact?.email || DEFAULT_SUPPORT_EMAIL;
-  const telegramHref = cfg?.social?.telegram || DEFAULT_TELEGRAM;
+  const supportEmail =
+    footerLinks?.support_email || cfg?.support?.email || cfg?.contact?.email || DEFAULT_SUPPORT_EMAIL;
+  const telegramHref = footerLinks?.telegram_link || cfg?.social?.telegram || DEFAULT_TELEGRAM;
   const telegramHandle = telegramHref.includes("t.me/")
     ? `@${telegramHref.split("t.me/")[1]?.replace(/\/$/, "")}`
     : telegramHref;
@@ -101,14 +101,36 @@ export function Footer() {
       ? footerLinks.sports_links
       : DEFAULT_SPORTS_LINKS;
 
-  const socialLinks = [
-    { name: "Telegram", href: telegramHref, Icon: Send },
-    { name: "Facebook", href: cfg?.social?.facebook || "#", Icon: Facebook },
-    { name: "Instagram", href: cfg?.social?.instagram || "#", Icon: Instagram },
-    ...(cfg?.social?.twitter
-      ? [{ name: "Twitter", href: cfg.social.twitter, Icon: Twitter }]
-      : [{ name: "YouTube", href: "#", Icon: Youtube }]),
-  ];
+  const socialLinks =
+    footerLinks?.social_links && footerLinks.social_links.length > 0
+      ? footerLinks.social_links.map((item) => ({
+          name: item.name,
+          href: item.href,
+          Icon:
+            item.name.toLowerCase().includes("telegram")
+              ? Send
+              : item.name.toLowerCase().includes("facebook")
+                ? Facebook
+                : item.name.toLowerCase().includes("instagram")
+                  ? Instagram
+                  : item.name.toLowerCase().includes("twitter") || item.name.toLowerCase().includes("x")
+                    ? Twitter
+                    : Youtube,
+        }))
+      : [
+          { name: "Telegram", href: telegramHref, Icon: Send },
+          { name: "Facebook", href: cfg?.social?.facebook || "#", Icon: Facebook },
+          { name: "Instagram", href: cfg?.social?.instagram || "#", Icon: Instagram },
+          ...(cfg?.social?.twitter
+            ? [{ name: "Twitter", href: cfg.social.twitter, Icon: Twitter }]
+            : [{ name: "YouTube", href: "#", Icon: Youtube }]),
+        ];
+
+  const show18Plus = footerLinks?.show_18_plus_notice !== false;
+  const ageNoticeText = footerLinks?.notice_18_plus_text || DEFAULT_18_PLUS_TEXT;
+  const trustBadges = show18Plus
+    ? ["Licensed & Regulated", ageNoticeText, "SSL Secured"]
+    : ["Licensed & Regulated", "SSL Secured"];
 
   const toggleFooter = () => {
     setIsOpen(!isOpen);
@@ -151,9 +173,9 @@ export function Footer() {
             {/* Brand + description + trust badges */}
             <div>
               <Link href="/" className="flex items-center gap-2" aria-label="1birr.bet home">
-                {cfg?.logo_url ? (
+                {(cfg?.footer_logo_url || cfg?.logo_url) ? (
                   <img
-                    src={cfg.logo_url}
+                    src={cfg?.footer_logo_url || cfg?.logo_url || ""}
                     alt={cfg.platform_name || "1birr.bet"}
                     className="h-9 w-auto max-w-[140px] object-contain shrink-0"
                     onError={(e) => { e.currentTarget.style.display = "none"; }}

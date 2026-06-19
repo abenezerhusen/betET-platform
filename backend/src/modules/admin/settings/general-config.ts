@@ -38,6 +38,12 @@ export interface OperationHours {
 export interface GeneralConfig {
   platform_name: string;
   logo_url: string;
+  header_logo_url: string;
+  footer_logo_url: string;
+  logo_width: number;
+  logo_height: number;
+  footer_logo_width: number;
+  footer_logo_height: number;
   currency: string;
   country: string;
   country_code: string;
@@ -61,6 +67,14 @@ export interface GeneralConfig {
   terms_and_conditions: string;
   /** Short footer blurb/description rendered in the user-panel footer. */
   footer_text: string;
+  static_banner_image_url: string;
+  static_banner_mobile_image_url: string;
+  static_banner_title: string;
+  static_banner_subtitle: string;
+  static_banner_width: number;
+  static_banner_height: number;
+  slider_banner_width: number;
+  slider_banner_height: number;
   /** Set of event codes for which SMS is allowed. Empty set means no
    *  per-event gating (all events allowed when SMS provider is enabled). */
   sms_events: Set<string>;
@@ -81,6 +95,12 @@ export interface GeneralConfig {
 const DEFAULTS: GeneralConfig = {
   platform_name: '',
   logo_url: '',
+  header_logo_url: '',
+  footer_logo_url: '',
+  logo_width: 0,
+  logo_height: 0,
+  footer_logo_width: 0,
+  footer_logo_height: 0,
   currency: 'ETB',
   country: '',
   country_code: '',
@@ -102,6 +122,14 @@ const DEFAULTS: GeneralConfig = {
   about_us: '',
   terms_and_conditions: '',
   footer_text: '',
+  static_banner_image_url: '',
+  static_banner_mobile_image_url: '',
+  static_banner_title: '',
+  static_banner_subtitle: '',
+  static_banner_width: 0,
+  static_banner_height: 0,
+  slider_banner_width: 0,
+  slider_banner_height: 0,
   sms_events: new Set<string>(),
   sms_max_win_limit: 0,
   cashier_max_daily_cancel_volume: 0,
@@ -189,6 +217,12 @@ export async function loadGeneralConfig(
   return {
     platform_name: asString(raw.platform_name, DEFAULTS.platform_name),
     logo_url: asString(raw.logo_url, DEFAULTS.logo_url),
+    header_logo_url: asString(raw.header_logo_url, DEFAULTS.header_logo_url),
+    footer_logo_url: asString(raw.footer_logo_url, DEFAULTS.footer_logo_url),
+    logo_width: asNumber(raw.logo_width, DEFAULTS.logo_width),
+    logo_height: asNumber(raw.logo_height, DEFAULTS.logo_height),
+    footer_logo_width: asNumber(raw.footer_logo_width, DEFAULTS.footer_logo_width),
+    footer_logo_height: asNumber(raw.footer_logo_height, DEFAULTS.footer_logo_height),
     currency: asString(raw.currency, DEFAULTS.currency),
     country: asString(raw.country, DEFAULTS.country),
     country_code: asString(raw.country_code, DEFAULTS.country_code),
@@ -213,6 +247,14 @@ export async function loadGeneralConfig(
       DEFAULTS.terms_and_conditions
     ),
     footer_text: asString(raw.footer_text, DEFAULTS.footer_text),
+    static_banner_image_url: asString(raw.static_banner_image_url, DEFAULTS.static_banner_image_url),
+    static_banner_mobile_image_url: asString(raw.static_banner_mobile_image_url, DEFAULTS.static_banner_mobile_image_url),
+    static_banner_title: asString(raw.static_banner_title, DEFAULTS.static_banner_title),
+    static_banner_subtitle: asString(raw.static_banner_subtitle, DEFAULTS.static_banner_subtitle),
+    static_banner_width: asNumber(raw.static_banner_width, DEFAULTS.static_banner_width),
+    static_banner_height: asNumber(raw.static_banner_height, DEFAULTS.static_banner_height),
+    slider_banner_width: asNumber(raw.slider_banner_width, DEFAULTS.slider_banner_width),
+    slider_banner_height: asNumber(raw.slider_banner_height, DEFAULTS.slider_banner_height),
     sms_events: smsEvents,
     sms_max_win_limit: asNumber(raw.sms_max_win_limit, DEFAULTS.sms_max_win_limit),
     cashier_max_daily_cancel_volume: asNumber(

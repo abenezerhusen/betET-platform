@@ -83,6 +83,28 @@ const DAYS: Array<{ key: keyof settingsApi.OperationHours; label: string }> = [
   { key: 'sun', label: 'Sunday' },
 ];
 
+const DEFAULT_NAVBAR_ITEMS: settingsApi.NavbarItem[] = [
+  { id: 'nav-home', label: 'Home', href: '/', bucket: 'main', is_active: true, display_order: 0 },
+  { id: 'nav-games', label: 'Games', href: '/games', bucket: 'main', is_active: true, display_order: 1 },
+  { id: 'nav-aviator', label: 'Aviator', href: '/games?play=aviator', bucket: 'main', is_active: true, display_order: 2 },
+  { id: 'nav-jetx', label: 'JetX', href: '/games?play=jetx', bucket: 'main', is_active: true, display_order: 3 },
+  { id: 'nav-fast-keno', label: 'Fast Keno', href: '/games?play=fast-keno', bucket: 'main', is_active: true, display_order: 4 },
+  { id: 'nav-promotions', label: 'Promotion', href: '/promotions', bucket: 'main', is_active: true, display_order: 5 },
+  { id: 'nav-more', label: 'More', href: '/more', bucket: 'more', is_active: true, display_order: 6 },
+];
+
+function normalizeNavbarRows(rows: settingsApi.NavbarItem[]): settingsApi.NavbarItem[] {
+  return rows.map((item, idx) => ({
+    ...item,
+    id: item.id || `n-${idx}`,
+    label: String(item.label ?? '').trim(),
+    href: String(item.href ?? '').trim(),
+    bucket: item.bucket === 'more' ? 'more' : 'main',
+    is_active: item.is_active !== false,
+    display_order: idx,
+  }));
+}
+
 export function GeneralConfig() {
   const isAuth = useAuthStore((s) => s.isAuthenticated);
   const [activeTab, setActiveTab] = useState('company');
@@ -94,6 +116,10 @@ export function GeneralConfig() {
   const [footerLinks, setFooterLinks] = useState<settingsApi.FooterLinks>({
     company_description: "Ethiopia's modern sports betting platform. Bet on football, basketball, and more. Fast payouts, secure accounts.",
     live_chat_text: 'Available 24/7',
+    support_email: 'support@1birr.bet',
+    telegram_link: 'https://t.me/1birr_support',
+    show_18_plus_notice: true,
+    notice_18_plus_text: '18+ Only',
     copyright_text: '',
     company_links: [
       { name: 'About Us', href: '/about' },
@@ -113,6 +139,12 @@ export function GeneralConfig() {
       { name: 'Tennis', href: '/' },
       { name: 'Cricket', href: '/' },
       { name: 'Volleyball', href: '/' },
+    ],
+    social_links: [
+      { name: 'Telegram', href: 'https://t.me/1birr_support' },
+      { name: 'Facebook', href: '#' },
+      { name: 'Instagram', href: '#' },
+      { name: 'YouTube', href: '#' },
     ],
   });
   const [methods, setMethods] = useState<paymentMethodsApi.PaymentMethodRow[]>([]);
@@ -136,18 +168,25 @@ export function GeneralConfig() {
   const [newPromoBonus, setNewPromoBonus] = useState('');
   const [newPromoDesc, setNewPromoDesc] = useState('');
   const [newPromoCta, setNewPromoCta] = useState('');
+  const [newPromoWidth, setNewPromoWidth] = useState('');
+  const [newPromoHeight, setNewPromoHeight] = useState('');
 
   /* Game thumbnails entry form */
   const [newThumbGameId, setNewThumbGameId] = useState('');
   const [newThumbGameName, setNewThumbGameName] = useState('');
   const [newThumbUrl, setNewThumbUrl] = useState('');
   const [newThumbPromoUrl, setNewThumbPromoUrl] = useState('');
+  const [navbarItems, setNavbarItems] = useState<settingsApi.NavbarItem[]>([]);
+  const [newNavbarLabel, setNewNavbarLabel] = useState('');
+  const [newNavbarHref, setNewNavbarHref] = useState('');
+  const [newNavbarBucket, setNewNavbarBucket] = useState<'main' | 'more'>('main');
+  const [editingNavbarId, setEditingNavbarId] = useState<string | null>(null);
 
   const load = async () => {
     if (!isAuth) return;
     setLoading(true);
     try {
-      const [generalRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, methodsRes] =
+      const [generalRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, navbarRes, methodsRes] =
         await Promise.all([
           settingsApi.getGeneralConfig().catch(() => ({} as settingsApi.GeneralConfig)),
           settingsApi.listTopBets().catch(() => ({ items: [] })),
@@ -155,7 +194,8 @@ export function GeneralConfig() {
           settingsApi.listPromotions().catch(() => ({ items: [] })),
           settingsApi.getFooterLinks().catch(() => null),
           settingsApi.listGameThumbnails().catch(() => ({ items: [] })),
-          paymentMethodsApi.listPaymentMethods(),
+          settingsApi.listNavbarItems().catch(() => ({ items: [] })),
+          paymentMethodsApi.listPaymentMethods().catch(() => ({ items: [] })),
         ]);
       setGeneral({ ...defaultGeneral, ...(generalRes ?? {}) });
       setTopBets((betsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `b-${i}` })));
@@ -170,6 +210,8 @@ export function GeneralConfig() {
       setGameThumbnails(
         (thumbsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `t-${i}` }))
       );
+      const loadedNavbar = normalizeNavbarRows(navbarRes.items ?? []);
+      setNavbarItems(loadedNavbar.length > 0 ? loadedNavbar : DEFAULT_NAVBAR_ITEMS);
       setMethods(methodsRes.items ?? []);
     } catch (err) {
       toast(`Failed to load settings: ${(err as Error)?.message ?? err}`, 'error');
@@ -247,6 +289,23 @@ export function GeneralConfig() {
     }
   };
 
+  const persistNavbarItems = async (rows: settingsApi.NavbarItem[]) => {
+    const previous = navbarItems;
+    const normalized = normalizeNavbarRows(rows);
+    setNavbarItems(normalized);
+    try {
+      const saved = await settingsApi.saveNavbarItems(normalized);
+      setNavbarItems((saved.items ?? normalized).map((item, idx) => ({
+        ...item,
+        id: item.id || `n-${idx}`,
+      })));
+      toast('Navbar settings saved.');
+    } catch (err) {
+      setNavbarItems(previous);
+      toast(`Failed to save navbar settings: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
   const toggleSmsEvent = (code: string) => {
     setGeneral((p) => {
       const set = new Set((p.sms_events ?? []).map((s) => s.toLowerCase()));
@@ -270,10 +329,12 @@ export function GeneralConfig() {
 
   const tabs = [
     { id: 'company', label: 'Company Info' },
+    { id: 'header-banner', label: 'Header & Banner Settings' },
+    { id: 'footer-settings', label: 'Footer Settings' },
+    { id: 'navbar-settings', label: 'Navbar Settings' },
     { id: 'game-thumbnails', label: 'Game Thumbnails' },
     { id: 'top-bets', label: 'Top Bets' },
     { id: 'top-matches', label: 'Top Matches' },
-    { id: 'promotions', label: 'Promotions' },
     { id: 'sms', label: 'SMS Config' },
     { id: 'cashier', label: 'Cashier Config' },
     { id: 'hours', label: 'Operation Hours' },
@@ -405,77 +466,254 @@ export function GeneralConfig() {
             </div>
           </form>
 
-          {/* ---- Footer Links -------------------------------------------- */}
-          <div className="mt-8 border-t pt-6 space-y-5">
-            <h3 className="font-semibold text-gray-800">Footer Content Management</h3>
-            <p className="text-xs text-gray-500">
-              Control everything shown in the user-panel footer. Saved immediately to
-              <code> /api/admin/settings/footer-links</code>. Changes appear on the user panel when
-              the browser tab is re-focused.
-            </p>
+        </div>
+      )}
 
-            {/* Texts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <label className="space-y-1">
-                <span className="text-gray-700 font-medium">Company Description</span>
-                <textarea
-                  rows={2}
-                  value={footerLinks.company_description ?? ''}
-                  onChange={(e) => setFooterLinks((p) => ({ ...p, company_description: e.target.value }))}
-                  className="w-full rounded-md border-gray-300"
-                  placeholder="Short tagline shown in the footer"
+      {activeTab === 'footer-settings' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-5">
+          <h3 className="text-base font-semibold text-gray-800">Footer Settings</h3>
+          <p className="text-xs text-gray-500">
+            These fields are based on the current footer structure used on the user panel.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <label className="space-y-1">
+              <span className="text-gray-700 font-medium">Company Description</span>
+              <textarea
+                rows={2}
+                value={footerLinks.company_description ?? ''}
+                onChange={(e) => setFooterLinks((p) => ({ ...p, company_description: e.target.value }))}
+                className="w-full rounded-md border-gray-300"
+              />
+            </label>
+            <div className="space-y-3">
+              <label className="block space-y-1">
+                <span className="text-gray-700 font-medium">Email Support</span>
+                <input
+                  type="email"
+                  value={footerLinks.support_email ?? ''}
+                  onChange={(e) => setFooterLinks((p) => ({ ...p, support_email: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                  placeholder="support@1birr.bet"
                 />
               </label>
-              <div className="space-y-3">
-                <label className="block space-y-1">
-                  <span className="text-gray-700 font-medium">Live Chat Text</span>
-                  <input
-                    type="text"
-                    value={footerLinks.live_chat_text ?? ''}
-                    onChange={(e) => setFooterLinks((p) => ({ ...p, live_chat_text: e.target.value }))}
-                    className="w-full rounded-md border-gray-300"
-                    placeholder="Available 24/7"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-gray-700 font-medium">Copyright Text</span>
-                  <input
-                    type="text"
-                    value={footerLinks.copyright_text ?? ''}
-                    onChange={(e) => setFooterLinks((p) => ({ ...p, copyright_text: e.target.value }))}
-                    className="w-full rounded-md border-gray-300"
-                    placeholder={`© ${new Date().getFullYear()} 1birr.bet. All rights reserved.`}
-                  />
-                </label>
-              </div>
-            </div>
-
-            {/* Link groups */}
-            {(
-              [
-                { key: 'company_links', label: 'Company Links' },
-                { key: 'legal_links', label: 'Legal Links' },
-                { key: 'sports_links', label: 'Sports Links' },
-              ] as const
-            ).map(({ key, label }) => (
-              <FooterLinkEditor
-                key={key}
-                label={label}
-                items={(footerLinks[key] ?? []) as settingsApi.FooterLinkItem[]}
-                onChange={(items) => setFooterLinks((p) => ({ ...p, [key]: items }))}
-              />
-            ))}
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => void persistFooterLinks(footerLinks)}
-                className="inline-flex items-center px-4 py-2 rounded-md bg-green-600 text-white"
-              >
-                <Save className="h-4 w-4 mr-2" /> Save Footer Content
-              </button>
+              <label className="block space-y-1">
+                <span className="text-gray-700 font-medium">Telegram Support</span>
+                <input
+                  type="text"
+                  value={footerLinks.telegram_link ?? ''}
+                  onChange={(e) => setFooterLinks((p) => ({ ...p, telegram_link: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                  placeholder="https://t.me/1birr_support"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-gray-700 font-medium">Live Chat Text</span>
+                <input
+                  type="text"
+                  value={footerLinks.live_chat_text ?? ''}
+                  onChange={(e) => setFooterLinks((p) => ({ ...p, live_chat_text: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-gray-700 font-medium">Copyright Text</span>
+                <input
+                  type="text"
+                  value={footerLinks.copyright_text ?? ''}
+                  onChange={(e) => setFooterLinks((p) => ({ ...p, copyright_text: e.target.value }))}
+                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                />
+              </label>
             </div>
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <label className="block space-y-1">
+              <span className="text-gray-700 font-medium">18+ Notice Text</span>
+              <input
+                type="text"
+                value={footerLinks.notice_18_plus_text ?? ''}
+                onChange={(e) => setFooterLinks((p) => ({ ...p, notice_18_plus_text: e.target.value }))}
+                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                placeholder="18+ Only"
+              />
+            </label>
+            <ToggleField
+              label="Show 18+ Notice Badge"
+              value={footerLinks.show_18_plus_notice !== false}
+              onChange={(v) => setFooterLinks((p) => ({ ...p, show_18_plus_notice: v }))}
+            />
+          </div>
+          <FooterLinkEditor
+            label="Follow Us Links (Social Media Links)"
+            items={(footerLinks.social_links ?? []) as settingsApi.FooterLinkItem[]}
+            onChange={(items) => setFooterLinks((p) => ({ ...p, social_links: items }))}
+          />
+          {(
+            [
+              { key: 'company_links', label: 'Company Links' },
+              { key: 'legal_links', label: 'Legal Links' },
+              { key: 'sports_links', label: 'Sports Links' },
+            ] as const
+          ).map(({ key, label }) => (
+            <FooterLinkEditor
+              key={key}
+              label={label}
+              items={(footerLinks[key] ?? []) as settingsApi.FooterLinkItem[]}
+              onChange={(items) => setFooterLinks((p) => ({ ...p, [key]: items }))}
+            />
+          ))}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => void persistFooterLinks(footerLinks)}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-green-600 text-white"
+            >
+              <Save className="h-4 w-4 mr-2" /> Save Footer Settings
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'navbar-settings' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <h3 className="text-base font-semibold text-gray-800">Navbar Settings</h3>
+          <p className="text-xs text-gray-500">
+            Manage main and more navigation items dynamically without changing the existing navbar layout.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+            <input value={newNavbarLabel} onChange={(e) => setNewNavbarLabel(e.target.value)} placeholder="Menu name" className="rounded-md border-gray-300" />
+            <input value={newNavbarHref} onChange={(e) => setNewNavbarHref(e.target.value)} placeholder="Link (e.g. /games)" className="rounded-md border-gray-300" />
+            <select value={newNavbarBucket} onChange={(e) => setNewNavbarBucket(e.target.value as 'main' | 'more')} className="rounded-md border-gray-300">
+              <option value="main">Main Nav</option>
+              <option value="more">More Menu</option>
+            </select>
+            <button
+              onClick={() => {
+                if (!newNavbarLabel.trim() || !newNavbarHref.trim()) return;
+                if (editingNavbarId) {
+                  void persistNavbarItems(
+                    navbarItems.map((item) =>
+                      item.id === editingNavbarId
+                        ? {
+                            ...item,
+                            label: newNavbarLabel.trim(),
+                            href: newNavbarHref.trim(),
+                            bucket: newNavbarBucket,
+                          }
+                        : item
+                    )
+                  );
+                } else {
+                  void persistNavbarItems([
+                    ...navbarItems,
+                    {
+                      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      label: newNavbarLabel.trim(),
+                      href: newNavbarHref.trim(),
+                      bucket: newNavbarBucket,
+                      is_active: true,
+                      display_order: navbarItems.length,
+                    },
+                  ]);
+                }
+                setEditingNavbarId(null);
+                setNewNavbarLabel('');
+                setNewNavbarHref('');
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white"
+            >
+              <Plus className="h-4 w-4 mr-1" /> {editingNavbarId ? 'Update' : 'Add'}
+            </button>
+            {editingNavbarId && (
+              <button
+                type="button"
+                className="inline-flex items-center justify-center px-4 py-2 rounded-md border border-gray-300 text-gray-700"
+                onClick={() => {
+                  setEditingNavbarId(null);
+                  setNewNavbarLabel('');
+                  setNewNavbarHref('');
+                  setNewNavbarBucket('main');
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+          <DataTable
+            columns={[
+              { header: 'Name', accessor: 'label' as const },
+              { header: 'Link', accessor: 'href' as const },
+              { header: 'Bucket', accessor: 'bucket' as const },
+              {
+                header: 'Enabled',
+                accessor: 'is_active' as const,
+                render: (value: boolean, row: settingsApi.NavbarItem) => (
+                  <input
+                    type="checkbox"
+                    checked={Boolean(value)}
+                    onChange={(e) => void persistNavbarItems(navbarItems.map((i) => i.id === row.id ? { ...i, is_active: e.target.checked } : i))}
+                  />
+                ),
+              },
+              {
+                header: 'Order',
+                accessor: 'display_order' as const,
+                render: (_v, row: settingsApi.NavbarItem) => (
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs px-2 py-1 border rounded"
+                      onClick={() => {
+                        const idx = navbarItems.findIndex((x) => x.id === row.id);
+                        if (idx <= 0) return;
+                        const copy = [...navbarItems];
+                        [copy[idx - 1], copy[idx]] = [copy[idx], copy[idx - 1]];
+                        void persistNavbarItems(copy.map((x, i) => ({ ...x, display_order: i })));
+                      }}
+                    >
+                      Up
+                    </button>
+                    <button
+                      className="text-xs px-2 py-1 border rounded"
+                      onClick={() => {
+                        const idx = navbarItems.findIndex((x) => x.id === row.id);
+                        if (idx < 0 || idx >= navbarItems.length - 1) return;
+                        const copy = [...navbarItems];
+                        [copy[idx], copy[idx + 1]] = [copy[idx + 1], copy[idx]];
+                        void persistNavbarItems(copy.map((x, i) => ({ ...x, display_order: i })));
+                      }}
+                    >
+                      Down
+                    </button>
+                  </div>
+                ),
+              },
+              {
+                header: 'Action',
+                accessor: 'id' as const,
+                render: (value: string) => (
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="text-blue-600 text-xs px-2 py-1 border rounded"
+                      onClick={() => {
+                        const target = navbarItems.find((n) => n.id === value);
+                        if (!target) return;
+                        setEditingNavbarId(target.id || null);
+                        setNewNavbarLabel(target.label || '');
+                        setNewNavbarHref(target.href || '');
+                        setNewNavbarBucket(target.bucket === 'more' ? 'more' : 'main');
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button className="text-red-600" onClick={() => void persistNavbarItems(navbarItems.filter((n) => n.id !== value))}>
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+            data={navbarItems}
+          />
         </div>
       )}
 
@@ -596,140 +834,7 @@ export function GeneralConfig() {
         </div>
       )}
 
-      {/* Footer Links tab removed — use Company Info footer_text field instead */}
-      {activeTab === 'footer-links-removed' && (
-        <div className="bg-white rounded-lg shadow p-6 space-y-6">
-          <p className="text-xs text-gray-500">
-            Manage the link columns shown in the user panel footer. Changes are saved to{' '}
-            <code>PUT /api/admin/settings/footer-links</code> and rendered live on the user panel.
-            The <em>Footer Content</em> text (company description) is set in Company Info above.
-          </p>
-
-          {/* Copyright + description */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <label className="space-y-1 text-sm">
-              <span className="text-gray-700">Copyright Text</span>
-              <input
-                value={footerLinks.copyright_text ?? ''}
-                onChange={(e) => setFooterLinks((p) => ({ ...p, copyright_text: e.target.value }))}
-                placeholder="© 2026 1birr.bet. All rights reserved."
-                className="w-full rounded-md border-gray-300"
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-gray-700">Live Chat Info</span>
-              <input
-                value={footerLinks.live_chat_text ?? ''}
-                onChange={(e) => setFooterLinks((p) => ({ ...p, live_chat_text: e.target.value }))}
-                placeholder="Available 24/7"
-                className="w-full rounded-md border-gray-300"
-              />
-            </label>
-            <label className="md:col-span-2 space-y-1 text-sm">
-              <span className="text-gray-700">Company Description (footer)</span>
-              <textarea
-                rows={3}
-                value={footerLinks.company_description ?? ''}
-                onChange={(e) => setFooterLinks((p) => ({ ...p, company_description: e.target.value }))}
-                placeholder="Ethiopia's modern sports betting platform..."
-                className="w-full rounded-md border-gray-300"
-              />
-            </label>
-          </div>
-          <div className="flex justify-end">
-            <button
-              onClick={() => void persistFooterLinks(footerLinks)}
-              disabled={saving}
-              className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
-            >
-              <Save className="h-4 w-4 mr-2" /> Save Text
-            </button>
-          </div>
-
-          {/* Add link */}
-          <div className="border-t pt-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Manage Footer Links</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <select
-                value={newFooterLinkSection}
-                onChange={(e) => setNewFooterLinkSection(e.target.value as typeof newFooterLinkSection)}
-                className="rounded-md border-gray-300"
-              >
-                <option value="company_links">Company Links</option>
-                <option value="legal_links">Legal Links</option>
-                <option value="sports_links">Sports Links</option>
-              </select>
-              <input
-                value={newFooterLinkName}
-                onChange={(e) => setNewFooterLinkName(e.target.value)}
-                placeholder="Link name (e.g. About Us)"
-                className="rounded-md border-gray-300"
-              />
-              <input
-                value={newFooterLinkHref}
-                onChange={(e) => setNewFooterLinkHref(e.target.value)}
-                placeholder="URL (e.g. /about)"
-                className="rounded-md border-gray-300"
-              />
-              <button
-                onClick={() => {
-                  if (!newFooterLinkName.trim() || !newFooterLinkHref.trim()) return;
-                  const newLink = { name: newFooterLinkName.trim(), href: newFooterLinkHref.trim() };
-                  const updated = {
-                    ...footerLinks,
-                    [newFooterLinkSection]: [
-                      ...(footerLinks[newFooterLinkSection] ?? []),
-                      newLink,
-                    ],
-                  };
-                  void persistFooterLinks(updated);
-                  setNewFooterLinkName('');
-                  setNewFooterLinkHref('');
-                }}
-                className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white"
-              >
-                <Plus className="h-4 w-4 mr-2" /> Add Link
-              </button>
-            </div>
-          </div>
-
-          {/* Current links per section */}
-          {(['company_links', 'legal_links', 'sports_links'] as const).map((section) => {
-            const items = footerLinks[section] ?? [];
-            const label = { company_links: 'Company Links', legal_links: 'Legal Links', sports_links: 'Sports Links' }[section];
-            return (
-              <div key={section}>
-                <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">{label}</h4>
-                {items.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic">No links configured — using site defaults.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {items.map((link, idx) => (
-                      <div key={idx} className="flex items-center gap-3 text-sm border rounded-md px-3 py-1.5">
-                        <span className="h-3.5 w-3.5 text-gray-400 shrink-0">🔗</span>
-                        <span className="flex-1 font-medium">{link.name}</span>
-                        <span className="text-gray-500 text-xs">{link.href}</span>
-                        <button
-                          className="text-red-500"
-                          onClick={() => {
-                            const updated = {
-                              ...footerLinks,
-                              [section]: items.filter((_, i) => i !== idx),
-                            };
-                            void persistFooterLinks(updated);
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      
 
       {/* ------------------------------------------------------------------ */
         /* Game Thumbnails                                                    */
@@ -975,8 +1080,125 @@ export function GeneralConfig() {
       {/* ------------------------------------------------------------------ */
         /* Promotions                                                         */
         /* ------------------------------------------------------------------ */}
-      {activeTab === 'promotions' && (
+      {activeTab === 'header-banner' && (
         <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <h3 className="text-base font-semibold text-gray-800">Header & Banner Settings</h3>
+          <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            <strong>Upload Guidance:</strong> use optimized images to keep loading fast and storage small.
+            Recommended dimensions, max size, and formats are shown under each upload field.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ImageUploadField
+              label="Header Logo"
+              value={general.header_logo_url ?? general.logo_url ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, header_logo_url: v }))}
+              placeholder="Upload header logo"
+              recommendedWidth={220}
+              recommendedHeight={64}
+              maxFileSizeMb={2}
+              supportedFormats="PNG, SVG, WEBP, JPG"
+            />
+            <ImageUploadField
+              label="Footer Logo"
+              value={general.footer_logo_url ?? general.logo_url ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, footer_logo_url: v }))}
+              placeholder="Upload footer logo"
+              recommendedWidth={220}
+              recommendedHeight={64}
+              maxFileSizeMb={2}
+              supportedFormats="PNG, SVG, WEBP, JPG"
+            />
+            <Field
+              type="number"
+              label="Header Logo Width"
+              value={String(general.logo_width ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, logo_width: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Header Logo Height"
+              value={String(general.logo_height ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, logo_height: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Footer Logo Width"
+              value={String(general.footer_logo_width ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, footer_logo_width: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Footer Logo Height"
+              value={String(general.footer_logo_height ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, footer_logo_height: Number(v || 0) }))}
+            />
+          </div>
+          <div className="border-t pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ImageUploadField
+              label="Static Banner Image"
+              value={general.static_banner_image_url ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_image_url: v }))}
+              placeholder="Upload static fallback banner"
+              recommendedWidth={1440}
+              recommendedHeight={360}
+              maxFileSizeMb={3}
+              supportedFormats="WEBP, JPG, PNG"
+            />
+            <ImageUploadField
+              label="Static Banner Mobile Image"
+              value={general.static_banner_mobile_image_url ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_mobile_image_url: v }))}
+              placeholder="Optional mobile static banner"
+              recommendedWidth={900}
+              recommendedHeight={360}
+              maxFileSizeMb={3}
+              supportedFormats="WEBP, JPG, PNG"
+            />
+            <Field
+              label="Static Banner Title"
+              value={general.static_banner_title ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_title: v }))}
+            />
+            <Field
+              label="Static Banner Subtitle"
+              value={general.static_banner_subtitle ?? ''}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_subtitle: v }))}
+            />
+            <Field
+              type="number"
+              label="Static Banner Width"
+              value={String(general.static_banner_width ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_width: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Static Banner Height"
+              value={String(general.static_banner_height ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, static_banner_height: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Slider Banner Width"
+              value={String(general.slider_banner_width ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, slider_banner_width: Number(v || 0) }))}
+            />
+            <Field
+              type="number"
+              label="Slider Banner Height"
+              value={String(general.slider_banner_height ?? 0)}
+              onChange={(v) => setGeneral((p) => ({ ...p, slider_banner_height: Number(v || 0) }))}
+            />
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={(e) => void saveGeneral(e as unknown as React.FormEvent)}
+              disabled={saving}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+            >
+              <Save className="h-4 w-4 mr-2" />
+              {saving ? 'Saving...' : 'Save Header & Banner Settings'}
+            </button>
+          </div>
           <p className="text-xs text-gray-500">
             Saved to <code>POST /api/admin/settings/promotions</code>. These banners feed the
             homepage banner slider and the promotions page on the user panel.
@@ -990,9 +1212,17 @@ export function GeneralConfig() {
             value={newPromoImage}
             onChange={setNewPromoImage}
             placeholder="Upload a local image or paste a URL"
+            recommendedWidth={1440}
+            recommendedHeight={360}
+            maxFileSizeMb={3}
+            supportedFormats="WEBP, JPG, PNG"
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input value={newPromoCta} onChange={(e) => setNewPromoCta(e.target.value)} placeholder="CTA URL (optional, e.g. /games)" className="rounded-md border-gray-300" />
+            <div className="grid grid-cols-2 gap-2">
+              <input value={newPromoWidth} onChange={(e) => setNewPromoWidth(e.target.value)} placeholder="Width" className="rounded-md border-gray-300" />
+              <input value={newPromoHeight} onChange={(e) => setNewPromoHeight(e.target.value)} placeholder="Height" className="rounded-md border-gray-300" />
+            </div>
           </div>
           <label className="block">
             <span className="text-xs text-gray-600">Description (optional)</span>
@@ -1016,6 +1246,8 @@ export function GeneralConfig() {
                   bonus_type: newPromoBonus.trim() || undefined,
                   description: newPromoDesc.trim() || undefined,
                   cta_url: newPromoCta.trim() || undefined,
+                  image_width: Number(newPromoWidth || 0) || undefined,
+                  image_height: Number(newPromoHeight || 0) || undefined,
                   is_active: true,
                   display_order: promotions.length,
                 },
@@ -1025,6 +1257,8 @@ export function GeneralConfig() {
               setNewPromoImage('');
               setNewPromoDesc('');
               setNewPromoCta('');
+              setNewPromoWidth('');
+              setNewPromoHeight('');
             }}
             className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white"
           >
@@ -1362,28 +1596,30 @@ function FooterLinkEditor({
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Link name"
-          className="flex-1 min-w-0 rounded-md border-gray-300 text-xs"
-        />
-        <input
-          type="text"
-          value={newHref}
-          onChange={(e) => setNewHref(e.target.value)}
-          placeholder="/page or https://..."
-          className="flex-1 min-w-0 rounded-md border-gray-300 text-xs"
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-        />
+      <div className="space-y-1.5">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Link name (e.g. About Us)"
+            className="flex-1 min-w-0 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <input
+            type="text"
+            value={newHref}
+            onChange={(e) => setNewHref(e.target.value)}
+            placeholder="/page or https://..."
+            className="flex-1 min-w-0 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          />
+        </div>
         <button
           type="button"
           onClick={add}
-          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-600 text-white text-xs"
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium"
         >
-          <Plus className="h-3 w-3" /> Add
+          <Plus className="h-3 w-3" /> Add Link
         </button>
       </div>
     </div>
@@ -1401,17 +1637,30 @@ function ImageUploadField({
   value,
   onChange,
   placeholder,
+  recommendedWidth,
+  recommendedHeight,
+  maxFileSizeMb,
+  supportedFormats,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  recommendedWidth?: number;
+  recommendedHeight?: number;
+  maxFileSizeMb?: number;
+  supportedFormats?: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (maxFileSizeMb && file.size > maxFileSizeMb * 1024 * 1024) {
+      toast(`"${label}" file is too large. Max size is ${maxFileSizeMb} MB.`, 'error');
+      e.target.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const result = ev.target?.result;
@@ -1466,6 +1715,11 @@ function ImageUploadField({
           className="mt-1 h-14 w-auto max-w-[200px] rounded border object-contain bg-gray-50"
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
+      )}
+      {(recommendedWidth || recommendedHeight || maxFileSizeMb || supportedFormats) && (
+        <p className="text-[11px] text-gray-500">
+          Recommended: {recommendedWidth ?? '-'}x{recommendedHeight ?? '-'} px • Max size: {maxFileSizeMb ?? '-'} MB • Formats: {supportedFormats ?? 'JPG, PNG, WEBP'}
+        </p>
       )}
     </div>
   );

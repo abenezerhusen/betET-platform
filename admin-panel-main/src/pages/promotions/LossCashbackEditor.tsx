@@ -92,7 +92,7 @@ const DEFAULT_RULE_TWO: CashbackRuleConfig = {
 };
 
 export const DEFAULT_PER_TICKET_CASHBACK: PerTicketCashbackConfig = {
-  enabled: false,
+  enabled: true,
   active_rule: 'rule_one',
   payout_as: 'bonus',
   exclude_live: true,
@@ -139,7 +139,12 @@ export function LossCashbackEditor({ value, onChange }: Props) {
     const rule = cfg[ruleKey];
     const existing = rule[slotKey];
     if (!existing) return;
-    updateRule(ruleKey, { [slotKey]: { ...existing, ...patch } });
+    const nextRule = { ...rule, [slotKey]: { ...existing, ...patch } };
+    onChange({
+      ...cfg,
+      [ruleKey]: nextRule,
+      active_rule: patch.enabled === true ? ruleKey : cfg.active_rule,
+    });
   };
 
   const updateTier = (
@@ -178,6 +183,20 @@ export function LossCashbackEditor({ value, onChange }: Props) {
     updateSlot(ruleKey, slotKey, {
       tiers: slot.tiers.filter((_, i) => i !== tierIdx),
     });
+  };
+
+  const setRuleEnabled = (ruleKey: 'rule_one' | 'rule_two', enabled: boolean) => {
+    const rule = cfg[ruleKey];
+    const patch: Partial<CashbackRuleConfig> = {};
+    (['loss_one', 'loss_two', 'loss_three'] as const).forEach((slotKey) => {
+      const slot = rule[slotKey];
+      if (!slot) return;
+      patch[slotKey] = { ...slot, enabled };
+    });
+    updateRule(ruleKey, patch);
+    if (enabled) {
+      onChange({ ...cfg, active_rule: ruleKey, [ruleKey]: { ...cfg[ruleKey], ...patch } });
+    }
   };
 
   return (
@@ -262,6 +281,7 @@ export function LossCashbackEditor({ value, onChange }: Props) {
         active={cfg.active_rule === 'rule_one'}
         rule={cfg.rule_one}
         slots={['loss_one', 'loss_two']}
+        onRuleToggle={(enabled) => setRuleEnabled('rule_one', enabled)}
         onSlotChange={(slotKey, patch) => updateSlot('rule_one', slotKey, patch)}
         onTierChange={(slotKey, idx, patch) =>
           updateTier('rule_one', slotKey, idx, patch)
@@ -276,6 +296,7 @@ export function LossCashbackEditor({ value, onChange }: Props) {
         active={cfg.active_rule === 'rule_two'}
         rule={cfg.rule_two}
         slots={['loss_one', 'loss_two', 'loss_three']}
+        onRuleToggle={(enabled) => setRuleEnabled('rule_two', enabled)}
         onSlotChange={(slotKey, patch) => updateSlot('rule_two', slotKey, patch)}
         onTierChange={(slotKey, idx, patch) =>
           updateTier('rule_two', slotKey, idx, patch)
@@ -293,6 +314,7 @@ interface RuleSectionProps {
   active: boolean;
   rule: CashbackRuleConfig;
   slots: SlotKey[];
+  onRuleToggle: (enabled: boolean) => void;
   onSlotChange: (slotKey: SlotKey, patch: Partial<CashbackLossSlot>) => void;
   onTierChange: (
     slotKey: SlotKey,
@@ -309,11 +331,13 @@ function RuleSection({
   active,
   rule,
   slots,
+  onRuleToggle,
   onSlotChange,
   onTierChange,
   onTierAdd,
   onTierRemove,
 }: RuleSectionProps) {
+  const ruleEnabled = slots.some((slotKey) => Boolean(rule[slotKey]?.enabled));
   return (
     <section
       className={
@@ -333,6 +357,14 @@ function RuleSection({
           </h4>
           <p className="text-xs text-gray-500">{subtitle}</p>
         </div>
+        <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+          <input
+            type="checkbox"
+            checked={ruleEnabled}
+            onChange={(e) => onRuleToggle(e.target.checked)}
+          />
+          Rule enabled
+        </label>
       </header>
 
       <div className="space-y-4">

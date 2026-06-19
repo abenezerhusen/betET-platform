@@ -11,6 +11,7 @@ import { SportsCatalog } from "@/components/SportsCatalog";
 import { useAuth } from "@/context/AuthContext";
 import type { WalletSummaryLine } from "@/lib/api/types";
 import { publicConfigApi } from "@/lib/api";
+import type { NavbarItem as PublicNavbarItem } from "@/lib/api/publicConfig";
 import {
   Collapsible,
   CollapsibleContent,
@@ -55,16 +56,16 @@ import {
   Plus,
 } from "lucide-react";
 
-const mainNavItems = [
-  { name: "HOME", href: "/", icon: Home },
-  { name: "GAMES", href: "/games", icon: Gamepad2 },
-  { name: "AVIATOR", href: "/games?play=aviator", icon: Plane },
-  { name: "JETX", href: "/games?play=jetx", icon: Zap },
-  { name: "FAST KENO", href: "/games?play=fast-keno", icon: Hash },
-  { name: "PROMOTIONS", href: "/promotions", icon: Gift },
+const DEFAULT_MAIN_NAV_ITEMS = [
+  { name: "HOME", href: "/" },
+  { name: "GAMES", href: "/games" },
+  { name: "AVIATOR", href: "/games?play=aviator" },
+  { name: "JETX", href: "/games?play=jetx" },
+  { name: "FAST KENO", href: "/games?play=fast-keno" },
+  { name: "PROMOTIONS", href: "/promotions" },
 ];
 
-const moreNavItems = [
+const DEFAULT_MORE_NAV_ITEMS = [
   {
     name: "SPORT",
     href: "/sport",
@@ -81,6 +82,20 @@ const moreNavItems = [
   { name: "VIRTUAL SPORTS", href: "/virtual-sports", icon: Trophy },
   { name: "COUPON CHECK", href: "/coupon-check", icon: Ticket },
 ];
+
+function iconForNavLabel(label: string) {
+  const key = label.toLowerCase();
+  if (key.includes("home")) return Home;
+  if (key.includes("game")) return Gamepad2;
+  if (key.includes("aviator")) return Plane;
+  if (key.includes("jetx")) return Zap;
+  if (key.includes("keno")) return Hash;
+  if (key.includes("promo")) return Gift;
+  if (key.includes("sport")) return Trophy;
+  if (key.includes("live")) return Radio;
+  if (key.includes("ticket") || key.includes("coupon")) return Ticket;
+  return MoreHorizontal;
+}
 
 const loginSchema = z.object({
   phone: z.string().trim().min(8, "Phone number is required"),
@@ -130,15 +145,34 @@ export function Header() {
 
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [platformName, setPlatformName] = useState<string>("");
+  const [mainNavItems, setMainNavItems] = useState(DEFAULT_MAIN_NAV_ITEMS);
+  const [moreNavItems, setMoreNavItems] = useState(DEFAULT_MORE_NAV_ITEMS);
 
   useEffect(() => {
     let cancelled = false;
     const fetchConfig = () => {
-      publicConfigApi.getPublicGeneral()
-        .then((cfg) => {
+      Promise.all([
+        publicConfigApi.getPublicGeneral().catch(() => null),
+        publicConfigApi.listNavbarItems().catch(() => ({ items: [] as PublicNavbarItem[] })),
+      ]).then(([cfg, nav]) => {
           if (cancelled) return;
-          setLogoUrl(cfg.logo_url ?? "");
-          setPlatformName(cfg.platform_name ?? "");
+          if (cfg) {
+            setLogoUrl(cfg.header_logo_url || cfg.logo_url || "");
+            setPlatformName(cfg.platform_name ?? "");
+          }
+          const activeNav = (nav?.items ?? [])
+            .filter((item) => item?.is_active !== false)
+            .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+          if (activeNav.length > 0) {
+            const main = activeNav
+              .filter((i) => (i.bucket ?? "main") === "main")
+              .map((i) => ({ name: i.label, href: i.href }));
+            const more = activeNav
+              .filter((i) => i.bucket === "more")
+              .map((i) => ({ name: i.label, href: i.href, icon: iconForNavLabel(i.label) }));
+            if (main.length > 0) setMainNavItems(main);
+            if (more.length > 0) setMoreNavItems(more);
+          }
         })
         .catch(() => { /* keep defaults */ });
     };
@@ -656,7 +690,7 @@ export function Header() {
       <nav className="hidden lg:flex items-center justify-center px-8 py-0" style={{ background: "#000" }}>
         <div className="flex items-center gap-2">
           {mainNavItems.map((item) => {
-            const Icon = item.icon;
+            const Icon = iconForNavLabel(item.name);
             const isActive = pathname === item.href;
 
             return (

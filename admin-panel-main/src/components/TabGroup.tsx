@@ -16,7 +16,7 @@ interface TabGroupProps {
 export function TabGroup({ tabs, activeTab, onTabChange, className }: TabGroupProps) {
   return (
     <div className={cn("border-b border-gray-200", className)}>
-      <nav className="-mb-px flex space-x-8">
+      <nav className="-mb-px flex space-x-8 overflow-x-auto whitespace-nowrap scrollbar-thin pb-1">
         {tabs.map((tab) => (
           <button
             key={tab.id}

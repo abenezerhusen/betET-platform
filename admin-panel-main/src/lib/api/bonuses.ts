@@ -175,13 +175,16 @@ export interface BonusSettings {
   default_expiry_days: number;
   default_min_odds: number;
   cashback: {
-    schedule: 'weekly' | 'monthly';
+    schedule: 'daily' | 'weekly' | 'monthly' | 'yearly';
     payout_as: 'bonus' | 'cash';
     min_loss?: number;
     pct?: number;
+    max_cap?: number;
+    vip_multipliers?: Record<string, number>;
     per_ticket?: PerTicketCashbackConfig;
   };
   deposit_match: { stack_with_promo: boolean };
+  cashback_rule_store?: CashbackRuleStore;
 }
 
 export function getBonusSettings() {
@@ -190,6 +193,54 @@ export function getBonusSettings() {
 
 export function updateBonusSettings(input: BonusSettings) {
   return http.put<BonusSettings>('/api/admin/bonuses/settings', input);
+}
+
+export interface CashbackRule {
+  id: string;
+  version: number;
+  name: string;
+  status: 'active' | 'inactive' | 'draft';
+  is_active: boolean;
+  config: BonusSettings['cashback'];
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
+  updated_by?: string | null;
+}
+
+export interface CashbackRuleStore {
+  active_rule_id?: string | null;
+  multi_rule_enabled?: boolean;
+  rules: CashbackRule[];
+}
+
+export function listCashbackRules() {
+  return http.get<CashbackRuleStore>('/api/admin/bonuses/settings/cashback-rules');
+}
+
+export function createCashbackRule(input: {
+  name?: string;
+  status?: 'active' | 'inactive' | 'draft';
+  is_active?: boolean;
+  config: BonusSettings['cashback'];
+}) {
+  return http.post<CashbackRuleStore>('/api/admin/bonuses/settings/cashback-rules', input);
+}
+
+export function updateCashbackRule(
+  id: string,
+  input: {
+    name?: string;
+    status?: 'active' | 'inactive' | 'draft';
+    is_active?: boolean;
+    config?: BonusSettings['cashback'];
+  }
+) {
+  return http.put<CashbackRuleStore>(`/api/admin/bonuses/settings/cashback-rules/${id}`, input);
+}
+
+export function activateCashbackRule(id: string) {
+  return http.post<CashbackRuleStore>(`/api/admin/bonuses/settings/cashback-rules/${id}/activate`, {});
 }
 
 /* ------------------------------------------------------------------ */

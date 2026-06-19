@@ -53,6 +53,12 @@ router.get('/general', async (req: Request, res: Response, next: NextFunction) =
     res.json({
       platform_name: cfg.platform_name,
       logo_url: cfg.logo_url,
+      header_logo_url: cfg.header_logo_url,
+      footer_logo_url: cfg.footer_logo_url,
+      logo_width: cfg.logo_width,
+      logo_height: cfg.logo_height,
+      footer_logo_width: cfg.footer_logo_width,
+      footer_logo_height: cfg.footer_logo_height,
       currency: cfg.currency,
       country: cfg.country,
       country_code: cfg.country_code,
@@ -80,6 +86,14 @@ router.get('/general', async (req: Request, res: Response, next: NextFunction) =
       about_us: cfg.about_us,
       terms_and_conditions: cfg.terms_and_conditions,
       footer_text: cfg.footer_text,
+      static_banner_image_url: cfg.static_banner_image_url,
+      static_banner_mobile_image_url: cfg.static_banner_mobile_image_url,
+      static_banner_title: cfg.static_banner_title,
+      static_banner_subtitle: cfg.static_banner_subtitle,
+      static_banner_width: cfg.static_banner_width,
+      static_banner_height: cfg.static_banner_height,
+      slider_banner_width: cfg.slider_banner_width,
+      slider_banner_height: cfg.slider_banner_height,
     });
   } catch (err) {
     next(err);
@@ -217,6 +231,21 @@ router.get('/game-thumbnails', async (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     const tenantId = requireTenantId(req);
     const items = await readListSetting(tenantId, 'general.game_thumbnails');
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/navbar
+ * Returns admin-managed navigation menu items (main + more buckets).
+ */
+router.get('/navbar', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const items = await readListSetting(tenantId, 'general.navbar');
     res.json({ items });
   } catch (err) {
     next(err);

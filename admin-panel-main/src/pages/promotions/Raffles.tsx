@@ -85,6 +85,10 @@ export function Raffles() {
   const [selectedRaffleId, setSelectedRaffleId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const selectedRaffle = useMemo(
+    () => raffles.find((r) => r.id === selectedRaffleId) ?? null,
+    [raffles, selectedRaffleId]
+  );
 
   const reloadRaffles = async () => {
     setLoading(true);
@@ -121,8 +125,8 @@ export function Raffles() {
       const now = new Date();
       const draw = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       await promotionsApi.createAdminRaffle({
-        name: `Raffle ${now.toISOString().slice(0, 16).replace('T', ' ')}`,
-        description: 'Created from admin panel',
+        name: `Test Raffle ${now.toISOString().slice(0, 16).replace('T', ' ')}`,
+        description: 'Test raffle created from admin panel',
         start_date: now.toISOString(),
         end_date: draw.toISOString(),
         min_deposit: 0,
@@ -131,28 +135,14 @@ export function Raffles() {
         draw_mode: 'auto',
         notify_winners: true,
         prizes: [],
-        status: 'Pending',
+        status: 'Active',
       });
-      toast('Raffle created.');
+      toast('Test raffle created.');
       await reloadRaffles();
     } catch (err) {
       toast(`Failed to create raffle: ${(err as Error)?.message ?? err}`, 'error');
     } finally {
       setCreating(false);
-    }
-  };
-
-  const activateSelected = async () => {
-    if (!selectedRaffleId) {
-      toast('Select a raffle first.', 'error');
-      return;
-    }
-    try {
-      await promotionsApi.setAdminRaffleStatus(selectedRaffleId, 'Active');
-      toast('Raffle activated.');
-      await reloadRaffles();
-    } catch (err) {
-      toast(`Activation failed: ${(err as Error)?.message ?? err}`, 'error');
     }
   };
 
@@ -169,6 +159,21 @@ export function Raffles() {
       await reloadRaffles();
     } catch (err) {
       toast(`Draw failed: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
+  const toggleSelected = async () => {
+    if (!selectedRaffleId || !selectedRaffle) {
+      toast('Select a raffle first.', 'error');
+      return;
+    }
+    const nextStatus = selectedRaffle.status === 'Active' ? 'Cancelled' : 'Active';
+    try {
+      await promotionsApi.setAdminRaffleStatus(selectedRaffleId, nextStatus);
+      toast(`Raffle ${nextStatus === 'Active' ? 'enabled' : 'disabled'}.`);
+      await reloadRaffles();
+    } catch (err) {
+      toast(`Status update failed: ${(err as Error)?.message ?? err}`, 'error');
     }
   };
 
@@ -265,10 +270,10 @@ export function Raffles() {
             </select>
           </div>
           <button
-            onClick={() => void activateSelected()}
+            onClick={() => void toggleSelected()}
             className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
           >
-            Activate
+            {selectedRaffle?.status === 'Active' ? 'Disable' : 'Enable'}
           </button>
           <button
             onClick={() => void drawSelected()}

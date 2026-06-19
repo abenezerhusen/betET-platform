@@ -81,6 +81,8 @@ export default function AviatorPage() {
   // /api/games/aviator/cashout with the right { bet_id, round_id }.
   const bet1IdRef = useRef<string | null>(null)
   const bet2IdRef = useRef<string | null>(null)
+  const placingQueuedBet1Ref = useRef(false)
+  const placingQueuedBet2Ref = useRef(false)
   // Auto-reset on round_start when the previous bet finished.
   const bet1RoundIdRef = useRef<string | null>(null)
   const bet2RoundIdRef = useRef<string | null>(null)
@@ -419,16 +421,6 @@ export default function AviatorPage() {
       // Reset cashout flags so the bet panels can accept new bets.
       setBet1CashedOut(false)
       setBet2CashedOut(false)
-      // Promote queued bets to active for the new round (the player chose
-      // to roll the bet over while the previous round was flying).
-      setBet1Queued((q) => {
-        if (q) setBet1Active(true)
-        return false
-      })
-      setBet2Queued((q) => {
-        if (q) setBet2Active(true)
-        return false
-      })
     }
 
     const onFlying = (ev: AviatorRoundFlyingEvent) => {
@@ -456,6 +448,27 @@ export default function AviatorPage() {
       bet2IdRef.current = null
       bet1RoundIdRef.current = null
       bet2RoundIdRef.current = null
+      // Keep wallet view authoritative after round settlement.
+      fetchPlayerMe()
+        .then((me) => {
+          if (cancelled) return
+          setBalance(readBalance(me))
+        })
+        .catch(() => {
+          /* ignore transient fetch failures */
+        })
+    }
+
+    const onPlayerCashout = () => {
+      // Auto-cashout is settled in the worker; pull fresh wallet state.
+      fetchPlayerMe()
+        .then((me) => {
+          if (cancelled) return
+          setBalance(readBalance(me))
+        })
+        .catch(() => {
+          /* ignore transient fetch failures */
+        })
     }
 
     // Resolve a token first (live: iframe token; local dev: auto-minted
@@ -496,6 +509,7 @@ export default function AviatorPage() {
       socket.on("aviator:round_start", onStart)
       socket.on("aviator:round_flying", onFlying)
       socket.on("aviator:round_crashed", onCrashed)
+      socket.on("aviator:player_cashout", onPlayerCashout)
     })()
 
     return () => {
@@ -504,6 +518,7 @@ export default function AviatorPage() {
         socket.off("aviator:round_start", onStart)
         socket.off("aviator:round_flying", onFlying)
         socket.off("aviator:round_crashed", onCrashed)
+        socket.off("aviator:player_cashout", onPlayerCashout)
       }
     }
     // Mount-only — listeners use refs/setters which are stable.
@@ -659,6 +674,26 @@ export default function AviatorPage() {
       bet2CashedOut,
     ],
   )
+
+  // Queue-to-round bridge: when a queued bet reaches a new waiting round,
+  // place the real backend bet (stake debit + settlement eligibility).
+  useEffect(() => {
+    if (gamePhase !== "waiting" || !roundId) return
+
+    if (bet1Queued && !bet1Active && !placingQueuedBet1Ref.current) {
+      placingQueuedBet1Ref.current = true
+      void handleBet(1).finally(() => {
+        placingQueuedBet1Ref.current = false
+      })
+    }
+
+    if (bet2Queued && !bet2Active && !placingQueuedBet2Ref.current) {
+      placingQueuedBet2Ref.current = true
+      void handleBet(2).finally(() => {
+        placingQueuedBet2Ref.current = false
+      })
+    }
+  }, [gamePhase, roundId, bet1Queued, bet2Queued, bet1Active, bet2Active, handleBet])
 
   // Cancel a queued or pre-flight bet. For queued bets we just clear the
   // queue flag — no API call needed because nothing was sent. For active
@@ -2548,11 +2583,10 @@ export default function AviatorPage() {
                 {/* Rain Button */}
                 <button 
                   onClick={() => {
-                    // Rain logic - deduct from balance and distribute to random users
+                    // Keep wallet authoritative: this UI helper must not
+                    // mutate real-money balance client-side.
                     const totalCost = rainAmount * rainPlayers
                     if (balance >= totalCost) {
-                      setBalance(prev => prev - totalCost)
-                      // Show success feedback
                       setShowRainPopup(false)
                     }
                   }}

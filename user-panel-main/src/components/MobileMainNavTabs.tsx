@@ -24,6 +24,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { publicConfigApi } from "@/lib/api";
+import type { NavbarItem as PublicNavbarItem } from "@/lib/api/publicConfig";
 import {
   Home as HomeIcon,
   Gamepad2,
@@ -65,9 +67,25 @@ const moreItems: NavItem[] = [
   { name: "COUPON CHECK", href: "/coupon-check", icon: Ticket },
 ];
 
+function iconForNavLabel(label: string): NavItem["icon"] {
+  const key = label.toLowerCase();
+  if (key.includes("home")) return HomeIcon;
+  if (key.includes("game")) return Gamepad2;
+  if (key.includes("aviator")) return Plane;
+  if (key.includes("jetx")) return Zap;
+  if (key.includes("keno")) return Hash;
+  if (key.includes("promo")) return Gift;
+  if (key.includes("sport")) return Trophy;
+  if (key.includes("live")) return Radio;
+  if (key.includes("ticket") || key.includes("coupon")) return Ticket;
+  return MoreHorizontal;
+}
+
 export default function MobileMainNavTabs() {
   const pathname = usePathname() ?? "/";
   const [moreOpen, setMoreOpen] = useState(false);
+  const [dynamicPrimaryItems, setDynamicPrimaryItems] = useState<NavItem[]>(primaryItems);
+  const [dynamicMoreItems, setDynamicMoreItems] = useState<NavItem[]>(moreItems);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
     null,
@@ -78,7 +96,29 @@ export default function MobileMainNavTabs() {
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  const moreIsActive = moreItems.some((i) => isActive(i.href));
+  const moreIsActive = dynamicMoreItems.some((i) => isActive(i.href));
+
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi.listNavbarItems()
+      .then((res) => {
+        if (cancelled) return;
+        const activeNav = (res.items ?? [])
+          .filter((item: PublicNavbarItem) => item.is_active !== false)
+          .sort((a: PublicNavbarItem, b: PublicNavbarItem) => (a.display_order ?? 0) - (b.display_order ?? 0));
+        if (activeNav.length === 0) return;
+        const main = activeNav
+          .filter((i: PublicNavbarItem) => (i.bucket ?? "main") === "main")
+          .map((i: PublicNavbarItem) => ({ name: i.label, href: i.href, icon: iconForNavLabel(i.label) }));
+        const more = activeNav
+          .filter((i: PublicNavbarItem) => i.bucket === "more")
+          .map((i: PublicNavbarItem) => ({ name: i.label, href: i.href, icon: iconForNavLabel(i.label) }));
+        if (main.length > 0) setDynamicPrimaryItems(main);
+        if (more.length > 0) setDynamicMoreItems(more);
+      })
+      .catch(() => { /* keep defaults */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // Close the MORE popover whenever navigation happens. `pathname` is
   // stable on the same route, so this only triggers after a real
@@ -133,7 +173,7 @@ export default function MobileMainNavTabs() {
         }}
       >
         <div className="flex items-stretch min-w-max">
-          {primaryItems.map((item) => {
+          {dynamicPrimaryItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
             return (
@@ -218,7 +258,7 @@ export default function MobileMainNavTabs() {
             }}
           >
             <ul className="py-1">
-              {moreItems.map((item) => {
+              {dynamicMoreItems.map((item) => {
                 const Icon = item.icon;
                 const active = isActive(item.href);
                 return (

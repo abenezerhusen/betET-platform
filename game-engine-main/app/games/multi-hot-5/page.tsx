@@ -848,9 +848,8 @@ export default function MultiHot5Page() {
     const winToGamble = lastWin > 0 ? lastWin : 0.40
     setGambleWinAmount(winToGamble)
     setGambleToWin(winToGamble * 2)
-    if (lastWin > 0) {
-      setBalance(prev => prev - lastWin) // Remove win from balance temporarily
-    }
+    // Keep wallet authoritative: this popup is visual-only until backend
+    // gamble settlement is implemented.
     setShowGamblePopup(true)
     setGambleResult(null)
     setRevealedCard(null)
@@ -862,9 +861,6 @@ export default function MultiHot5Page() {
 
   const closeGamble = () => {
     stopCardFlashing()
-    if (gambleWinAmount > 0 && lastWin > 0) {
-      setBalance(prev => prev + gambleWinAmount)
-    }
     setShowGamblePopup(false)
     setGambleWinAmount(0)
     setGambleToWin(0)
@@ -947,7 +943,6 @@ export default function MultiHot5Page() {
 
   const takeWin = () => {
     stopCardFlashing()
-    setBalance(prev => prev + gambleWinAmount)
     setLastWin(gambleWinAmount)
     setShowGamblePopup(false)
     setGambleWinAmount(0)

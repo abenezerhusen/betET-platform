@@ -27,6 +27,7 @@ import { tryAudit } from '../../audit/audit.service';
 const router = Router();
 
 const BONUS_SETTINGS_KEY = 'promotions.bonus_settings';
+const CASHBACK_RULES_KEY = 'promotions.cashback_rules';
 
 const DEFAULT_BONUS_SETTINGS = {
   global_enabled: true,
@@ -79,10 +80,12 @@ const bonusSettingsSchema = z.object({
   default_min_odds: z.number().nonnegative().default(1.5),
   cashback: z
     .object({
-      schedule: z.enum(['weekly', 'monthly']).default('weekly'),
+      schedule: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('weekly'),
       payout_as: z.enum(['bonus', 'cash']).default('bonus'),
       min_loss: z.number().nonnegative().default(100),
       pct: z.number().min(0).max(100).default(10),
+      max_cap: z.number().nonnegative().optional(),
+      vip_multipliers: z.record(z.string(), z.number().positive()).optional(),
       per_ticket: perTicketCashbackSchema.default(DEFAULT_PER_TICKET_CASHBACK),
     })
     .default({}),
@@ -92,6 +95,175 @@ const bonusSettingsSchema = z.object({
     })
     .default({}),
 });
+
+const cashbackRuleStatusSchema = z.enum(['active', 'inactive', 'draft']);
+
+const cashbackRuleConfigSchema = z.object({
+  schedule: z.enum(['daily', 'weekly', 'monthly', 'yearly']).default('weekly'),
+  payout_as: z.enum(['bonus', 'cash']).default('bonus'),
+  min_loss: z.number().nonnegative().default(100),
+  pct: z.number().min(0).max(100).default(10),
+  max_cap: z.number().nonnegative().optional(),
+  vip_multipliers: z.record(z.string(), z.number().positive()).optional(),
+  per_ticket: perTicketCashbackSchema.default(DEFAULT_PER_TICKET_CASHBACK),
+});
+
+const cashbackRuleRowSchema = z.object({
+  id: z.string().trim().min(1),
+  version: z.number().int().positive(),
+  name: z.string().trim().min(1).max(160),
+  status: cashbackRuleStatusSchema,
+  is_active: z.boolean().default(false),
+  config: cashbackRuleConfigSchema,
+  created_at: z.string(),
+  updated_at: z.string(),
+  created_by: z.string().nullable().optional(),
+  updated_by: z.string().nullable().optional(),
+});
+
+const cashbackRulesStoreSchema = z.object({
+  active_rule_id: z.string().trim().min(1).nullable().optional(),
+  multi_rule_enabled: z.boolean().default(false),
+  rules: z.array(cashbackRuleRowSchema).default([]),
+});
+
+const cashbackRuleCreateSchema = z.object({
+  name: z.string().trim().min(1).max(160).optional(),
+  status: cashbackRuleStatusSchema.default('draft'),
+  is_active: z.boolean().optional(),
+  config: cashbackRuleConfigSchema,
+});
+
+const cashbackRuleUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(160).optional(),
+  status: cashbackRuleStatusSchema.optional(),
+  is_active: z.boolean().optional(),
+  config: cashbackRuleConfigSchema.optional(),
+});
+
+type CashbackRuleRow = z.infer<typeof cashbackRuleRowSchema>;
+type CashbackRulesStore = z.infer<typeof cashbackRulesStoreSchema>;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function sanitizeRuleStore(input: unknown): CashbackRulesStore {
+  const parsed = cashbackRulesStoreSchema.safeParse(input);
+  if (parsed.success) {
+    const dedupedRules: CashbackRuleRow[] = [];
+    const seen = new Set<string>();
+    for (const row of parsed.data.rules) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      dedupedRules.push(row);
+    }
+    const activeRule = dedupedRules.find((r) => r.is_active && r.status === 'active');
+    return {
+      ...parsed.data,
+      rules: dedupedRules,
+      active_rule_id: activeRule?.id ?? null,
+    };
+  }
+  return { active_rule_id: null, multi_rule_enabled: false, rules: [] };
+}
+
+function sortRulesDesc(rules: CashbackRuleRow[]): CashbackRuleRow[] {
+  return [...rules].sort((a, b) => {
+    if (b.version !== a.version) return b.version - a.version;
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
+}
+
+function deactivateRule(row: CashbackRuleRow): CashbackRuleRow {
+  return {
+    ...row,
+    is_active: false,
+    status: row.status === 'draft' ? 'draft' : 'inactive',
+  };
+}
+
+function activateRule(row: CashbackRuleRow, actorId: string | null, ts: string): CashbackRuleRow {
+  return {
+    ...row,
+    is_active: true,
+    status: 'active',
+    updated_at: ts,
+    updated_by: actorId,
+  };
+}
+
+function applyActiveRuleToSettings(
+  settings: z.infer<typeof bonusSettingsSchema>,
+  store: CashbackRulesStore
+) {
+  const active = store.rules.find((r) => r.id === store.active_rule_id && r.is_active);
+  if (!active) return settings;
+  return {
+    ...settings,
+    cashback: {
+      ...settings.cashback,
+      ...active.config,
+    },
+  };
+}
+
+async function loadCashbackRuleStore(
+  tenantId: string,
+  bypassRls: boolean
+): Promise<CashbackRulesStore> {
+  return withTenantClient({ tenantId, bypassRls }, async (client) => {
+    const row = await client.query<{ value: unknown }>(
+      `SELECT value FROM settings WHERE tenant_id = $1 AND key = $2 LIMIT 1`,
+      [tenantId, CASHBACK_RULES_KEY]
+    );
+    return sanitizeRuleStore(row.rows[0]?.value);
+  });
+}
+
+async function saveCashbackRuleStore(
+  tenantId: string,
+  bypassRls: boolean,
+  store: CashbackRulesStore
+) {
+  await withTenantClient({ tenantId, bypassRls }, async (client) => {
+    await client.query(
+      `INSERT INTO settings (tenant_id, key, value)
+         VALUES ($1,$2,$3::jsonb)
+       ON CONFLICT (tenant_id, key) DO UPDATE
+         SET value = EXCLUDED.value, updated_at = now()`,
+      [tenantId, CASHBACK_RULES_KEY, JSON.stringify(store)]
+    );
+  });
+}
+
+function bootstrapRuleFromSettings(
+  settings: z.infer<typeof bonusSettingsSchema>,
+  actorId: string | null
+): CashbackRulesStore {
+  const ts = nowIso();
+  const row: CashbackRuleRow = {
+    id: `cb-${Date.now()}`,
+    version: 1,
+    name: 'Initial Cashback Rule',
+    status: 'active',
+    is_active: true,
+    config: {
+      schedule: settings.cashback.schedule,
+      payout_as: settings.cashback.payout_as,
+      min_loss: settings.cashback.min_loss,
+      pct: settings.cashback.pct,
+      max_cap: settings.cashback.max_cap,
+      vip_multipliers: settings.cashback.vip_multipliers,
+      per_ticket: settings.cashback.per_ticket,
+    },
+    created_at: ts,
+    updated_at: ts,
+    created_by: actorId,
+    updated_by: actorId,
+  };
+  return { active_rule_id: row.id, multi_rule_enabled: false, rules: [row] };
+}
 
 const freebetCreateSchema = z.object({
   user_id: z.string().uuid().optional(),
@@ -322,7 +494,10 @@ router.get('/settings', async (req: Request, res: Response, next: NextFunction) 
         return row.rows[0]?.value ?? DEFAULT_BONUS_SETTINGS;
       }
     );
-    res.json(out);
+    const parsed = bonusSettingsSchema.parse(out);
+    const store = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const effectiveSettings = applyActiveRuleToSettings(parsed, store);
+    res.json({ ...effectiveSettings, cashback_rule_store: store });
   } catch (err) {
     next(err);
   }
@@ -333,6 +508,77 @@ router.put('/settings', async (req: Request, res: Response, next: NextFunction) 
     const scope = getAdminScope(req);
     const tenantId = requireScopedTenantId(scope);
     const body = bonusSettingsSchema.parse(req.body);
+    const perTicket = body.cashback.per_ticket;
+    const ruleOneEnabled = Boolean(
+      perTicket.rule_one.loss_one.enabled || perTicket.rule_one.loss_two.enabled
+    );
+    const ruleTwoEnabled = Boolean(
+      perTicket.rule_two.loss_one.enabled ||
+        perTicket.rule_two.loss_two.enabled ||
+        perTicket.rule_two.loss_three?.enabled
+    );
+    const normalizedActiveRule =
+      !ruleOneEnabled && ruleTwoEnabled
+        ? 'rule_two'
+        : ruleOneEnabled && !ruleTwoEnabled
+          ? 'rule_one'
+          : perTicket.active_rule;
+    const normalizedBody = {
+      ...body,
+      cashback: {
+        ...body.cashback,
+        per_ticket: {
+          ...perTicket,
+          active_rule: normalizedActiveRule,
+        },
+      },
+    };
+    const existingStore = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const nextStore = (() => {
+      const base =
+        existingStore.rules.length > 0
+          ? { ...existingStore, rules: [...existingStore.rules] }
+          : bootstrapRuleFromSettings(body, scope.actorId);
+
+      const activeIdx = base.rules.findIndex(
+        (r) => r.id === base.active_rule_id
+      );
+      const fallbackActiveIdx =
+        activeIdx >= 0 ? activeIdx : base.rules.findIndex((r) => r.is_active === true);
+      const targetIdx = fallbackActiveIdx >= 0 ? fallbackActiveIdx : 0;
+      const ts = nowIso();
+
+      if (base.rules[targetIdx]) {
+        const target = base.rules[targetIdx];
+        base.rules[targetIdx] = {
+          ...target,
+          status: 'active',
+          is_active: true,
+          config: {
+            ...target.config,
+            schedule: normalizedBody.cashback.schedule,
+            payout_as: normalizedBody.cashback.payout_as,
+            min_loss: normalizedBody.cashback.min_loss,
+            pct: normalizedBody.cashback.pct,
+            max_cap: normalizedBody.cashback.max_cap,
+            vip_multipliers: normalizedBody.cashback.vip_multipliers,
+            per_ticket: normalizedBody.cashback.per_ticket,
+          },
+          updated_at: ts,
+          updated_by: scope.actorId,
+        };
+        base.active_rule_id = base.rules[targetIdx].id;
+        base.rules = base.rules.map((r, idx) =>
+          idx === targetIdx ? r : deactivateRule(r)
+        );
+      }
+
+      return {
+        ...base,
+        rules: sortRulesDesc(base.rules),
+      };
+    })();
+
     await withTenantClient(
       { tenantId, bypassRls: scope.bypassRls },
       async (client) => {
@@ -341,10 +587,11 @@ router.put('/settings', async (req: Request, res: Response, next: NextFunction) 
              VALUES ($1,$2,$3::jsonb)
            ON CONFLICT (tenant_id, key) DO UPDATE
              SET value = EXCLUDED.value, updated_at = now()`,
-          [tenantId, BONUS_SETTINGS_KEY, JSON.stringify(body)]
+          [tenantId, BONUS_SETTINGS_KEY, JSON.stringify(normalizedBody)]
         );
       }
     );
+    await saveCashbackRuleStore(tenantId, scope.bypassRls, nextStore);
     void tryAudit(
       {
         tenantId,
@@ -353,14 +600,195 @@ router.put('/settings', async (req: Request, res: Response, next: NextFunction) 
         action: 'admin.bonus.settings.update',
         resource: 'settings',
         resourceId: BONUS_SETTINGS_KEY,
-        payload: { value: body },
+        payload: { value: normalizedBody, cashback_rule_store: nextStore },
         ip: getIp(req),
         userAgent: getUa(req),
         status: 'success',
       },
       { bypassRls: true }
     );
-    res.json(body);
+    res.json({ ...normalizedBody, cashback_rule_store: nextStore });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/settings/cashback-rules', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const settings = await withTenantClient(
+      { tenantId, bypassRls: scope.bypassRls },
+      async (client) => {
+        const row = await client.query<{ value: unknown }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = $2 LIMIT 1`,
+          [tenantId, BONUS_SETTINGS_KEY]
+        );
+        return bonusSettingsSchema.parse(row.rows[0]?.value ?? DEFAULT_BONUS_SETTINGS);
+      }
+    );
+    const store = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const bootstrapped =
+      store.rules.length > 0 ? store : bootstrapRuleFromSettings(settings, scope.actorId);
+    if (store.rules.length === 0) {
+      await saveCashbackRuleStore(tenantId, scope.bypassRls, bootstrapped);
+    }
+    res.json(bootstrapped);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/settings/cashback-rules', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = cashbackRuleCreateSchema.parse(req.body);
+    const store = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const nextVersion = store.rules.reduce((max, rule) => Math.max(max, rule.version), 0) + 1;
+    const ts = nowIso();
+    const requestedActive = body.is_active === true || body.status === 'active';
+    const rule: CashbackRuleRow = {
+      id: `cb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      version: nextVersion,
+      name: body.name?.trim() || `Cashback Rule v${nextVersion}`,
+      status: requestedActive ? 'active' : body.status,
+      is_active: requestedActive,
+      config: body.config,
+      created_at: ts,
+      updated_at: ts,
+      created_by: scope.actorId,
+      updated_by: scope.actorId,
+    };
+    const rules = requestedActive
+      ? store.rules.map((r) => deactivateRule(r)).concat(rule)
+      : store.rules.concat(rule);
+    const nextStore: CashbackRulesStore = {
+      ...store,
+      active_rule_id: requestedActive ? rule.id : store.active_rule_id,
+      rules: sortRulesDesc(rules),
+    };
+    await saveCashbackRuleStore(tenantId, scope.bypassRls, nextStore);
+    void tryAudit(
+      {
+        tenantId,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'admin.cashback.rule.create',
+        resource: 'settings',
+        resourceId: CASHBACK_RULES_KEY,
+        payload: { rule, active_rule_id: nextStore.active_rule_id },
+        ip: getIp(req),
+        userAgent: getUa(req),
+        status: 'success',
+      },
+      { bypassRls: true }
+    );
+    res.status(201).json(nextStore);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/settings/cashback-rules/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = cashbackRuleUpdateSchema.parse(req.body);
+    const store = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const idx = store.rules.findIndex((r) => r.id === req.params.id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'not_found', message: 'Cashback rule not found' });
+      return;
+    }
+    const prev = store.rules[idx];
+    const requestedActive = body.is_active === true || body.status === 'active';
+    const updated: CashbackRuleRow = {
+      ...prev,
+      name: body.name ?? prev.name,
+      status: requestedActive ? 'active' : (body.status ?? prev.status),
+      is_active: requestedActive ? true : (body.is_active ?? prev.is_active),
+      config: body.config ?? prev.config,
+      updated_at: nowIso(),
+      updated_by: scope.actorId,
+    };
+    let rules = [...store.rules];
+    rules[idx] = updated;
+    if (requestedActive && !store.multi_rule_enabled) {
+      rules = rules.map((r) =>
+        r.id === updated.id ? r : deactivateRule(r)
+      );
+    }
+    const nextStore: CashbackRulesStore = {
+      ...store,
+      active_rule_id:
+        updated.is_active
+          ? updated.id
+          : store.active_rule_id === updated.id
+            ? null
+            : store.active_rule_id,
+      rules: sortRulesDesc(rules),
+    };
+    await saveCashbackRuleStore(tenantId, scope.bypassRls, nextStore);
+    void tryAudit(
+      {
+        tenantId,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'admin.cashback.rule.update',
+        resource: 'settings',
+        resourceId: CASHBACK_RULES_KEY,
+        payload: { before: prev, after: updated },
+        ip: getIp(req),
+        userAgent: getUa(req),
+        status: 'success',
+      },
+      { bypassRls: true }
+    );
+    res.json(nextStore);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/settings/cashback-rules/:id/activate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const store = await loadCashbackRuleStore(tenantId, scope.bypassRls);
+    const idx = store.rules.findIndex((r) => r.id === req.params.id);
+    if (idx < 0) {
+      res.status(404).json({ error: 'not_found', message: 'Cashback rule not found' });
+      return;
+    }
+    const ts = nowIso();
+    const rules = store.rules.map((r) =>
+      r.id === req.params.id
+        ? activateRule(r, scope.actorId, ts)
+        : { ...deactivateRule(r), updated_at: ts, updated_by: scope.actorId }
+    );
+    const nextStore: CashbackRulesStore = {
+      ...store,
+      active_rule_id: req.params.id,
+      rules: sortRulesDesc(rules),
+    };
+    await saveCashbackRuleStore(tenantId, scope.bypassRls, nextStore);
+    void tryAudit(
+      {
+        tenantId,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'admin.cashback.rule.activate',
+        resource: 'settings',
+        resourceId: CASHBACK_RULES_KEY,
+        payload: { active_rule_id: req.params.id },
+        ip: getIp(req),
+        userAgent: getUa(req),
+        status: 'success',
+      },
+      { bypassRls: true }
+    );
+    res.json(nextStore);
   } catch (err) {
     next(err);
   }

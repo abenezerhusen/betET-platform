@@ -11,6 +11,12 @@ import { apiRequest } from './client';
 export interface PublicGeneral {
   platform_name: string;
   logo_url: string;
+  header_logo_url?: string;
+  footer_logo_url?: string;
+  logo_width?: number;
+  logo_height?: number;
+  footer_logo_width?: number;
+  footer_logo_height?: number;
   currency: string;
   country: string;
   country_code: string;
@@ -34,6 +40,14 @@ export interface PublicGeneral {
   terms_and_conditions: string;
   /** Admin-managed footer blurb (Settings → General → Company). */
   footer_text: string;
+  static_banner_image_url?: string;
+  static_banner_mobile_image_url?: string;
+  static_banner_title?: string;
+  static_banner_subtitle?: string;
+  static_banner_width?: number;
+  static_banner_height?: number;
+  slider_banner_width?: number;
+  slider_banner_height?: number;
 }
 
 export interface TopBetEntry {
@@ -60,6 +74,9 @@ export interface PromotionBanner {
   id?: string;
   title: string;
   image_url: string;
+  mobile_image_url?: string;
+  image_width?: number;
+  image_height?: number;
   bonus_type?: string;
   description?: string;
   cta_url?: string;
@@ -118,6 +135,11 @@ export interface FooterLinks {
   copyright_text?: string;
   company_description?: string;
   live_chat_text?: string;
+  support_email?: string;
+  telegram_link?: string;
+  social_links?: FooterLinkItem[];
+  show_18_plus_notice?: boolean;
+  notice_18_plus_text?: string;
 }
 
 export function getFooterLinks(): Promise<FooterLinks> {
@@ -138,4 +160,17 @@ export interface GameThumbnailOverride {
 
 export function listGameThumbnails(): Promise<{ items: GameThumbnailOverride[] }> {
   return apiRequest<{ items: GameThumbnailOverride[] }>('/api/public/game-thumbnails');
+}
+
+export interface NavbarItem {
+  id?: string;
+  label: string;
+  href: string;
+  bucket?: 'main' | 'more';
+  is_active?: boolean;
+  display_order?: number;
+}
+
+export function listNavbarItems(): Promise<{ items: NavbarItem[] }> {
+  return apiRequest<{ items: NavbarItem[] }>('/api/public/navbar');
 }

@@ -349,6 +349,9 @@ const topMatchEntrySchema = z.object({
 const promotionBannerSchema = z.object({
   id: z.string().trim().min(1).max(120).optional(),
   image_url: z.string().trim().min(1),  // may be a base64 data URL
+  mobile_image_url: z.string().trim().optional(),
+  image_width: z.number().int().positive().optional(),
+  image_height: z.number().int().positive().optional(),
   bonus_type: z.string().trim().max(80).optional(),
   title: z.string().trim().min(1).max(240),
   description: z.string().trim().max(2000).optional(),
@@ -426,6 +429,11 @@ const footerLinkItemSchema = z.object({
   href: z.string().trim().max(2048),
 });
 
+const footerSocialLinkSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  href: z.string().trim().max(2048),
+});
+
 const footerLinksObjectSchema = z.object({
   company_links: z.array(footerLinkItemSchema).optional(),
   legal_links: z.array(footerLinkItemSchema).optional(),
@@ -433,6 +441,11 @@ const footerLinksObjectSchema = z.object({
   copyright_text: z.string().trim().max(500).optional(),
   company_description: z.string().trim().max(2000).optional(),
   live_chat_text: z.string().trim().max(500).optional(),
+  support_email: z.string().trim().max(160).optional(),
+  telegram_link: z.string().trim().max(2048).optional(),
+  social_links: z.array(footerSocialLinkSchema).optional(),
+  show_18_plus_notice: z.boolean().optional(),
+  notice_18_plus_text: z.string().trim().max(120).optional(),
 });
 
 router.get('/footer-links', async (req: Request, res: Response, next: NextFunction) => {
@@ -477,6 +490,28 @@ const gameThumbnailsBodySchema = z.union([
 router.get('/game-thumbnails', listBlockHandler('general.game_thumbnails'));
 router.post('/game-thumbnails', writeListBlockHandler('general.game_thumbnails', gameThumbnailsBodySchema));
 router.put('/game-thumbnails', writeListBlockHandler('general.game_thumbnails', gameThumbnailsBodySchema));
+
+/* -------------------------------------------------------------------------- */
+/* Navbar Settings — dynamic header/mobile menu items.                        */
+/* -------------------------------------------------------------------------- */
+
+const navbarItemSchema = z.object({
+  id: z.string().trim().max(120).optional(),
+  label: z.string().trim().min(1).max(120),
+  href: z.string().trim().min(1).max(2048),
+  bucket: z.enum(['main', 'more']).optional(),
+  is_active: z.boolean().optional(),
+  display_order: z.number().int().nonnegative().optional(),
+});
+
+const navbarBodySchema = z.union([
+  z.array(navbarItemSchema),
+  z.object({ items: z.array(navbarItemSchema) }),
+]);
+
+router.get('/navbar', listBlockHandler('general.navbar'));
+router.post('/navbar', writeListBlockHandler('general.navbar', navbarBodySchema));
+router.put('/navbar', writeListBlockHandler('general.navbar', navbarBodySchema));
 
 /* -------------------------------------------------------------------------- */
 /* Section 21 — Payment Configuration                                          */

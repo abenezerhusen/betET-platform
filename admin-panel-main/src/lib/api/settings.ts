@@ -53,6 +53,12 @@ export interface GeneralConfig {
   // Company Info
   platform_name?: string;
   logo_url?: string;
+  header_logo_url?: string;
+  footer_logo_url?: string;
+  logo_width?: number;
+  logo_height?: number;
+  footer_logo_width?: number;
+  footer_logo_height?: number;
   currency?: string;
   country?: string;
   country_code?: string;
@@ -78,6 +84,14 @@ export interface GeneralConfig {
   // Website content (user panel Terms page + footer)
   terms_and_conditions?: string;
   footer_text?: string;
+  static_banner_image_url?: string;
+  static_banner_mobile_image_url?: string;
+  static_banner_title?: string;
+  static_banner_subtitle?: string;
+  static_banner_width?: number;
+  static_banner_height?: number;
+  slider_banner_width?: number;
+  slider_banner_height?: number;
   // Legacy / shared
   vip_threshold?: number;
   min_withdrawal?: number;
@@ -173,6 +187,9 @@ export interface TopMatchEntry {
 export interface PromotionBanner {
   id?: string;
   image_url: string;
+  mobile_image_url?: string;
+  image_width?: number;
+  image_height?: number;
   bonus_type?: string;
   title: string;
   description?: string;
@@ -253,6 +270,20 @@ export const listPromotions = () =>
 export const savePromotions = (items: PromotionBanner[]) =>
   http.post<{ items: PromotionBanner[] }>('/api/admin/settings/promotions', { items });
 
+export interface NavbarItem {
+  id?: string;
+  label: string;
+  href: string;
+  bucket?: 'main' | 'more';
+  is_active?: boolean;
+  display_order?: number;
+}
+
+export const listNavbarItems = () =>
+  http.get<{ items: NavbarItem[] }>('/api/admin/settings/navbar');
+export const saveNavbarItems = (items: NavbarItem[]) =>
+  http.post<{ items: NavbarItem[] }>('/api/admin/settings/navbar', { items });
+
 /* -------------------------------------------------------------------------- */
 /* Footer Links                                                               */
 /* -------------------------------------------------------------------------- */
@@ -269,6 +300,11 @@ export interface FooterLinks {
   copyright_text?: string;
   company_description?: string;
   live_chat_text?: string;
+  support_email?: string;
+  telegram_link?: string;
+  social_links?: FooterLinkItem[];
+  show_18_plus_notice?: boolean;
+  notice_18_plus_text?: string;
 }
 
 export const getFooterLinks = () =>

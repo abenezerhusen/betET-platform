@@ -53,7 +53,7 @@ interface ClaimRow {
 
 const bonusRuleSchema = z.object({
   name: z.string().trim().min(2, 'Bonus name is required'),
-  type: z.enum(['deposit', 'free_bet', 'cashback', 'signup', 'referral']),
+  type: z.enum(['deposit', 'free_bet', 'cashback', 'signup', 'referral', 'loyalty']),
   match_pct: z.number().optional(),
   free_bet_amount: z.number().optional(),
   cashback_pct: z.number().optional(),
@@ -162,6 +162,7 @@ function CreateBonusModal({
                 <option value="cashback">cashback</option>
                 <option value="signup">no_deposit</option>
                 <option value="referral">referral_bonus</option>
+                <option value="loyalty">loyalty_bonus</option>
               </select>
             </div>
             <div>
@@ -367,6 +368,13 @@ export function BonusEngine() {
   const [settings, setSettings] = useState<bonusesApi.BonusSettings>(DEFAULT_BONUS_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [cashbackStore, setCashbackStore] = useState<bonusesApi.CashbackRuleStore>({
+    active_rule_id: null,
+    multi_rule_enabled: false,
+    rules: [],
+  });
+  const [selectedCashbackRuleId, setSelectedCashbackRuleId] = useState('');
+  const [vipMultiplierText, setVipMultiplierText] = useState('{}');
   const [freebets, setFreebets] = useState<bonusesApi.FreeBetRow[]>([]);
   const [freebetsLoading, setFreebetsLoading] = useState(false);
   const [freebetForm, setFreebetForm] = useState({
@@ -411,7 +419,12 @@ export function BonusEngine() {
       .getBonusSettings()
       .then((res) => {
         if (cancelled) return;
-        setSettings({ ...DEFAULT_BONUS_SETTINGS, ...res });
+        const merged = { ...DEFAULT_BONUS_SETTINGS, ...res };
+        setSettings(merged);
+        setVipMultiplierText(JSON.stringify(merged.cashback.vip_multipliers ?? {}, null, 2));
+        const store = merged.cashback_rule_store ?? { active_rule_id: null, multi_rule_enabled: false, rules: [] };
+        setCashbackStore(store);
+        setSelectedCashbackRuleId(store.active_rule_id ?? store.rules[0]?.id ?? '');
       })
       .catch((err) => toast(`Failed to load settings: ${(err as Error).message}`, 'error'))
       .finally(() => {
@@ -441,15 +454,140 @@ export function BonusEngine() {
   }, [isAuth, activeTab]);
 
   const saveSettings = async () => {
+    let vipMultipliers: Record<string, number> | undefined;
+    try {
+      const parsed = JSON.parse(vipMultiplierText || '{}') as Record<string, number>;
+      vipMultipliers = Object.fromEntries(
+        Object.entries(parsed).filter(([, v]) => Number.isFinite(Number(v)))
+      );
+    } catch {
+      toast('VIP multipliers must be valid JSON object.', 'error');
+      return;
+    }
     setSettingsSaving(true);
     try {
-      const saved = await bonusesApi.updateBonusSettings(settings);
-      setSettings({ ...DEFAULT_BONUS_SETTINGS, ...saved });
+      const payload: bonusesApi.BonusSettings = {
+        ...settings,
+        cashback: {
+          ...settings.cashback,
+          vip_multipliers: vipMultipliers,
+        },
+      };
+      const saved = await bonusesApi.updateBonusSettings(payload);
+      const merged = { ...DEFAULT_BONUS_SETTINGS, ...saved };
+      setSettings(merged);
+      setVipMultiplierText(JSON.stringify(merged.cashback.vip_multipliers ?? {}, null, 2));
+      const store = merged.cashback_rule_store ?? cashbackStore;
+      setCashbackStore(store);
+      setSelectedCashbackRuleId(store.active_rule_id ?? store.rules[0]?.id ?? '');
       toast('Bonus settings saved.');
     } catch (err) {
       toast(`Failed to save settings: ${(err as Error).message}`, 'error');
     } finally {
       setSettingsSaving(false);
+    }
+  };
+
+  const loadRuleToForm = (ruleId: string) => {
+    const row = cashbackStore.rules.find((r) => r.id === ruleId);
+    if (!row) return;
+    setSelectedCashbackRuleId(ruleId);
+    setSettings((prev) => ({ ...prev, cashback: { ...prev.cashback, ...row.config } }));
+    setVipMultiplierText(JSON.stringify(row.config.vip_multipliers ?? {}, null, 2));
+    toast(`Loaded ${row.name} into editor.`);
+  };
+
+  const refreshCashbackRules = async () => {
+    try {
+      const store = await bonusesApi.listCashbackRules();
+      setCashbackStore(store);
+      setSelectedCashbackRuleId(store.active_rule_id ?? store.rules[0]?.id ?? '');
+    } catch (err) {
+      toast(`Failed to load cashback rule history: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const addCashbackRule = async (activate: boolean) => {
+    let vipMultipliers: Record<string, number> | undefined;
+    try {
+      vipMultipliers = JSON.parse(vipMultiplierText || '{}') as Record<string, number>;
+    } catch {
+      toast('VIP multipliers must be valid JSON object.', 'error');
+      return;
+    }
+    try {
+      const store = await bonusesApi.createCashbackRule({
+        name: undefined,
+        status: activate ? 'active' : 'draft',
+        is_active: activate,
+        config: {
+          ...settings.cashback,
+          vip_multipliers: vipMultipliers,
+        },
+      });
+      setCashbackStore(store);
+      setSelectedCashbackRuleId(store.active_rule_id ?? store.rules[0]?.id ?? '');
+      toast(activate ? 'New cashback rule created and activated.' : 'Draft cashback rule created.');
+    } catch (err) {
+      toast(`Failed to create cashback rule: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const updateSelectedCashbackRule = async () => {
+    if (!selectedCashbackRuleId) {
+      toast('Select a cashback rule first.', 'error');
+      return;
+    }
+    let vipMultipliers: Record<string, number> | undefined;
+    try {
+      vipMultipliers = JSON.parse(vipMultiplierText || '{}') as Record<string, number>;
+    } catch {
+      toast('VIP multipliers must be valid JSON object.', 'error');
+      return;
+    }
+    try {
+      const store = await bonusesApi.updateCashbackRule(selectedCashbackRuleId, {
+        config: {
+          ...settings.cashback,
+          vip_multipliers: vipMultipliers,
+        },
+      });
+      setCashbackStore(store);
+      toast('Cashback rule updated.');
+    } catch (err) {
+      toast(`Failed to update cashback rule: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const activateCashbackRule = async (ruleId: string) => {
+    try {
+      const store = await bonusesApi.activateCashbackRule(ruleId);
+      setCashbackStore(store);
+      setSelectedCashbackRuleId(ruleId);
+      const active = store.rules.find((r) => r.id === ruleId);
+      if (active) {
+        setSettings((prev) => ({ ...prev, cashback: { ...prev.cashback, ...active.config } }));
+        setVipMultiplierText(JSON.stringify(active.config.vip_multipliers ?? {}, null, 2));
+      }
+      toast('Cashback rule activated.');
+    } catch (err) {
+      toast(`Failed to activate cashback rule: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const deactivateCashbackRule = async (ruleId: string) => {
+    try {
+      const store = await bonusesApi.updateCashbackRule(ruleId, {
+        status: 'inactive',
+        is_active: false,
+      });
+      setCashbackStore(store);
+      if (selectedCashbackRuleId === ruleId) {
+        setSelectedCashbackRuleId(store.active_rule_id ?? store.rules[0]?.id ?? '');
+      }
+      toast('Cashback rule disabled.');
+    } catch (err) {
+      toast(`Failed to disable cashback rule: ${(err as Error).message}`, 'error');
     }
   };
 
@@ -569,6 +707,10 @@ export function BonusEngine() {
       toast('Cashback percentage must be greater than 0.', 'error');
       return;
     }
+    if (parsed.data.type === 'loyalty' && (parsed.data.free_bet_amount ?? 0) <= 0) {
+      toast('Loyalty bonus amount must be greater than 0.', 'error');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -592,6 +734,50 @@ export function BonusEngine() {
       toast(`Failed to create bonus: ${(err as Error).message}`, 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createQuickTestBonus = async (type: 'loyalty' | 'free_bet') => {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const name =
+      type === 'loyalty'
+        ? `Test Loyalty Bonus ${now.toISOString().slice(0, 10)}`
+        : `Test Free Bet Bonus ${now.toISOString().slice(0, 10)}`;
+    try {
+      await bonusesApi.createBonus({
+        name,
+        type,
+        status: 'active',
+        is_active: true,
+        valid_from: now.toISOString(),
+        valid_to: expiresAt.toISOString(),
+        priority: 0,
+        config:
+          type === 'loyalty'
+            ? {
+                amount: 75,
+                description: 'Test loyalty bonus from admin',
+                expires_in_days: 30,
+                wagering_multiplier: 3,
+                cta_label: 'Open',
+                cta_url: '/promotions',
+              }
+            : {
+                free_bet_amount: 100,
+                amount: 100,
+                min_odds: 1.5,
+                description: 'Test free bet bonus from admin',
+                expires_in_days: 30,
+                wagering_multiplier: 0,
+                cta_label: 'Open',
+                cta_url: '/promotions',
+              },
+      });
+      toast(`${type === 'loyalty' ? 'Loyalty' : 'Free bet'} test bonus created.`);
+      await load();
+    } catch (err) {
+      toast(`Failed to create test bonus: ${(err as Error).message}`, 'error');
     }
   };
 
@@ -622,7 +808,7 @@ export function BonusEngine() {
     {
       header: 'Actions',
       accessor: 'id' as const,
-      render: (id: string) => (
+      render: (id: string, row: BonusRow) => (
         <div className="flex gap-2">
           <button
             onClick={() => void fetchClaims(id)}
@@ -631,22 +817,10 @@ export function BonusEngine() {
             claims
           </button>
           <button
-            onClick={() => void patchStatus(id, 'active')}
-            className="text-green-600 hover:text-green-800"
+            onClick={() => void patchStatus(id, row.active === 'yes' ? 'disabled' : 'active')}
+            className={row.active === 'yes' ? 'text-red-600 hover:text-red-800' : 'text-green-600 hover:text-green-800'}
           >
-            activate
-          </button>
-          <button
-            onClick={() => void patchStatus(id, 'paused')}
-            className="text-yellow-600 hover:text-yellow-800"
-          >
-            pause
-          </button>
-          <button
-            onClick={() => void patchStatus(id, 'expired')}
-            className="text-red-600 hover:text-red-800"
-          >
-            expire
+            {row.active === 'yes' ? 'disable' : 'enable'}
           </button>
           <button
             onClick={() => void awardManual(id)}
@@ -679,7 +853,7 @@ export function BonusEngine() {
     },
     {
       label: 'Type',
-      options: ['deposit', 'free_bet', 'cashback', 'signup', 'referral'],
+      options: ['deposit', 'free_bet', 'cashback', 'signup', 'referral', 'loyalty'],
       value: selectedType,
       onChange: setSelectedType,
     },
@@ -712,6 +886,18 @@ export function BonusEngine() {
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Bonus
+          </button>
+          <button
+            onClick={() => void createQuickTestBonus('loyalty')}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm"
+          >
+            + Test Loyalty
+          </button>
+          <button
+            onClick={() => void createQuickTestBonus('free_bet')}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm"
+          >
+            + Test Free Bet
           </button>
         </div>
       </div>
@@ -833,13 +1019,15 @@ export function BonusEngine() {
                 onChange={(e) =>
                   setSettings({
                     ...settings,
-                    cashback: { ...settings.cashback, schedule: e.target.value as 'weekly' | 'monthly' },
+                    cashback: { ...settings.cashback, schedule: e.target.value as 'daily' | 'weekly' | 'monthly' | 'yearly' },
                   })
                 }
                 className="mt-1 w-full rounded-md border-gray-300"
               >
+                <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
               </select>
             </div>
             <div>
@@ -884,6 +1072,30 @@ export function BonusEngine() {
                   })
                 }
                 className="mt-1 w-full rounded-md border-gray-300"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Cashback Max Cap (optional)</label>
+              <input
+                type="number"
+                value={settings.cashback.max_cap ?? 0}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    cashback: { ...settings.cashback, max_cap: Number(e.target.value) || undefined },
+                  })
+                }
+                className="mt-1 w-full rounded-md border-gray-300"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700">VIP Multipliers (JSON map)</label>
+              <textarea
+                rows={3}
+                value={vipMultiplierText}
+                onChange={(e) => setVipMultiplierText(e.target.value)}
+                className="mt-1 w-full rounded-md border-gray-300 font-mono text-xs"
+                placeholder='{"default":1,"vip_1":1.1,"vip_2":1.25}'
               />
             </div>
             <label className="flex items-center gap-3">

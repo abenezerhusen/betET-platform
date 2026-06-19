@@ -18,7 +18,7 @@ import {
 } from "@/data/sportsCatalog";
 import * as sportsApi from "@/lib/api/sports";
 import { publicConfigApi } from "@/lib/api";
-import type { PromotionBanner } from "@/lib/api/publicConfig";
+import type { PromotionBanner, PublicGeneral } from "@/lib/api/publicConfig";
 
 // ---------------------------------------------------------------------------
 // Time filter helpers
@@ -412,19 +412,21 @@ function HomePageInner() {
 
   // ---- Dynamic banner slider -----------------------------------------------
   const [banners, setBanners] = useState<PromotionBanner[]>([]);
+  const [brandingCfg, setBrandingCfg] = useState<PublicGeneral | null>(null);
   const [bannerIdx, setBannerIdx] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     const fetchBanners = () => {
-      publicConfigApi
-        .listPromotionBanners()
-        .then((res) => {
-          if (cancelled) return;
-          const active = (res.items ?? []).filter((b) => b.is_active !== false);
-          setBanners(active.length > 0 ? active : []);
-        })
-        .catch(() => { /* keep static fallback */ });
+      Promise.all([
+        publicConfigApi.listPromotionBanners().catch(() => ({ items: [] as PromotionBanner[] })),
+        publicConfigApi.getPublicGeneral().catch(() => null),
+      ]).then(([res, cfg]) => {
+        if (cancelled) return;
+        const active = (res.items ?? []).filter((b) => b.is_active !== false);
+        setBanners(active.length > 0 ? active : []);
+        if (cfg) setBrandingCfg(cfg);
+      }).catch(() => { /* keep static fallback */ });
     };
     fetchBanners();
     const onVisible = () => { if (document.visibilityState === 'visible') fetchBanners(); };
@@ -881,17 +883,19 @@ function HomePageInner() {
               <div className="absolute inset-0 flex items-center justify-between px-3 sm:px-6 md:px-8 gap-3">
                 <div className="min-w-0">
                   <h2 className="text-base sm:text-xl md:text-3xl font-bold text-white mb-1 sm:mb-2 leading-tight">
-                    WIN UP TO 360,000
+                    {brandingCfg?.static_banner_title || "WIN UP TO 360,000"}
                   </h2>
                   <p className="text-[11px] sm:text-sm md:text-lg text-white/80 leading-tight">
-                    EVERY SECOND ON FASTKENO
+                    {brandingCfg?.static_banner_subtitle || "EVERY SECOND ON FASTKENO"}
                   </p>
                 </div>
-                <img
-                  src="https://ext.same-assets.com/1203561035/2427311734.jpeg"
-                  alt="Promo"
-                  className="h-16 sm:h-24 md:h-32 w-auto object-contain shrink-0"
-                />
+                {(brandingCfg?.static_banner_image_url || "https://ext.same-assets.com/1203561035/2427311734.jpeg") && (
+                  <img
+                    src={brandingCfg?.static_banner_image_url || "https://ext.same-assets.com/1203561035/2427311734.jpeg"}
+                    alt="Promo"
+                    className="h-16 sm:h-24 md:h-32 w-auto object-contain shrink-0"
+                  />
+                )}
               </div>
             </div>
           )}

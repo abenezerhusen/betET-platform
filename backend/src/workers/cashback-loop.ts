@@ -28,10 +28,13 @@ import { emitToUser, emitWalletUpdated, Events } from '../realtime/socket';
 
 interface BonusSettings {
   cashback?: {
-    schedule?: 'weekly' | 'monthly';
+    schedule?: 'daily' | 'weekly' | 'monthly' | 'yearly';
     payout_as?: 'bonus' | 'cash';
     min_loss?: number;
     pct?: number;
+    max_cap?: number;
+    vip_multipliers?: Record<string, number>;
+    per_ticket?: { enabled?: boolean };
   };
 }
 
@@ -74,7 +77,7 @@ async function listTenantIds(): Promise<string[]> {
  */
 export async function processTenantCashback(params: {
   tenantId: string;
-  schedule: 'weekly' | 'monthly';
+  schedule: 'daily' | 'weekly' | 'monthly' | 'yearly';
 }): Promise<CashbackResult[]> {
   return withTenantClient(
     { tenantId: params.tenantId, bypassRls: true },
@@ -84,33 +87,68 @@ export async function processTenantCashback(params: {
           WHERE tenant_id = $1 AND key = 'promotions.bonus_settings'`,
         [params.tenantId]
       );
-      const cfg = settingsRow.rows[0]?.value?.cashback ?? {};
+      const ruleStoreRow = await client.query<{ value: unknown }>(
+        `SELECT value FROM settings
+          WHERE tenant_id = $1 AND key = 'promotions.cashback_rules'`,
+        [params.tenantId]
+      );
+      const store = ruleStoreRow.rows[0]?.value as
+        | {
+            active_rule_id?: string | null;
+            rules?: Array<{
+              id?: string;
+              is_active?: boolean;
+              status?: string;
+              config?: BonusSettings['cashback'];
+            }>;
+          }
+        | null;
+      const activeRule =
+        store?.rules?.find((r) => r.id === store.active_rule_id) ??
+        store?.rules?.find((r) => r.is_active === true) ??
+        null;
+      const cfg = (activeRule?.status === 'active' ? activeRule.config : null) ?? settingsRow.rows[0]?.value?.cashback ?? {};
       const schedule = cfg.schedule ?? DEFAULTS.schedule;
+      // Rule-based per-ticket cashback is authoritative and runs at
+      // settlement time; skip periodic payouts when it is enabled.
+      if (cfg.per_ticket?.enabled === true) return [];
       if (schedule !== params.schedule) return [];
 
       const minLoss = Number(cfg.min_loss ?? DEFAULTS.min_loss);
       const pct = Number(cfg.pct ?? DEFAULTS.pct);
       const payoutAs = cfg.payout_as ?? DEFAULTS.payout_as;
+      const maxCap = Number(cfg.max_cap ?? 0);
+      const vipMultipliers = cfg.vip_multipliers ?? {};
       if (!Number.isFinite(pct) || pct <= 0) return [];
 
-      const windowDays = params.schedule === 'weekly' ? 7 : 30;
+      const windowDays =
+        params.schedule === 'daily'
+          ? 1
+          : params.schedule === 'weekly'
+            ? 7
+            : params.schedule === 'monthly'
+              ? 30
+              : 365;
 
       const losses = await client.query<{
         user_id: string;
         net_loss: string;
+        vip_level: string | null;
       }>(
-        `SELECT user_id,
+        `SELECT tx.user_id,
+                u.vip_level::text AS vip_level,
                 GREATEST(
-                  -COALESCE(SUM(CASE WHEN type = 'bet_stake' THEN amount END), 0)
-                  - COALESCE(SUM(CASE WHEN type IN ('bet_win', 'bet_refund', 'bet_cashout') THEN amount END), 0),
+                  -COALESCE(SUM(CASE WHEN tx.type = 'bet_stake' THEN tx.amount END), 0)
+                  - COALESCE(SUM(CASE WHEN tx.type IN ('bet_win', 'bet_refund', 'bet_cashout') THEN tx.amount END), 0),
                   0
                 )::text AS net_loss
-           FROM transactions
-          WHERE tenant_id = $1
-            AND type IN ('bet_stake', 'bet_win', 'bet_refund', 'bet_cashout')
-            AND status = 'completed'
-            AND created_at >= now() - ($2 || ' days')::interval
-          GROUP BY user_id`,
+           FROM transactions tx
+           JOIN users u ON u.id = tx.user_id
+          WHERE tx.tenant_id = $1
+            AND tx.type IN ('bet_stake', 'bet_win', 'bet_refund', 'bet_cashout')
+            AND tx.status = 'completed'
+            AND tx.created_at >= now() - ($2 || ' days')::interval
+          GROUP BY tx.user_id, u.vip_level`,
         [params.tenantId, String(windowDays)]
       );
 
@@ -120,7 +158,11 @@ export async function processTenantCashback(params: {
         const loss = Number(row.net_loss ?? 0);
         if (!Number.isFinite(loss) || loss < minLoss) continue;
 
-        const cashback = Math.round(((loss * pct) / 100) * 100) / 100;
+        const vipKey = row.vip_level ?? 'default';
+        const vipMultiplier = Number(vipMultipliers[vipKey] ?? vipMultipliers.default ?? 1);
+        const raw = (loss * pct * (Number.isFinite(vipMultiplier) ? vipMultiplier : 1)) / 100;
+        const capped = maxCap > 0 ? Math.min(raw, maxCap) : raw;
+        const cashback = Math.round(capped * 100) / 100;
         if (cashback <= 0) continue;
 
         // Dedupe inside the current period.
@@ -191,6 +233,9 @@ export async function processTenantCashback(params: {
               window_days: windowDays,
               pct,
               loss_used: loss,
+              max_cap: maxCap || null,
+              vip_level: row.vip_level ?? null,
+              vip_multiplier: vipMultiplier,
               payout_as: payoutAs,
             }),
           ]
@@ -222,7 +267,9 @@ export async function processTenantCashback(params: {
   );
 }
 
-async function runAllTenants(schedule: 'weekly' | 'monthly'): Promise<void> {
+async function runAllTenants(
+  schedule: 'daily' | 'weekly' | 'monthly' | 'yearly'
+): Promise<void> {
   let tenantIds: string[];
   try {
     tenantIds = await listTenantIds();
@@ -260,6 +307,12 @@ function tick(): void {
   }
 
   // Monthly: on the last calendar day of the month at 00:00 UTC.
+  // Daily: every day at 00:00 UTC.
+  if (now.getUTCHours() === 0 && firedToday.get('daily') !== dayKey) {
+    firedToday.set('daily', dayKey);
+    void runAllTenants('daily');
+  }
+
   if (
     isLastDayOfMonth(now) &&
     now.getUTCHours() === 0 &&
@@ -267,6 +320,17 @@ function tick(): void {
   ) {
     firedToday.set('monthly', dayKey);
     void runAllTenants('monthly');
+  }
+
+  // Yearly: Jan 1 at 00:00 UTC.
+  if (
+    now.getUTCMonth() === 0 &&
+    now.getUTCDate() === 1 &&
+    now.getUTCHours() === 0 &&
+    firedToday.get('yearly') !== dayKey
+  ) {
+    firedToday.set('yearly', dayKey);
+    void runAllTenants('yearly');
   }
 
   // Prune dedupe map so it never grows beyond a handful of keys.

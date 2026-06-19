@@ -134,7 +134,7 @@ const RULE_TWO_LOSS_THREE_TIERS: CashbackTier[] = [
 ];
 
 export const DEFAULT_PER_TICKET_CASHBACK: PerTicketCashbackConfig = {
-  enabled: false,
+  enabled: true,
   active_rule: 'rule_one',
   payout_as: 'bonus',
   exclude_live: true,
@@ -323,6 +323,33 @@ async function loadCashbackConfig(
   client: PoolClient,
   tenantId: string
 ): Promise<PerTicketCashbackConfig> {
+  const versioned = await client.query<{ value: Record<string, unknown> | null }>(
+    `SELECT value FROM settings
+      WHERE tenant_id = $1 AND key = 'promotions.cashback_rules'`,
+    [tenantId]
+  );
+  const ruleStore = versioned.rows[0]?.value as
+    | {
+        active_rule_id?: string | null;
+        rules?: Array<{
+          id?: string;
+          is_active?: boolean;
+          status?: string;
+          config?: { per_ticket?: PerTicketCashbackConfig };
+        }>;
+      }
+    | null;
+  if (ruleStore?.rules?.length) {
+    const active =
+      ruleStore.rules.find((r) => r.id === ruleStore.active_rule_id) ??
+      ruleStore.rules.find((r) => r.is_active === true) ??
+      null;
+    if (active?.status === 'active' && active.config?.per_ticket) {
+      const cfg = active.config.per_ticket;
+      return { ...cfg, enabled: true };
+    }
+  }
+
   const r = await client.query<{ value: Record<string, unknown> | null }>(
     `SELECT value FROM settings
       WHERE tenant_id = $1 AND key = 'promotions.bonus_settings'`,
@@ -331,7 +358,8 @@ async function loadCashbackConfig(
   const v = r.rows[0]?.value as
     | { cashback?: { per_ticket?: PerTicketCashbackConfig } }
     | null;
-  return v?.cashback?.per_ticket ?? DEFAULT_PER_TICKET_CASHBACK;
+  const fallback = v?.cashback?.per_ticket ?? DEFAULT_PER_TICKET_CASHBACK;
+  return { ...fallback, enabled: true };
 }
 
 /* -------------------------------------------------------------------------- */
