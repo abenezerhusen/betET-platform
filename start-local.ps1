@@ -53,11 +53,11 @@ function Stop-PortProcess {
     } catch {}
 }
 
-Write-Host "Stopping stale frontend servers on ports 5173/3000/3001/3002..." -ForegroundColor Yellow
+Write-Host "Stopping stale frontend servers on ports 5173/3000/3001/3003..." -ForegroundColor Yellow
 Stop-PortProcess 5173
 Stop-PortProcess 3000
 Stop-PortProcess 3001
-Stop-PortProcess 3002
+Stop-PortProcess 3003
 
 # Start Docker services (DB + Backend only)
 Write-Host ""
@@ -118,19 +118,19 @@ Start-Process powershell -ArgumentList @(
 )
 Start-Sleep -Seconds 1
 
-# Cashier Panel
+# Cashier Panel  (runs on default Next.js port 3000)
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "cd '$PWD\cashier-panel-main'; `$host.UI.RawUI.WindowTitle = 'PlayCore Cashier Panel'; npm run dev -- -p 3001"
+    "cd '$PWD\cashier-panel-main'; `$host.UI.RawUI.WindowTitle = 'PlayCore Cashier Panel'; npm run dev"
 )
 Start-Sleep -Seconds 1
 
-# Game Engine
+# Game Engine  (runs on port 3003, pinned in game-engine-main/package.json)
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "cd '$PWD\game-engine-main'; `$host.UI.RawUI.WindowTitle = 'PlayCore Game Engine'; npm run dev -- -p 3002"
+    "cd '$PWD\game-engine-main'; `$host.UI.RawUI.WindowTitle = 'PlayCore Game Engine'; npm run dev"
 )
 
 # Print summary
@@ -141,10 +141,10 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Wait ~30 seconds for all panels to compile" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  Admin Panel  -> http://localhost:5173" -ForegroundColor Cyan
-Write-Host "  User Panel   -> http://localhost:3000" -ForegroundColor Cyan
-Write-Host "  Cashier      -> http://localhost:3001" -ForegroundColor Cyan
-Write-Host "  Game Engine  -> http://localhost:3002" -ForegroundColor Cyan
+  Write-Host "  Admin Panel  -> http://localhost:5173" -ForegroundColor Cyan
+  Write-Host "  Cashier      -> http://localhost:3000" -ForegroundColor Cyan
+  Write-Host "  User Panel   -> http://localhost:3001" -ForegroundColor Cyan
+  Write-Host "  Game Engine  -> http://localhost:3003" -ForegroundColor Cyan
 Write-Host "  Backend API  -> http://localhost:4000" -ForegroundColor Cyan
 Write-Host "  API Docs     -> http://localhost:4000/api-docs" -ForegroundColor Cyan
 Write-Host "  Database     -> localhost:5432" -ForegroundColor Cyan

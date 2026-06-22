@@ -87,17 +87,68 @@ async function promoteReferralOnFirstDeposit(params: {
       const cumulative = Number(depQ.rows[0]?.total ?? 0);
       if (cumulative < minDeposit) return;
 
-      // 4. Latch the bonus_amount in. The referral stays 'pending' so the
-      //    admin still gates the actual cash payout via /pay, but the row
-      //    is now visible in "Pending Rewards" with the right amount.
+      // 4. Check if the referral program is enabled.
+      const programEnabled = (cfg as Record<string, unknown>).is_enabled !== false;
+      if (!programEnabled) return;
+
+      // 5. Credit the referrer's wallet immediately (auto-reward on qualifying
+      //    deposit — no admin action required).
       await client.query(
         `UPDATE referrals
-            SET bonus_amount = $1::numeric, updated_at = now()
+            SET bonus_amount = $1::numeric,
+                status = 'rewarded',
+                rewarded_at = now(),
+                updated_at = now()
           WHERE id = $2`,
         [rewardAmount, ref.id]
       );
 
-      // 5. Bump the affiliate's earnings_total too if this code belonged to
+      if (rewardAmount > 0) {
+        const walletRow = await client.query<{ id: string; balance: string; currency: string }>(
+          `SELECT id, balance::text, currency
+             FROM wallets
+            WHERE tenant_id = $1 AND user_id = $2
+            ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+          [params.tenantId, ref.referrer_id]
+        );
+        if (walletRow.rows[0]) {
+          const before = Number(walletRow.rows[0].balance);
+          await client.query(
+            `UPDATE wallets SET balance = balance + $1::numeric WHERE id = $2`,
+            [rewardAmount, walletRow.rows[0].id]
+          );
+          await client.query(
+            `INSERT INTO transactions
+               (tenant_id, wallet_id, user_id, type, amount, before_balance,
+                after_balance, currency, status, metadata)
+             VALUES ($1,$2,$3,'bonus_credit',$4::numeric,$5::numeric,$6::numeric,$7,'completed',$8::jsonb)`,
+            [
+              params.tenantId,
+              walletRow.rows[0].id,
+              ref.referrer_id,
+              rewardAmount,
+              before,
+              before + rewardAmount,
+              walletRow.rows[0].currency,
+              JSON.stringify({
+                source: 'referral_auto_reward',
+                referral_id: ref.id,
+                referred_user_id: params.userId,
+                kind: 'referral_reward',
+              }),
+            ]
+          );
+        }
+
+        // Emit real-time notification to the referrer.
+        emitToUser(params.tenantId, ref.referrer_id, Events.BONUS_CLAIMED, {
+          type: 'referral_reward',
+          referral_id: ref.id,
+          amount: rewardAmount,
+        });
+      }
+
+      // 6. Bump the affiliate's earnings_total too if this code belonged to
       //    an affiliate account (so Affiliates → Payments shows accruals).
       if (ref.code) {
         await client.query(

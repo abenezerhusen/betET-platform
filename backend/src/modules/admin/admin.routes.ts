@@ -40,6 +40,8 @@ import jackpotsRouter from './jackpots/jackpots.module';
 import betForMeRouter from './bet-for-me/bet-for-me.module';
 // Section 18 — match-lifecycle endpoints (odds + result + status)
 import matchesRouter from './matches/matches.module';
+// Ticket Settlement & Void Rules
+import settlementRouter from './settlement/settlement.routes';
 
 // Section 10 — Monitoring (spec-aligned route aliases)
 import logsRouter from './logs/logs.module';
@@ -121,6 +123,9 @@ router.use('/bet-for-me', betForMeRouter);
 
 // Section 18 — admin matches lifecycle (PATCH /odds, POST /result, /status)
 router.use('/matches', matchesRouter);
+
+// Ticket Settlement & Void Rules — /api/admin/settlement/*
+router.use('/settlement', settlementRouter);
 
 router.use('/', opsRouter);
 

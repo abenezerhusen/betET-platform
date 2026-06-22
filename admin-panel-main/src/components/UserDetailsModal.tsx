@@ -15,6 +15,7 @@ import { DataTable } from './DataTable';
 import { downloadCsv, todayStamp } from '../lib/csv';
 import { toast } from '../lib/toast';
 import * as usersApi from '../lib/api/users';
+import * as promotionsApi from '../lib/api/promotions';
 import { ApiError } from '../lib/api/client';
 
 interface UserDetailsModalProps {
@@ -84,6 +85,7 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
   const [activeTab, setActiveTab] = useState<TabId>('transactions');
   const [details, setDetails] = useState<usersApi.UserDetailsBundle | null>(null);
   const [loading, setLoading] = useState(false);
+  const [referralRows, setReferralRows] = useState<promotionsApi.AdminReferralRow[]>([]);
 
   useEffect(() => {
     if (!isOpen || !user?.id) return;
@@ -91,6 +93,7 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
     setLoading(true);
     setDetails(null);
     setActiveTab('transactions');
+    setReferralRows([]);
     usersApi
       .getUserDetails(user.id)
       .then((res) => {
@@ -106,6 +109,13 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    // Load referrals for this user in parallel.
+    promotionsApi
+      .getUserReferrals(user.id)
+      .then((res) => {
+        if (!cancelled) setReferralRows(res.data ?? []);
+      })
+      .catch(() => { /* non-critical — ignore */ });
     return () => {
       cancelled = true;
     };
@@ -536,13 +546,23 @@ export function UserDetailsModal({ isOpen, onClose, user }: UserDetailsModalProp
                   {activeTab === 'referrals' && (
                     <div className="p-6 space-y-4">
                       <div className="bg-blue-50 border-l-4 border-blue-400 p-4 flex">
-                        <Users className="h-5 w-5 text-blue-400" />
+                        <Users className="h-5 w-5 text-blue-400 flex-shrink-0" />
                         <div className="ml-3 text-sm text-blue-700">
                           <h3 className="font-medium text-blue-800">Referral Summary</h3>
-                          <p>Total Referrals: {num(md.referral_count as number)}</p>
+                          <p>Total Referrals: {referralRows.length}</p>
+                          <p>Rewarded: {referralRows.filter(r => r.bonus_status === 'paid').length} &nbsp;|&nbsp; Pending: {referralRows.filter(r => r.bonus_status !== 'paid').length}</p>
                         </div>
                       </div>
-                      <DataTable columns={referralColumns} data={[]} />
+                      <DataTable
+                        columns={referralColumns}
+                        data={referralRows.map(r => ({
+                          name: r.referred_user ?? r.referred_phone ?? '—',
+                          joinedDate: r.date_joined ? new Date(r.date_joined).toLocaleDateString() : '—',
+                          bonusEarned: `${Number(r.reward ?? 0)} ETB`,
+                          totalBets: '—',
+                          netAmount: r.bonus_status === 'paid' ? `+${Number(r.reward ?? 0)} ETB` : 'Pending',
+                        }))}
+                      />
                     </div>
                   )}
 

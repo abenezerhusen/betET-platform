@@ -140,6 +140,21 @@ export function cashoutBet(betId: string): Promise<CashoutOutcome> {
   });
 }
 
+export interface CancelBetOutcome {
+  success: boolean;
+  bet_id: string;
+  refunded: string;
+  currency: string;
+  new_balance: string | null;
+}
+
+export function cancelBet(betId: string): Promise<CancelBetOutcome> {
+  return apiRequest<CancelBetOutcome>(`/api/bets/${betId}/cancel`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
 export interface BetHistoryRow {
   id: string;
   coupon_code: string;
@@ -151,6 +166,13 @@ export interface BetHistoryRow {
   actual_payout: string | null;
   cashout_amount: string | null;
   status: string;
+  /** Extended settlement status (may be null for older tickets). */
+  settlement_status: string | null;
+  /** Human-readable explanation for the current status. */
+  void_reason: string | null;
+  settlement_reason: string | null;
+  postponed_at: string | null;
+  postpone_wait_hours: number | null;
   currency: string;
   placed_at: string;
   settled_at: string | null;
@@ -176,6 +198,40 @@ export function listMyBets(query: {
 
 export function getBet(betId: string) {
   return apiRequest<Record<string, unknown>>(`/api/bets/${betId}`);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Internal game bets  (Aviator / JetX / Keno / etc.)                        */
+/* -------------------------------------------------------------------------- */
+
+export interface GameBetRow {
+  id: string;
+  game_id: string | null;
+  game_name: string;
+  stake: string;
+  potential_win: string;
+  payout: string | null;
+  currency: string;
+  status: string;
+  placed_at: string;
+  settled_at: string | null;
+}
+
+export interface GameBetPage {
+  items: GameBetRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export function listMyGameBets(query: {
+  status?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+} = {}): Promise<GameBetPage> {
+  return apiRequest<GameBetPage>('/api/user/bets', { query });
 }
 
 /* -------------------------------------------------------------------------- */

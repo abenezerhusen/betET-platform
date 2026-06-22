@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useBets } from "@/context/BetContext";
 import { renderBarcode } from "@/lib/barcode";
+
+interface TicketSelection {
+  id: string;
+  match: string;
+  league: string;
+  market: string;
+  selection: string;
+  odds: number;
+  date: string;
+  time: string;
+}
 
 interface ThermalTicketProps {
   ticketNumber: string;
@@ -15,6 +25,8 @@ interface ThermalTicketProps {
   betsCount: number;
   timestamp: string;
   buralNumber?: string;
+  /** Snapshot of slip selections at placement time — shown in the Bets section. */
+  selections?: TicketSelection[];
 }
 
 /**
@@ -40,8 +52,8 @@ export function ThermalTicket({
   betsCount,
   timestamp,
   buralNumber,
+  selections = [],
 }: ThermalTicketProps) {
-  const { bets } = useBets();
 
   // Generate pixel-perfect PNG barcode after mount (canvas requires DOM).
   // widthMm makes it print 1:1 at 203 DPI so bars aren't dropped by
@@ -140,7 +152,7 @@ export function ThermalTicket({
       <div style={{ margin: "4px 0" }}>{dashedLine}</div>
 
       {/* Bets list */}
-      {bets.map((bet, idx) => (
+      {selections.map((bet, idx) => (
         <div key={bet.id} style={{ marginBottom: "4px" }}>
           <div style={{ fontSize: "9.5px" }}>{bet.league}</div>
           <div style={{ fontWeight: 700 }}>{bet.match}</div>
@@ -156,7 +168,7 @@ export function ThermalTicket({
               <div style={{ fontWeight: 700 }}>{bet.odds.toFixed(2)}</div>
             </div>
           </div>
-          {idx < bets.length - 1 && (
+          {idx < selections.length - 1 && (
             <div style={{ margin: "3px 0" }}>{dashedLine}</div>
           )}
         </div>

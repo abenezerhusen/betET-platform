@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, Save } from 'lucide-react';
+import { Settings, Save, Clock, Ban } from 'lucide-react';
 import { toast } from '../../lib/toast';
 import * as settingsApi from '../../lib/api/settings';
 import * as tournamentsApi from '../../lib/api/tournaments';
@@ -32,6 +32,13 @@ export function MainConfiguration() {
   const [streakConfig, setStreakConfig] = useState<JsonObj>({});
   const [bettingRules, setBettingRules] = useState<settingsApi.MainConfig>(defaultBettingRules);
   const [ticketExpiryDays, setTicketExpiryDays] = useState<number>(7);
+  // Settlement Rules state
+  const [settlementConfig, setSettlementConfig] = useState({
+    postponement_wait_hours: 48,
+    allow_user_cancel: true,
+    cancel_window_minutes: 30,
+  });
+  const [savingSettlement, setSavingSettlement] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
@@ -62,8 +69,9 @@ export function MainConfiguration() {
       tournamentsApi.getStreakConfig().catch(() => null),
       settingsApi.getMainConfig().catch(() => ({} as settingsApi.MainConfig)),
       settingsApi.getSetting('ticket_expiry_days').catch(() => null),
+      settingsApi.getSetting('settlement.config').catch(() => null),
     ])
-      .then(([tx, mobile, referral, bonus, slip, vc, loyalty, streak, rules, expiry]) => {
+      .then(([tx, mobile, referral, bonus, slip, vc, loyalty, streak, rules, expiry, settlement]) => {
         if (cancelled) return;
         setTransactionConfig((tx?.value as JsonObj) ?? {});
         setMobileAppConfig((mobile?.value as JsonObj) ?? {});
@@ -77,6 +85,14 @@ export function MainConfiguration() {
         const raw = expiry?.value;
         const days = typeof raw === 'number' ? raw : Number(raw ?? 7);
         setTicketExpiryDays(Number.isFinite(days) && days >= 1 ? days : 7);
+        if (settlement?.value && typeof settlement.value === 'object') {
+          const sv = settlement.value as Record<string, unknown>;
+          setSettlementConfig({
+            postponement_wait_hours: typeof sv.postponement_wait_hours === 'number' ? sv.postponement_wait_hours : 48,
+            allow_user_cancel: sv.allow_user_cancel !== false,
+            cancel_window_minutes: typeof sv.cancel_window_minutes === 'number' ? sv.cancel_window_minutes : 30,
+          });
+        }
       })
       .catch((err: Error) => toast(`Failed to load configurations: ${err.message ?? err}`, 'error'))
       .finally(() => {
@@ -366,6 +382,172 @@ export function MainConfiguration() {
           >
             <Save className="h-4 w-4 mr-2" />
             {savingRules ? 'Saving...' : 'Save Rules'}
+          </button>
+        </div>
+      </div>
+
+      {/* Settlement Rules -------------------------------------------------- */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Clock className="h-5 w-5 text-blue-600" />
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Settlement Rules</h2>
+            <p className="text-xs text-gray-500">
+              Saved to <code>settlement.config</code>. Controls how postponed events and user
+              ticket cancellation work.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+          {/* Postponement wait hours */}
+          <div className="space-y-2">
+            <span className="font-medium text-gray-700 flex items-center gap-1">
+              <Clock className="h-4 w-4 text-orange-500" />
+              Postponement Waiting Period
+            </span>
+            <p className="text-xs text-gray-500">
+              How long to wait after an event is postponed before voiding selections and
+              auto-settling.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {[24, 48, 72, 96, 168].map((h) => (
+                <button
+                  key={h}
+                  onClick={() =>
+                    setSettlementConfig((s) => ({ ...s, postponement_wait_hours: h }))
+                  }
+                  className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                    settlementConfig.postponement_wait_hours === h
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                  }`}
+                >
+                  {h === 168 ? '7 days' : `${h}h`}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-gray-500">Custom hours:</span>
+              <input
+                type="number"
+                min={1}
+                max={720}
+                value={settlementConfig.postponement_wait_hours}
+                onChange={(e) =>
+                  setSettlementConfig((s) => ({
+                    ...s,
+                    postponement_wait_hours: Math.max(1, Number(e.target.value || 48)),
+                  }))
+                }
+                className="w-24 rounded-md border-gray-300 text-sm"
+              />
+              <span className="text-xs text-gray-500">hours</span>
+            </div>
+          </div>
+
+          {/* User cancel settings */}
+          <div className="space-y-2">
+            <span className="font-medium text-gray-700 flex items-center gap-1">
+              <Ban className="h-4 w-4 text-red-500" />
+              User Self-Cancel
+            </span>
+            <p className="text-xs text-gray-500">
+              Allow users to cancel their own pending ticket before the event starts.
+            </p>
+            <div className="flex items-center gap-3 py-2">
+              <button
+                onClick={() =>
+                  setSettlementConfig((s) => ({ ...s, allow_user_cancel: true }))
+                }
+                className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                  settlementConfig.allow_user_cancel
+                    ? 'bg-green-600 text-white border-green-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:border-green-400'
+                }`}
+              >
+                Enabled
+              </button>
+              <button
+                onClick={() =>
+                  setSettlementConfig((s) => ({ ...s, allow_user_cancel: false }))
+                }
+                className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                  !settlementConfig.allow_user_cancel
+                    ? 'bg-red-600 text-white border-red-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:border-red-400'
+                }`}
+              >
+                Disabled
+              </button>
+            </div>
+            {settlementConfig.allow_user_cancel && (
+              <label className="space-y-1 block">
+                <span className="text-xs text-gray-600">
+                  Cancel allowed within (minutes before event start):
+                </span>
+                <div className="flex items-center gap-2">
+                  {[5, 15, 30, 60, 120].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() =>
+                        setSettlementConfig((s) => ({ ...s, cancel_window_minutes: m }))
+                      }
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                        settlementConfig.cancel_window_minutes === m
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                      }`}
+                    >
+                      {m}m
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    min={1}
+                    value={settlementConfig.cancel_window_minutes}
+                    onChange={(e) =>
+                      setSettlementConfig((s) => ({
+                        ...s,
+                        cancel_window_minutes: Math.max(1, Number(e.target.value || 30)),
+                      }))
+                    }
+                    className="w-20 rounded-md border-gray-300 text-sm"
+                  />
+                  <span className="text-xs text-gray-500">min</span>
+                </div>
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <p className="text-xs text-gray-400">
+            Current: wait <strong>{settlementConfig.postponement_wait_hours}h</strong> for
+            postponed events · user cancel{' '}
+            <strong>
+              {settlementConfig.allow_user_cancel
+                ? `enabled (${settlementConfig.cancel_window_minutes}min window)`
+                : 'disabled'}
+            </strong>
+          </p>
+          <button
+            onClick={async () => {
+              setSavingSettlement(true);
+              try {
+                await settingsApi.upsertSetting('settlement.config', settlementConfig);
+                toast('Settlement rules saved.');
+              } catch (err) {
+                toast(`Save failed: ${(err as Error)?.message ?? err}`, 'error');
+              } finally {
+                setSavingSettlement(false);
+              }
+            }}
+            disabled={savingSettlement}
+            className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+          >
+            <Save className="h-4 w-4 mr-2" />
+            {savingSettlement ? 'Saving...' : 'Save Settlement Rules'}
           </button>
         </div>
       </div>

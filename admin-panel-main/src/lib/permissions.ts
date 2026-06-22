@@ -87,6 +87,8 @@ const administratorCatalog: Permission[] = [
   { id: 'bets.online.view', name: 'View Online Bets', description: 'View online betting tickets', category: 'Bets', scopes: adminScopes },
   { id: 'bets.jackpots.view', name: 'View Super Jackpots', description: 'View super jackpot tickets', category: 'Bets', scopes: adminScopes },
   { id: 'bets.bet_for_me.view', name: 'View BetForMe', description: 'View BetForMe tickets', category: 'Bets', scopes: adminScopes },
+  { id: 'bets.settlement.view', name: 'View Manual Settlement', description: 'Access the manual settlement page to review and settle unsettled tickets', category: 'Bets', scopes: adminScopes },
+  { id: 'bets.settlement.settle', name: 'Settle Tickets', description: 'Settle, force win/lose, refund, and void tickets', category: 'Bets', scopes: adminScopes },
   { id: 'bets.cancel', name: 'Cancel Bets', description: 'Cancel existing bets', category: 'Bets', scopes: adminScopes },
   { id: 'bets.payout', name: 'Payout Bets', description: 'Payout winning tickets', category: 'Bets', scopes: adminScopes },
   { id: 'bets.export', name: 'Export Bets', description: 'Export bet data', category: 'Bets', scopes: adminScopes },

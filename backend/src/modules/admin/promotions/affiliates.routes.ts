@@ -66,6 +66,7 @@ const payoutSchema = z.object({
 
 const referralsListQuery = z.object({
   status: z.enum(['all', 'pending', 'paid']).default('all'),
+  referrer_id: z.string().uuid().optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(200).default(50),
 });
@@ -440,6 +441,10 @@ router.get(
         } else if (q.status === 'paid') {
           filters.push(`r.status = $${i++}`);
           values.push('rewarded');
+        }
+        if (q.referrer_id) {
+          filters.push(`r.referrer_id = $${i++}`);
+          values.push(q.referrer_id);
         }
         const where = `WHERE ${filters.join(' AND ')}`;
         const total = await client.query<{ count: string }>(

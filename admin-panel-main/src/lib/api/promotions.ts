@@ -103,6 +103,7 @@ export interface AdminReferralRow {
 
 export function listAdminAffiliateReferrals(query: {
   status?: 'all' | 'pending' | 'paid';
+  referrer_id?: string;
   page?: number;
   limit?: number;
 } = {}) {
@@ -110,6 +111,11 @@ export function listAdminAffiliateReferrals(query: {
     '/api/admin/affiliates/referrals',
     { query }
   );
+}
+
+/** Load referrals where this user is the referrer — used in UserDetailsModal. */
+export function getUserReferrals(userId: string) {
+  return listAdminAffiliateReferrals({ referrer_id: userId, limit: 100 });
 }
 
 export function approveAdminAffiliateReferral(id: string) {
@@ -122,6 +128,7 @@ export function payAdminAffiliateReferral(id: string) {
 
 export function getReferralConfig() {
   return http.get<{
+    is_enabled?: boolean;
     reward_amount: number;
     min_deposit_to_qualify: number;
     reward_type: 'cash' | 'free_bet';
@@ -129,6 +136,7 @@ export function getReferralConfig() {
 }
 
 export function updateReferralConfig(input: {
+  is_enabled?: boolean;
   reward_amount: number;
   min_deposit_to_qualify: number;
   reward_type: 'cash' | 'free_bet';

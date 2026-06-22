@@ -33,6 +33,7 @@ services:
       PORT: 4000
       FRONTEND_URL: http://localhost:3000
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001,http://localhost:5173"
     ports:
       - "4000:4000"
     volumes:

@@ -5,6 +5,17 @@ import { CheckCircle, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThermalTicket } from "@/components/ThermalTicket";
 
+interface TicketSelection {
+  id: string;
+  match: string;
+  league: string;
+  market: string;
+  selection: string;
+  odds: number;
+  date: string;
+  time: string;
+}
+
 interface BetConfirmationModalProps {
   open: boolean;
   onClose: () => void;
@@ -20,6 +31,8 @@ interface BetConfirmationModalProps {
   winTax: number;
   betId?: string;
   couponCode?: string;
+  /** Snapshot of slip selections captured at placement time. */
+  selections?: TicketSelection[];
 }
 
 export function BetConfirmationModal({
@@ -37,6 +50,7 @@ export function BetConfirmationModal({
   winTax,
   betId,
   couponCode,
+  selections,
 }: BetConfirmationModalProps) {
   const buralFromTicket = `088${ticketNumber.replace(/\D/g, "").slice(0, 5).padEnd(5, "0")}`;
 
@@ -86,6 +100,7 @@ export function BetConfirmationModal({
             betsCount={betsCount}
             timestamp={new Date().toISOString()}
             buralNumber={buralFromTicket}
+            selections={selections}
           />
         </div>
 

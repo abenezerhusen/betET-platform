@@ -69,6 +69,7 @@ router.get(
       );
       return (
         row.rows[0]?.value ?? {
+          is_enabled: true,
           reward_amount: 10,
           min_deposit_to_qualify: 20,
           reward_type: 'cash',
@@ -85,6 +86,7 @@ router.put(
     const tenantId = requireScopedTenantId(scope);
     const body = z
       .object({
+        is_enabled: z.boolean().default(true),
         reward_amount: z.coerce.number().nonnegative(),
         min_deposit_to_qualify: z.coerce.number().nonnegative(),
         reward_type: z.enum(['cash', 'free_bet']),

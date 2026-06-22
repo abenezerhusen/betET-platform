@@ -29,6 +29,7 @@ import { OfflineBets } from './pages/bets/OfflineBets';
 import { OnlineBets } from './pages/bets/OnlineBets';
 import { SuperJackpots } from './pages/bets/SuperJackpots';
 import { BetForMe } from './pages/bets/BetForMe';
+import ManualSettlement from './pages/bets/ManualSettlement';
 import { ViewTournaments } from './pages/tournaments/ViewTournaments';
 import { ManageTournaments } from './pages/tournaments/ManageTournaments';
 import { StreakSettings } from './pages/tournaments/StreakSettings';
@@ -125,6 +126,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/bets/online', perm: 'bets.online.view', element: <OnlineBets /> },
   { path: '/bets/jackpots', perm: 'bets.jackpots.view', element: <SuperJackpots /> },
   { path: '/bets/bet-for-me', perm: 'bets.bet_for_me.view', element: <BetForMe /> },
+  { path: '/bets/settlement', perm: 'bets.settlement.view', element: <ManualSettlement /> },
 
   /* Tournaments */
   { path: '/tournaments/view', perm: 'tournaments.view', element: <ViewTournaments /> },

@@ -253,6 +253,16 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         totalOdds,
         stakeTax: 0,
         winTax: 0,
+        selections: bets.map((b) => ({
+          id: b.id,
+          match: b.match,
+          league: b.league,
+          market: b.market,
+          selection: b.selection,
+          odds: b.odds,
+          date: b.date,
+          time: b.time,
+        })),
       });
       setShowConfirmation(true);
       setTimeout(() => clearBets(), 1000);
@@ -396,6 +406,16 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         winTax,
         balanceSource: source,
         newBonus,
+        selections: bets.map((b) => ({
+          id: b.id,
+          match: b.match,
+          league: b.league,
+          market: b.market,
+          selection: b.selection,
+          odds: b.odds,
+          date: b.date,
+          time: b.time,
+        })),
       });
 
       setShowConfirmation(true);

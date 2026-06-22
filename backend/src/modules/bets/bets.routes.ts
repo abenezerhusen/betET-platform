@@ -934,8 +934,10 @@ async function listMyBets(
       `SELECT b.id, b.coupon_code, b.bet_type, b.stake::text,
               b.total_odds::text, b.potential_payout::text,
               b.tax_amount::text, b.actual_payout::text,
-              b.cashout_amount::text, b.status, b.currency,
-              b.placed_at, b.settled_at,
+              b.cashout_amount::text, b.status,
+              b.settlement_status, b.void_reason, b.settlement_reason,
+              b.postponed_at, b.postpone_wait_hours,
+              b.currency, b.placed_at, b.settled_at,
               (SELECT COUNT(*)::int FROM sportsbook_bet_legs l WHERE l.bet_id = b.id) AS legs_count
          FROM sportsbook_bets b
          ${where}
@@ -1152,6 +1154,157 @@ router.post(
   })
 );
 
+/* -------------------------------------------------------------------------- */
+/* User self-cancel — POST /api/bets/:id/cancel                               */
+/*                                                                            */
+/* Allows a user to cancel their own PENDING ticket before any event starts,  */
+/* subject to the `settlement.config.cancel_window_minutes` setting.          */
+/* Refunds the full stake to the wallet.                                       */
+/* -------------------------------------------------------------------------- */
+
+router.post(
+  '/:id/cancel',
+  wrap(async (req) => {
+    const scope = getUserScope(req);
+    const betId = idParam.parse(req.params).id;
+
+    return withTenantClient({ tenantId: scope.tenantId }, async (client) => {
+      /* ---- Load settlement config to check if cancel is allowed ---- */
+      const cfgRow = await client.query<{ value: unknown }>(
+        `SELECT value FROM settings
+          WHERE tenant_id = $1 AND key = 'settlement.config'
+          LIMIT 1`,
+        [scope.tenantId]
+      );
+      const cfg = (cfgRow.rows[0]?.value ?? {}) as Record<string, unknown>;
+      const allowCancel = cfg.allow_user_cancel !== false; // default true
+      if (!allowCancel) {
+        throw new BadRequestError('Ticket cancellation is not allowed', {
+          reason: 'cancel_disabled',
+        });
+      }
+      const cancelWindowMinutes = typeof cfg.cancel_window_minutes === 'number'
+        ? cfg.cancel_window_minutes
+        : 30;
+
+      /* ---- Load the bet (must belong to this user) ---- */
+      const betRow = await client.query<{
+        id: string;
+        user_id: string;
+        tenant_id: string;
+        stake: string;
+        currency: string;
+        status: string;
+        settlement_status: string | null;
+        placed_at: Date;
+      }>(
+        `SELECT id, user_id, tenant_id, stake::text, currency,
+                status, settlement_status, placed_at
+           FROM sportsbook_bets
+          WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+        [betId, scope.tenantId]
+      );
+      const bet = betRow.rows[0];
+      if (!bet) throw new NotFoundError('Ticket not found');
+      if (bet.user_id !== scope.userId) throw new ForbiddenError('Not your ticket');
+
+      if (bet.status !== 'pending') {
+        throw new BadRequestError('Only pending tickets can be cancelled', {
+          reason: 'ticket_not_pending',
+          current_status: bet.status,
+        });
+      }
+
+      /* ---- Check that no event has already started ---- */
+      const startedLegs = await client.query<{ count: string }>(
+        `SELECT COUNT(*) AS count
+           FROM sportsbook_bet_legs l
+           JOIN sports_selections sel ON sel.id = l.selection_id
+           JOIN sports_markets m      ON m.id   = sel.market_id
+           JOIN sports_events  ev     ON ev.id  = m.event_id
+          WHERE l.bet_id = $1
+            AND ev.starts_at <= now() - ($2 || ' minutes')::interval`,
+        [betId, cancelWindowMinutes]
+      );
+      if (Number(startedLegs.rows[0]?.count ?? 0) > 0) {
+        throw new BadRequestError(
+          'Cannot cancel — one or more events have already started',
+          { reason: 'event_started' }
+        );
+      }
+
+      /* ---- Cancel the bet ---- */
+      await client.query(
+        `UPDATE sportsbook_bets
+            SET status = 'void',
+                settlement_status = 'cancelled',
+                settlement_reason = 'user_cancelled',
+                settled_at = now(),
+                updated_at = now()
+          WHERE id = $1`,
+        [betId]
+      );
+
+      /* ---- Refund stake ---- */
+      const walletRow = await client.query<{
+        id: string; balance: string; locked_balance: string; currency: string;
+      }>(
+        `SELECT id, balance::text, locked_balance::text, currency
+           FROM wallets
+          WHERE user_id = $1 AND currency = $2
+          ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+        [scope.userId, bet.currency]
+      );
+      const w = walletRow.rows[0];
+      if (w) {
+        const stake = Number(bet.stake);
+        const before = Number(w.balance);
+        const newBalance = Math.round((before + stake) * 100) / 100;
+        const newLocked = Math.round(
+          Math.max(0, Number(w.locked_balance) - stake) * 100
+        ) / 100;
+
+        await client.query(
+          `UPDATE wallets
+              SET balance = $1, locked_balance = $2, updated_at = now()
+            WHERE id = $3`,
+          [newBalance, newLocked, w.id]
+        );
+
+        await client.query(
+          `INSERT INTO transactions
+             (tenant_id, user_id, wallet_id, type, currency, amount,
+              before_balance, after_balance, status, reference, metadata)
+           VALUES ($1,$2,$3,'bet_refund',$4,$5,$6,$7,'completed',$8,$9::jsonb)`,
+          [
+            scope.tenantId, scope.userId, w.id, bet.currency,
+            stake, before, newBalance,
+            `cancel:${betId}`,
+            JSON.stringify({ reason: 'user_cancelled', bet_id: betId }),
+          ]
+        );
+      }
+
+      /* ---- Write settlement audit log ---- */
+      await client.query(
+        `INSERT INTO settlement_audit_logs
+           (tenant_id, bet_id, actor_id, action,
+            old_status, new_status, stake, void_reason, settlement_reason)
+         VALUES ($1,$2,$3,'user_cancel','pending','cancelled',$4,'user_cancelled','user_cancelled')`,
+        [scope.tenantId, betId, scope.userId, bet.stake]
+      );
+
+      return {
+        success: true,
+        bet_id: betId,
+        refunded: bet.stake,
+        currency: bet.currency,
+        new_balance: w ? String(Number(w.balance) + Number(bet.stake)) : null,
+      };
+    });
+  })
+);
+
 // Mutation verbs against an already-placed slip are NOT allowed. Audit
 // is the only spec channel for changes (see Section 10).
 router.all('/:id', (req, res, next) => {
@@ -1159,7 +1312,7 @@ router.all('/:id', (req, res, next) => {
   res.set('Allow', 'GET, POST');
   res.status(405).json({
     error: 'method_not_allowed',
-    message: 'Bets are immutable from the user surface — see /cashout for the only mutation.',
+    message: 'Bets are immutable from the user surface — see /cashout or /cancel.',
   });
 });
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileText, Gift, Users, Wallet, Target, Gamepad2, Settings, ChevronDown, ChevronRight, Shield, PenTool as Tool, Network, Activity, AlertTriangle, BarChart2, Bell, History, Trophy, CreditCard, Repeat, Smartphone, Terminal, Inbox, Sliders, Percent, Code2, Package, Plug } from 'lucide-react';
+import { LayoutDashboard, FileText, Gift, Users, Wallet, Target, Gamepad2, Settings, ChevronDown, ChevronRight, Shield, PenTool as Tool, Network, Activity, AlertTriangle, BarChart2, Bell, History, Trophy, CreditCard, Repeat, Smartphone, Terminal, Inbox, Sliders, Percent, Code2, Package, Plug, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuthStore } from '../store/auth';
 
@@ -73,6 +73,7 @@ const menuItems: MenuItem[] = [
       { title: 'Online Bets', path: '/bets/online', perm: 'bets.online.view', icon: <ChevronRight size={16} /> },
       { title: 'Super Jackpots', path: '/bets/jackpots', perm: 'bets.jackpots.view', icon: <ChevronRight size={16} /> },
       { title: 'BetForMe', path: '/bets/bet-for-me', perm: 'bets.bet_for_me.view', icon: <ChevronRight size={16} /> },
+      { title: 'Manual Settlement', path: '/bets/settlement', perm: 'bets.settlement.view', icon: <AlertTriangle size={16} /> },
     ],
   },
   {

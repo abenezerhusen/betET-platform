@@ -58,6 +58,7 @@ interface PaidRewardData {
 }
 
 interface ReferralConfig {
+  is_enabled?: boolean;
   reward_amount: number;
   min_deposit_to_qualify: number;
   reward_type: 'cash' | 'free_bet';
@@ -120,50 +121,78 @@ const StatCard = ({ icon: Icon, title, value, trend }: { icon: any; title: strin
 
 const ConfigurationModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
   const [config, setConfig] = useState<ReferralConfig>({
+    is_enabled: true,
     reward_amount: 10,
     min_deposit_to_qualify: 20,
     reward_type: 'cash',
   });
+  const [saving, setSaving] = useState(false);
 
-  if (!isOpen) return null;
-
+  // Hooks must come before any conditional return (React rules).
   useEffect(() => {
+    if (!isOpen) return;
     promotionsApi
       .getReferralConfig()
-      .then((cfg) => setConfig(cfg))
+      .then((cfg) => setConfig({ is_enabled: true, ...cfg }))
       .catch((err: Error) => toast(`Failed to load config: ${err.message ?? err}`, 'error'));
   }, [isOpen]);
 
+  if (!isOpen) return null;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSaving(true);
     promotionsApi
       .updateReferralConfig(config)
       .then(() => {
         toast('Referral configuration saved.');
         onClose();
       })
-      .catch((err: Error) => toast(`Failed to save config: ${err.message ?? err}`, 'error'));
+      .catch((err: Error) => toast(`Failed to save config: ${err.message ?? err}`, 'error'))
+      .finally(() => setSaving(false));
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl">
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-semibold">Referral Program Configuration</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700">×</button>
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl leading-none">×</button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-2 gap-6">
+          <form onSubmit={handleSubmit} className="space-y-5">
 
+            {/* Enable / Disable toggle */}
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Program Status</p>
+                <p className="text-xs text-gray-500 mt-0.5">Enable or disable the referral program for all users</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfig({ ...config, is_enabled: !config.is_enabled })}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                  config.is_enabled ? 'bg-green-500' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    config.is_enabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Minimum Deposit (ETB)</label>
                 <input
                   type="number"
+                  min={0}
                   value={config.min_deposit_to_qualify}
                   onChange={(e) => setConfig({ ...config, min_deposit_to_qualify: Number(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
                 />
               </div>
 
@@ -171,38 +200,40 @@ const ConfigurationModal = ({ isOpen, onClose }: { isOpen: boolean; onClose: () 
                 <label className="block text-sm font-medium text-gray-700">Reward Amount (ETB)</label>
                 <input
                   type="number"
+                  min={0}
                   value={config.reward_amount}
                   onChange={(e) => setConfig({ ...config, reward_amount: Number(e.target.value) })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Reward Type</label>
-                <select
-                  value={config.reward_type}
-                  onChange={(e) => setConfig({ ...config, reward_type: e.target.value as 'cash' | 'free_bet' })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                >
-                  <option value="cash">Cash</option>
-                  <option value="free_bet">Free Bet</option>
-                </select>
               </div>
             </div>
 
-            <div className="flex justify-end space-x-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Reward Type</label>
+              <select
+                value={config.reward_type}
+                onChange={(e) => setConfig({ ...config, reward_type: e.target.value as 'cash' | 'free_bet' })}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+              >
+                <option value="cash">Cash (credited to wallet automatically)</option>
+                <option value="free_bet">Free Bet</option>
+              </select>
+            </div>
+
+            <div className="flex justify-end space-x-3 pt-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-60"
               >
-                Save Configuration
+                {saving ? 'Saving…' : 'Save Configuration'}
               </button>
             </div>
           </form>
@@ -217,6 +248,7 @@ const ProcessRewardModal = ({ isOpen, onClose, reward, onProcessed }: { isOpen: 
   const [paymentMethod, setPaymentMethod] = useState('wallet');
   const [processing, setProcessing] = useState(false);
 
+  // Hooks before conditional return (React rules of hooks).
   if (!isOpen || !reward) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -565,9 +597,11 @@ export function Referrals() {
             <div className="bg-gray-50 p-4 rounded-lg">
               <h3 className="text-sm font-medium text-gray-700">Basic Settings</h3>
               <dl className="mt-2 space-y-2">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <dt className="text-sm text-gray-500">Program Status</dt>
-                  <dd className="text-sm font-medium text-green-600">Active</dd>
+                  <dd className={`text-sm font-medium ${settings?.is_enabled !== false ? 'text-green-600' : 'text-red-500'}`}>
+                    {settings?.is_enabled !== false ? 'Active' : 'Disabled'}
+                  </dd>
                 </div>
               </dl>
             </div>
