@@ -194,8 +194,11 @@ export async function creditWallet(
     id: string;
     balance: string;
     locked_balance: string;
+    withdrawable_balance: string;
+    payable_balance: string;
   }>(
-    `SELECT id, balance::text, locked_balance::text
+    `SELECT id, balance::text, locked_balance::text,
+            withdrawable_balance::text, payable_balance::text
        FROM wallets
       WHERE user_id = $1 AND currency = $2
       ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
@@ -205,16 +208,33 @@ export async function creditWallet(
   if (!w) return;
 
   const before = Number(w.balance);
-  const newBalance = Math.round((before + params.credit) * 100) / 100;
+  // Per platform rule: winnings (bet_win) go to the Withdrawable bucket so
+  // the user can cash them out (after KYC / pending-period rules). Refunds
+  // return the stake to the Deductable bucket so it can be staked again.
+  // The legacy `balance` column (Deductable) is kept in sync for backwards
+  // compatibility with existing bet-placement code that debits from it.
+  const isWin = params.txType === 'bet_win';
+  const newBalance = Math.round((before + (isWin ? 0 : params.credit)) * 100) / 100;
   const newLocked = Math.round(
     Math.max(0, Number(w.locked_balance) - params.stake) * 100
   ) / 100;
+  const newWithdrawable = Math.round(
+    (Number(w.withdrawable_balance) + (isWin ? params.credit : 0)) * 100
+  ) / 100;
+  // Payable bucket is where pending winnings live before settlement; here
+  // the bet is already settled, so we don't credit payable — we move
+  // straight to withdrawable. Kept for accounting transparency in metadata.
+  const newPayable = Number(w.payable_balance);
 
   await client.query(
     `UPDATE wallets
-        SET balance = $1, locked_balance = $2, updated_at = now()
-      WHERE id = $3`,
-    [newBalance, newLocked, w.id]
+        SET balance              = $1,
+            locked_balance       = $2,
+            withdrawable_balance = $3,
+            payable_balance      = $4,
+            updated_at           = now()
+      WHERE id = $5`,
+    [newBalance, newLocked, newWithdrawable, newPayable, w.id]
   );
 
   await client.query(
@@ -230,9 +250,15 @@ export async function creditWallet(
       params.currency,
       params.credit,
       before,
-      newBalance,
+      isWin ? newWithdrawable : newBalance,
       `settlement:${params.betId}`,
-      JSON.stringify({ reason: params.reason, bet_id: params.betId }),
+      JSON.stringify({
+        reason: params.reason,
+        bet_id: params.betId,
+        bucket: isWin ? 'withdrawable' : 'deductable',
+        withdrawable_balance: newWithdrawable.toFixed(2),
+        payable_balance: newPayable.toFixed(2),
+      }),
     ]
   );
 
@@ -243,6 +269,8 @@ export async function creditWallet(
       currency: params.currency,
       balance: newBalance.toFixed(2),
       locked_balance: newLocked.toFixed(2),
+      withdrawable_balance: newWithdrawable.toFixed(2),
+      payable_balance: newPayable.toFixed(2),
     },
   });
 }

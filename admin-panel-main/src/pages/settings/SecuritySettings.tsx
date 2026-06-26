@@ -279,6 +279,12 @@ export function SecuritySettings() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSelectedType('');
+          setSelectedStatus('');
+          setStartDate(new Date());
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow p-6">

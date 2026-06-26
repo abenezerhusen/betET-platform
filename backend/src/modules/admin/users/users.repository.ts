@@ -384,6 +384,7 @@ export interface UserDetailsBet {
 
 export interface UserDetailsTransaction {
   id: string;
+  type: string;
   amount: string;
   status: string;
   reference: string | null;
@@ -396,6 +397,30 @@ export interface UserDetailsBalance {
   balance: string;
   bonus_balance: string;
   locked_balance: string;
+  withdrawable_balance: string;
+  payable_balance: string;
+}
+
+export interface UserDetailsBonusHistory {
+  id: string;
+  awarded_at: string;
+  amount: string;
+  type: string;
+  description: string;
+  status: string;
+  expires_at: string | null;
+}
+
+export interface UserDetailsBranchTransaction {
+  id: string;
+  type: string;
+  amount: string;
+  status: string;
+  reference: string | null;
+  notes: string | null;
+  created_at: string;
+  cashier_name: string | null;
+  branch_id: string | null;
 }
 
 export interface UserDetailsBundle {
@@ -405,6 +430,8 @@ export interface UserDetailsBundle {
   recent_bets: UserDetailsBet[];
   recent_deposits: UserDetailsTransaction[];
   recent_withdrawals: UserDetailsTransaction[];
+  bonus_history: UserDetailsBonusHistory[];
+  branch_transactions: UserDetailsBranchTransaction[];
 }
 
 /**
@@ -424,10 +451,20 @@ export async function getUserDetails(
     WITH agg AS (
       SELECT
         COALESCE((SELECT SUM(amount)::text FROM transactions
-          WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'), '0')
+          WHERE user_id = $1
+            AND (
+              type IN ('deposit', 'telebirr_deposit', 'p2p_deposit', 'manual_deposit')
+              OR (type = 'adjustment' AND metadata->>'admin_action' = 'credit')
+            )
+            AND status = 'completed'), '0')
             AS total_deposits,
-        COALESCE((SELECT SUM(amount)::text FROM transactions
-          WHERE user_id = $1 AND type = 'withdrawal' AND status = 'completed'), '0')
+        COALESCE((SELECT SUM(ABS(amount))::text FROM transactions
+          WHERE user_id = $1
+            AND (
+              type IN ('withdrawal', 'manual_withdrawal')
+              OR (type = 'adjustment' AND metadata->>'admin_action' = 'debit')
+            )
+            AND status = 'completed'), '0')
             AS total_withdrawals,
         COALESCE(
           (SELECT (
@@ -461,9 +498,11 @@ export async function getUserDetails(
 
   const balancesRes = await client.query<UserDetailsBalance>(
     `SELECT currency,
-            COALESCE(balance, 0)::text         AS balance,
-            COALESCE(bonus_balance, 0)::text   AS bonus_balance,
-            COALESCE(locked_balance, 0)::text  AS locked_balance
+            COALESCE(balance, 0)::text              AS balance,
+            COALESCE(bonus_balance, 0)::text        AS bonus_balance,
+            COALESCE(locked_balance, 0)::text       AS locked_balance,
+            COALESCE(withdrawable_balance, 0)::text AS withdrawable_balance,
+            COALESCE(payable_balance, 0)::text      AS payable_balance
        FROM wallets
       WHERE user_id = $1 AND status = 'active'
       ORDER BY currency`,
@@ -471,29 +510,31 @@ export async function getUserDetails(
   );
 
   const betsRes = await client.query<UserDetailsBet>(
-    `SELECT id::text                                          AS id,
+    `SELECT sb.id::text                                       AS id,
             'sportsbook'::text                                AS source,
-            stake::text                                       AS stake,
-            potential_payout::text                            AS potential_payout,
-            actual_payout::text                               AS actual_payout,
-            status::text                                      AS status,
-            placed_at,
-            coupon_code,
-            legs_count
-       FROM sportsbook_bets
-      WHERE user_id = $1
+            sb.stake::text                                    AS stake,
+            sb.potential_payout::text                         AS potential_payout,
+            sb.actual_payout::text                            AS actual_payout,
+            sb.status::text                                   AS status,
+            sb.placed_at,
+            sb.coupon_code,
+            (SELECT COUNT(*)::int
+               FROM sportsbook_bet_legs l
+              WHERE l.bet_id = sb.id)                         AS legs_count
+       FROM sportsbook_bets sb
+      WHERE sb.user_id = $1
       UNION ALL
-     SELECT id::text                                          AS id,
+     SELECT b.id::text                                        AS id,
             'bets'::text                                      AS source,
-            stake::text                                       AS stake,
-            potential_win::text                               AS potential_payout,
-            payout::text                                      AS actual_payout,
-            status::text                                      AS status,
-            placed_at,
+            b.stake::text                                     AS stake,
+            b.potential_win::text                             AS potential_payout,
+            b.payout::text                                    AS actual_payout,
+            b.status::text                                    AS status,
+            b.placed_at,
             NULL::text                                        AS coupon_code,
             NULL::int                                         AS legs_count
-       FROM bets
-      WHERE user_id = $1
+       FROM bets b
+      WHERE b.user_id = $1
       ORDER BY placed_at DESC
       LIMIT $2`,
     [userId, recentLimit]
@@ -505,10 +546,14 @@ export async function getUserDetails(
             status,
             reference,
             created_at,
-            metadata
+            metadata,
+            type
        FROM transactions
       WHERE user_id = $1
-        AND type = 'deposit'
+        AND (
+          type IN ('deposit', 'telebirr_deposit', 'p2p_deposit', 'manual_deposit')
+          OR (type = 'adjustment' AND metadata->>'admin_action' = 'credit')
+        )
       ORDER BY created_at DESC
       LIMIT $2`,
     [userId, recentLimit]
@@ -516,15 +561,66 @@ export async function getUserDetails(
 
   const withdrawalsRes = await client.query<UserDetailsTransaction>(
     `SELECT id::text         AS id,
-            amount::text      AS amount,
+            ABS(amount)::text AS amount,
             status,
             reference,
             created_at,
-            metadata
+            metadata,
+            type
        FROM transactions
       WHERE user_id = $1
-        AND type = 'withdrawal'
+        AND (
+          type IN ('withdrawal', 'manual_withdrawal')
+          OR (type = 'adjustment' AND metadata->>'admin_action' = 'debit')
+        )
       ORDER BY created_at DESC
+      LIMIT $2`,
+    [userId, recentLimit]
+  );
+
+  // Bonus history: assignments + bonus_credit transactions
+  const bonusRes = await client.query<UserDetailsBonusHistory>(
+    `SELECT ba.id::text                           AS id,
+            ba.awarded_at::text                   AS awarded_at,
+            ba.awarded_amount::text               AS amount,
+            COALESCE(br.type, 'bonus')            AS type,
+            COALESCE(br.name, 'Bonus Award')      AS description,
+            ba.status,
+            ba.expires_at::text                   AS expires_at
+       FROM bonus_assignments ba
+       LEFT JOIN bonus_rules br ON br.id = ba.bonus_rule_id
+      WHERE ba.user_id = $1
+      UNION ALL
+     SELECT t.id::text                            AS id,
+            t.created_at::text                    AS awarded_at,
+            t.amount::text                        AS amount,
+            t.type                                AS type,
+            COALESCE(t.metadata->>'source', t.type) AS description,
+            t.status,
+            NULL::text                            AS expires_at
+       FROM transactions t
+      WHERE t.user_id = $1
+        AND t.type IN ('bonus_credit', 'cashback', 'free_bet_credit', 'referral_reward')
+      ORDER BY awarded_at DESC
+      LIMIT $2`,
+    [userId, recentLimit]
+  );
+
+  // Branch (cashier) transactions for this user
+  const branchRes = await client.query<UserDetailsBranchTransaction>(
+    `SELECT ct.id::text                               AS id,
+            ct.type,
+            ct.amount::text                           AS amount,
+            ct.status,
+            ct.reference,
+            ct.notes,
+            ct.created_at::text                       AS created_at,
+            ct.branch_id::text                        AS branch_id,
+            COALESCE(u.phone, u.email, 'Cashier')     AS cashier_name
+       FROM cashier_transactions ct
+       LEFT JOIN users u ON u.id = ct.cashier_id
+      WHERE ct.user_id = $1
+      ORDER BY ct.created_at DESC
       LIMIT $2`,
     [userId, recentLimit]
   );
@@ -536,6 +632,8 @@ export async function getUserDetails(
     recent_bets: betsRes.rows,
     recent_deposits: depositsRes.rows,
     recent_withdrawals: withdrawalsRes.rows,
+    bonus_history: bonusRes.rows,
+    branch_transactions: branchRes.rows,
   };
 }
 

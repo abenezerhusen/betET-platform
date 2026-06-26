@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Filter } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { DateRangePicker } from './DateRangePicker';
 import { toast } from '../lib/toast';
 
@@ -17,6 +17,12 @@ interface FilterBarProps {
   onStartDateChange: (date: Date) => void;
   onEndDateChange: (date: Date) => void;
   filters?: FilterOption[];
+  /**
+   * Optional callback fired when the user clicks "Clear". When provided,
+   * the page is expected to reset every filter (including the date range)
+   * to its default value. When omitted, the button is hidden.
+   */
+  onClear?: () => void;
 }
 
 export function FilterBar({
@@ -25,7 +31,10 @@ export function FilterBar({
   onStartDateChange,
   onEndDateChange,
   filters,
+  onClear,
 }: FilterBarProps) {
+  const activeCount = filters?.filter((f) => f.value).length ?? 0;
+
   return (
     <div className="bg-white p-4 rounded-lg shadow space-y-4">
       <div className="flex flex-wrap items-center gap-4">
@@ -66,14 +75,18 @@ export function FilterBar({
             )}
           </div>
         ))}
-        <button
-          type="button"
-          onClick={() => toast('Additional filters coming soon.', 'info')}
-          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-        >
-          <Filter size={16} className="mr-2" />
-          More Filters
-        </button>
+        {onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={activeCount === 0}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Reset all filters"
+          >
+            <X size={16} className="mr-2" />
+            Clear
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -93,3 +106,5 @@ export function FilterBar({
     </div>
   );
 }
+
+export default FilterBar;

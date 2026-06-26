@@ -4,6 +4,7 @@ import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { TabGroup } from '../../components/TabGroup';
 import { UserPlus } from 'lucide-react';
+import { CountBadge } from '../../components/CountBadge';
 import { UserActions } from '../../components/UserActions';
 import { EditUserModal } from '../../components/EditUserModal';
 import { PasswordChangeModal } from '../../components/PasswordChangeModal';
@@ -21,6 +22,7 @@ interface AgentData {
   id: string;
   firstName: string;
   lastName: string;
+  fullName: string;
   username: string;
   email: string;
   phone: string;
@@ -36,10 +38,14 @@ interface AgentData {
 
 function toRow(u: AdminUser): AgentData {
   const md = (u.metadata ?? {}) as Record<string, unknown>;
+  const firstName = String(md.first_name ?? '') || (u.email ? u.email.split('@')[0] : '');
+  const lastName = String(md.last_name ?? '');
+  const fullName = `${firstName} ${lastName}`.trim() || String(md.username ?? '') || u.email || u.phone || u.id;
   return {
     id: u.id,
-    firstName: String(md.first_name ?? '') || (u.email ? u.email.split('@')[0] : ''),
-    lastName: String(md.last_name ?? ''),
+    firstName,
+    lastName,
+    fullName,
     username: String(md.username ?? u.email ?? u.phone ?? u.id),
     email: u.email ?? '',
     phone: u.phone ?? '',
@@ -96,6 +102,7 @@ export function Agents() {
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
   const [selectedType, setSelectedType] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedName, setSelectedName] = useState('');
   const [newAgentPermissions, setNewAgentPermissions] = useState<string[]>([]);
   const [formState, setFormState] = useState({
     firstName: '',
@@ -248,6 +255,18 @@ export function Agents() {
 
   const filters = [
     {
+      label: 'Agent Name',
+      options: useMemo(
+        () =>
+          Array.from(new Set(rows.map((r) => r.fullName).filter(Boolean))).sort(
+            (a, b) => a.localeCompare(b)
+          ),
+        [rows]
+      ),
+      value: selectedName,
+      onChange: setSelectedName,
+    },
+    {
       label: 'Type',
       options: ['Regular', 'POS'],
       value: selectedType,
@@ -260,6 +279,30 @@ export function Agents() {
       onChange: setSelectedStatus,
     },
   ];
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((r) => {
+      if (selectedName && r.fullName !== selectedName) return false;
+      if (selectedType && r.type !== selectedType) return false;
+      if (selectedStatus && r.status !== selectedStatus) return false;
+      return true;
+    });
+  }, [rows, selectedName, selectedType, selectedStatus]);
+
+  const handleClearFilters = () => {
+    setSelectedName('');
+    setSelectedType('');
+    setSelectedStatus('');
+  };
+
+  // Total + per-status counts for the header badge. Derived from the
+  // unfiltered list so totals reflect the whole tenant.
+  const counts = useMemo(() => {
+    const active = rows.filter((r) => r.status === 'Active').length;
+    const suspended = rows.filter((r) => r.status === 'Suspended').length;
+    const inactive = rows.filter((r) => r.status === 'Inactive').length;
+    return { total: rows.length, active, suspended, inactive };
+  }, [rows]);
 
   const columns = [
     { header: 'First Name', accessor: 'firstName' as const },
@@ -292,7 +335,23 @@ export function Agents() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Agents</h1>
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-2xl font-semibold text-gray-900">Agents</h1>
+          {activeTab === 'list' && (
+            <CountBadge
+              total={counts.total}
+              loading={loading && rows.length === 0}
+              breakdown={[
+                { label: 'Active', value: counts.active, tone: 'green' },
+                { label: 'Suspended', value: counts.suspended, tone: 'red' },
+                { label: 'Inactive', value: counts.inactive, tone: 'gray' },
+                ...(filteredRows.length !== rows.length
+                  ? [{ label: 'Showing', value: filteredRows.length, tone: 'blue' as const }]
+                  : []),
+              ]}
+            />
+          )}
+        </div>
         {activeTab === 'list' && (
           <button
             onClick={() => setActiveTab('add')}
@@ -318,13 +377,14 @@ export function Agents() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={filters}
+            onClear={handleClearFilters}
           />
 
           <div className="bg-white rounded-lg shadow">
             {loading && rows.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
             ) : (
-              <DataTable columns={columns} data={rows} />
+              <DataTable columns={columns} data={filteredRows} />
             )}
           </div>
         </>

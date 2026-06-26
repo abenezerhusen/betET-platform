@@ -306,6 +306,12 @@ export function ApiManagement() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSelectedVersion('');
+          setSelectedStatus('');
+          setStartDate(new Date());
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

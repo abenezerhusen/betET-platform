@@ -345,6 +345,19 @@ export function WalletTransactions() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setPhoneNumber('');
+          setSelectedReason('');
+          setDirection('');
+          setMinAmount('');
+          setMaxAmount('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 30);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

@@ -284,6 +284,12 @@ export function MaintenanceTools() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSelectedType('');
+          setSelectedSeverity('');
+          setStartDate(new Date());
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

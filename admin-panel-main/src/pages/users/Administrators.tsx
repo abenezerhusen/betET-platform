@@ -21,6 +21,7 @@ interface AdminData {
   id: string;
   firstName: string;
   lastName: string;
+  fullName: string;
   username: string;
   email: string;
   phone: string;
@@ -46,6 +47,7 @@ function toAdminRow(u: AdminUser): AdminData {
     id: u.id,
     firstName: fn,
     lastName: ln,
+    fullName: `${fn} ${ln}`.trim() || String(md.username ?? '') || u.email || u.phone || u.id,
     username: String(md.username ?? '') || u.email || u.phone || u.id,
     email: u.email ?? '',
     phone: u.phone ?? '',
@@ -99,6 +101,8 @@ export function Administrators() {
   const [activeTab, setActiveTab] = useState('list');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
+  const [selectedName, setSelectedName] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedUser, setSelectedUser] = useState<AdminData | null>(null);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -127,6 +131,37 @@ export function Administrators() {
     pollIntervalMs: 30000,
   });
   const adminRows = useMemo(() => backendAdmins.map(toAdminRow), [backendAdmins]);
+
+  const nameOptions = useMemo(
+    () =>
+      Array.from(new Set(adminRows.map((r) => r.fullName).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b)
+      ),
+    [adminRows]
+  );
+
+  const filteredRows = useMemo(() => {
+    return adminRows.filter((r) => {
+      if (selectedName && r.fullName !== selectedName) return false;
+      if (selectedStatus && r.status !== selectedStatus) return false;
+      return true;
+    });
+  }, [adminRows, selectedName, selectedStatus]);
+
+  const adminFilters = [
+    {
+      label: 'Admin Name',
+      options: nameOptions,
+      value: selectedName,
+      onChange: setSelectedName,
+    },
+    {
+      label: 'Status',
+      options: ['Active', 'Suspended'],
+      value: selectedStatus,
+      onChange: setSelectedStatus,
+    },
+  ];
 
   const findUser = (id: string) => adminRows.find((u) => u.id === id);
 
@@ -375,13 +410,20 @@ export function Administrators() {
             endDate={endDate}
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
+            filters={adminFilters}
+            onClear={() => {
+              setSelectedName('');
+              setSelectedStatus('');
+              setStartDate(new Date());
+              setEndDate(new Date());
+            }}
           />
 
           <div className="bg-white rounded-lg shadow overflow-hidden">
             {loading && adminRows.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
             ) : (
-              <DataTable columns={columns} data={adminRows} />
+              <DataTable columns={columns} data={filteredRows} />
             )}
           </div>
         </>

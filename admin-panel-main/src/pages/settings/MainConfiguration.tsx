@@ -32,10 +32,27 @@ export function MainConfiguration() {
   const [streakConfig, setStreakConfig] = useState<JsonObj>({});
   const [bettingRules, setBettingRules] = useState<settingsApi.MainConfig>(defaultBettingRules);
   const [ticketExpiryDays, setTicketExpiryDays] = useState<number>(7);
+  // Cashout thresholds (main.cashout). These control which pending tickets
+  // are eligible for early cashout on the user panel. When the block is
+  // missing the backend falls back to hardcoded defaults, so the admin
+  // must configure them here for cashout to actually appear on tickets.
+  const [cashoutConfig, setCashoutConfig] = useState({
+    min_total_odd: 1.5,
+    min_stake: 50,
+    min_individual_odd: 1.2,
+    min_matches: 2,
+    win_criteria: 'percentage' as 'percentage' | 'amount',
+    win_criteria_value: 80,
+    max_cashout_amount: 10000,
+    allow_bonus_cashout: false,
+    allow_abandoned_match: true,
+    retention_rate: 15,
+  });
+  const [savingCashout, setSavingCashout] = useState(false);
   // Settlement Rules state
   const [settlementConfig, setSettlementConfig] = useState({
     postponement_wait_hours: 48,
-    allow_user_cancel: true,
+    allow_user_cancel: false,
     cancel_window_minutes: 30,
   });
   const [savingSettlement, setSavingSettlement] = useState(false);
@@ -70,8 +87,9 @@ export function MainConfiguration() {
       settingsApi.getMainConfig().catch(() => ({} as settingsApi.MainConfig)),
       settingsApi.getSetting('ticket_expiry_days').catch(() => null),
       settingsApi.getSetting('settlement.config').catch(() => null),
+      settingsApi.getSetting('main.cashout').catch(() => null),
     ])
-      .then(([tx, mobile, referral, bonus, slip, vc, loyalty, streak, rules, expiry, settlement]) => {
+      .then(([tx, mobile, referral, bonus, slip, vc, loyalty, streak, rules, expiry, settlement, cashout]) => {
         if (cancelled) return;
         setTransactionConfig((tx?.value as JsonObj) ?? {});
         setMobileAppConfig((mobile?.value as JsonObj) ?? {});
@@ -89,8 +107,28 @@ export function MainConfiguration() {
           const sv = settlement.value as Record<string, unknown>;
           setSettlementConfig({
             postponement_wait_hours: typeof sv.postponement_wait_hours === 'number' ? sv.postponement_wait_hours : 48,
-            allow_user_cancel: sv.allow_user_cancel !== false,
+            allow_user_cancel: sv.allow_user_cancel === true,
             cancel_window_minutes: typeof sv.cancel_window_minutes === 'number' ? sv.cancel_window_minutes : 30,
+          });
+        }
+        if (cashout?.value && typeof cashout.value === 'object') {
+          // The cashout block may be nested under "cashout" OR flat at the
+          // top level — normalise the same way loadBettingConfig does.
+          const raw = cashout.value as Record<string, unknown>;
+          const flat = (raw.cashout as Record<string, unknown> | undefined) ?? raw;
+          const num = (v: unknown, fallback: number) =>
+            typeof v === 'number' ? v : v != null ? Number(v) : fallback;
+          setCashoutConfig({
+            min_total_odd: num(flat.min_total_odd, 1.5),
+            min_stake: num(flat.min_stake, 50),
+            min_individual_odd: num(flat.min_individual_odd, 1.2),
+            min_matches: num(flat.min_matches, 2),
+            win_criteria: flat.win_criteria === 'amount' ? 'amount' : 'percentage',
+            win_criteria_value: num(flat.win_criteria_value, 80),
+            max_cashout_amount: num(flat.max_cashout_amount, 10000),
+            allow_bonus_cashout: flat.allow_bonus_cashout === true,
+            allow_abandoned_match: flat.allow_abandoned_match !== false,
+            retention_rate: num(flat.retention_rate, 15),
           });
         }
       })
@@ -548,6 +586,187 @@ export function MainConfiguration() {
           >
             <Save className="h-4 w-4 mr-2" />
             {savingSettlement ? 'Saving...' : 'Save Settlement Rules'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Cash Out Settings ─────────────────────────────────────────── */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Settings className="h-5 w-5 text-blue-600" />
+          <h3 className="text-lg font-semibold text-gray-800">Cash Out Settings</h3>
+        </div>
+        <p className="text-sm text-gray-600">
+          These thresholds control which pending tickets show a <strong>Cash Out</strong> button
+          on the user panel. The global on/off toggle lives in the Betting Rules card above
+          ("Cashout enabled"). If cashout is enabled but no button appears on a ticket, the
+          ticket is failing one of the rules below (e.g. a single-match ticket with
+          <code className="mx-1 px-1 bg-gray-100 rounded">min_matches = 2</code>).
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Min total odds</span>
+            <input
+              type="number"
+              step="0.01"
+              min={1}
+              value={cashoutConfig.min_total_odd}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, min_total_odd: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+            <span className="text-[11px] text-gray-500">Ticket total odds must be ≥ this.</span>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Min stake</span>
+            <input
+              type="number"
+              min={0}
+              value={cashoutConfig.min_stake}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, min_stake: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+            <span className="text-[11px] text-gray-500">Stake must be ≥ this. Set to 10 to allow low-stake tickets.</span>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Min individual odd (per leg)</span>
+            <input
+              type="number"
+              step="0.01"
+              min={1}
+              value={cashoutConfig.min_individual_odd}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, min_individual_odd: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Min matches (legs)</span>
+            <input
+              type="number"
+              min={1}
+              value={cashoutConfig.min_matches}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, min_matches: Number(e.target.value || 1) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+            <span className="text-[11px] text-gray-500">Set to 1 to allow single-match tickets.</span>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Win criteria</span>
+            <select
+              value={cashoutConfig.win_criteria}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({
+                  ...p,
+                  win_criteria: e.target.value as 'percentage' | 'amount',
+                }))
+              }
+              className="rounded-md border-gray-300"
+            >
+              <option value="percentage">Percentage of potential payout</option>
+              <option value="amount">Fixed amount floor</option>
+            </select>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">
+              {cashoutConfig.win_criteria === 'percentage'
+                ? 'Min % of potential payout'
+                : 'Min cashout amount (floor)'}
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              value={cashoutConfig.win_criteria_value}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, win_criteria_value: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+            <span className="text-[11px] text-gray-500">
+              {cashoutConfig.win_criteria === 'percentage'
+                ? 'Cashout offer must be ≥ this % of potential payout.'
+                : 'Cashout offer must be ≥ this amount.'}
+            </span>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Max cashout amount</span>
+            <input
+              type="number"
+              min={0}
+              value={cashoutConfig.max_cashout_amount}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, max_cashout_amount: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Retention rate (%)</span>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              max={100}
+              value={cashoutConfig.retention_rate}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, retention_rate: Number(e.target.value || 0) }))
+              }
+              className="w-full rounded-md border-gray-300"
+            />
+            <span className="text-[11px] text-gray-500">Platform cut on early cashout. 15 → user gets 85%.</span>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Allow bonus-funded bets</span>
+            <select
+              value={String(cashoutConfig.allow_bonus_cashout)}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, allow_bonus_cashout: e.target.value === 'true' }))
+              }
+              className="rounded-md border-gray-300"
+            >
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </label>
+          <label className="space-y-1 flex flex-col">
+            <span className="text-gray-700">Allow when match abandoned</span>
+            <select
+              value={String(cashoutConfig.allow_abandoned_match)}
+              onChange={(e) =>
+                setCashoutConfig((p) => ({ ...p, allow_abandoned_match: e.target.value === 'true' }))
+              }
+              className="rounded-md border-gray-300"
+            >
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </label>
+        </div>
+        <div className="pt-2">
+          <button
+            onClick={async () => {
+              setSavingCashout(true);
+              try {
+                await settingsApi.upsertSetting('main.cashout', cashoutConfig);
+                toast('Cash out settings saved.');
+              } catch (err) {
+                toast(`Save failed: ${(err as Error)?.message ?? err}`, 'error');
+              } finally {
+                setSavingCashout(false);
+              }
+            }}
+            disabled={savingCashout}
+            className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+          >
+            <Save className="h-4 w-4 mr-2" />
+            {savingCashout ? 'Saving...' : 'Save Cash Out Settings'}
           </button>
         </div>
       </div>

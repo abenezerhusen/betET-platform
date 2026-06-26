@@ -101,6 +101,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
         items: rows.map((r) => ({
           ...r,
           game_name: r.game_id ? (gameNames[r.game_id] ?? 'Game') : 'Game',
+          // Surface metadata.selection as a top-level field so the user
+          // panel's My Bets page can identify legacy-path sportsbook slips
+          // (source = 'sports' / 'sport') and merge them with proper
+          // sportsbook_bets rows.
+          selection: (r.metadata as Record<string, unknown> | null)?.selection ?? null,
           placed_at: r.placed_at instanceof Date ? r.placed_at.toISOString() : r.placed_at,
           settled_at: r.settled_at instanceof Date ? r.settled_at?.toISOString() : r.settled_at,
         })),

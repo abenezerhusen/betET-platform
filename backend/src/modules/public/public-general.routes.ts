@@ -252,4 +252,53 @@ router.get('/navbar', async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/public/features
+ * Returns admin-controlled feature flags that the user panel needs to
+ * decide which UI elements to render:
+ *   - cashout_enabled: whether the cashout feature is globally enabled
+ *     (mirrors main.cashout.enabled). The user panel uses this to decide
+ *     whether to show the "Cash Out" button on eligible tickets.
+ *   - user_cancel_enabled: whether users may self-cancel pending tickets
+ *     (mirrors settlement.config.allow_user_cancel). Defaults to false —
+ *     the admin must explicitly enable it.
+ *   - cancel_window_minutes: the cancel window (minutes before kickoff)
+ *     from settlement.config, exposed for client-side display only. The
+ *     backend always re-validates on the actual cancel request.
+ */
+router.get('/features', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const result = await withTenantClient({ tenantId }, async (client) => {
+      const [mainCfgRow, settlementRow] = await Promise.all([
+        client.query<{ value: unknown }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'main.config' LIMIT 1`,
+          [tenantId]
+        ),
+        client.query<{ value: unknown }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'settlement.config' LIMIT 1`,
+          [tenantId]
+        ),
+      ]);
+      const mainCfg = (mainCfgRow.rows[0]?.value ?? {}) as Record<string, unknown>;
+      const settlement = (settlementRow.rows[0]?.value ?? {}) as Record<string, unknown>;
+      return {
+        // cashout_enabled lives in main.config.cashout_enabled (the typed
+        // block). The legacy main.cashout block is optional and only
+        // carries the cashout rule thresholds, not the on/off toggle.
+        cashout_enabled: mainCfg.cashout_enabled === true,
+        user_cancel_enabled: settlement.allow_user_cancel === true,
+        cancel_window_minutes:
+          typeof settlement.cancel_window_minutes === 'number'
+            ? settlement.cancel_window_minutes
+            : 30,
+      };
+    });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

@@ -787,6 +787,77 @@ async function cashoutBet(
         }
       }
 
+      // ── Cashout Boost Promotion (optional layer — never modifies base calc) ──
+      let promotionEnabled = false;
+      let promotionType: 'percentage' | 'fixed' = 'percentage';
+      let promotionValue = 0;
+      let promotionAmount = 0;
+      let finalCashoutValue = cashoutValue;
+
+      try {
+        const boostRow = await client.query<{ value: Record<string, unknown> }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'promotions.cashout_boost'`,
+          [scope.tenantId]
+        );
+        const boost = boostRow.rows[0]?.value as Record<string, unknown> | undefined;
+        if (boost && boost.is_enabled === true) {
+          const avail = (boost.availability ?? {}) as Record<string, boolean>;
+          const sports = (boost.sports ?? {}) as Record<string, boolean>;
+          const legsCount = legs.rows.length;
+          const isLive = legs.rows.some((l) => l.event_status === 'live');
+          const isSingle = legsCount === 1;
+          const isMultiple = legsCount > 1;
+
+          // Check availability eligibility.
+          const liveOk = !isLive || avail.live_bets !== false;
+          const prematchOk = isLive || avail.prematch_bets !== false;
+          const singleOk = !isSingle || avail.single_bets !== false;
+          const multipleOk = !isMultiple || avail.multiple_bets !== false;
+          const availOk = liveOk && prematchOk && singleOk && multipleOk;
+
+          // Check sport eligibility by querying sport from the legs events.
+          let sportOk = true;
+          if (availOk) {
+            const sportRow = await client.query<{ sport: string }>(
+              `SELECT LOWER(COALESCE(ev.sport, 'others')) AS sport
+                 FROM sportsbook_bet_legs l
+                 JOIN sports_selections s ON s.id = l.selection_id
+                 JOIN sports_markets    m ON m.id = s.market_id
+                 JOIN sports_events    ev ON ev.id = m.event_id
+                WHERE l.bet_id = $1
+                LIMIT 1`,
+              [betId]
+            );
+            const sport = sportRow.rows[0]?.sport ?? 'others';
+            const sportKey =
+              sport === 'football' ? 'football'
+              : sport === 'basketball' ? 'basketball'
+              : sport === 'tennis' ? 'tennis'
+              : sport === 'volleyball' ? 'volleyball'
+              : sport === 'esports' ? 'esports'
+              : sport === 'virtual' ? 'virtual'
+              : 'others';
+            sportOk = sports[sportKey] !== false;
+          }
+
+          if (availOk && sportOk) {
+            promotionEnabled = true;
+            promotionType = (boost.promotion_type as 'percentage' | 'fixed') ?? 'percentage';
+            promotionValue = Number(boost.promotion_value ?? 0);
+            promotionAmount = round2(
+              promotionType === 'percentage'
+                ? cashoutValue * (promotionValue / 100)
+                : promotionValue
+            );
+            finalCashoutValue = round2(cashoutValue + promotionAmount);
+          }
+        }
+      } catch {
+        // Promotion check is non-critical — fall back to base cashout value.
+        finalCashoutValue = cashoutValue;
+        promotionEnabled = false;
+      }
+
       // Credit wallet: unlock the stake, add the cashout amount on top.
       const wallet = await client.query<{
         id: string;
@@ -806,7 +877,7 @@ async function cashoutBet(
       if (!w) throw new NotFoundError('Wallet not found');
 
       const before = Number(w.balance);
-      const afterBalance = round2(before + cashoutValue);
+      const afterBalance = round2(before + finalCashoutValue);
       const afterLocked = round2(Math.max(0, Number(w.locked_balance) - stake));
       await client.query(
         `UPDATE wallets
@@ -825,7 +896,7 @@ async function cashoutBet(
           scope.userId,
           w.id,
           b.currency,
-          cashoutValue,
+          finalCashoutValue,
           before,
           afterBalance,
           `cashout:${betId}`,
@@ -834,6 +905,12 @@ async function cashoutBet(
             won_legs: won,
             total_legs: total,
             retention_rate: cfg.cashout.retention_rate,
+            original_cashout: cashoutValue,
+            promotion_enabled: promotionEnabled,
+            promotion_type: promotionEnabled ? promotionType : undefined,
+            promotion_value: promotionEnabled ? promotionValue : undefined,
+            promotion_amount: promotionEnabled ? promotionAmount : undefined,
+            final_cashout: finalCashoutValue,
           }),
         ]
       );
@@ -846,7 +923,7 @@ async function cashoutBet(
                 actual_payout = $1,
                 settled_at = now()
           WHERE id = $2`,
-        [cashoutValue, betId]
+        [finalCashoutValue, betId]
       );
 
       void tryAudit({
@@ -887,13 +964,22 @@ async function cashoutBet(
 
       return {
         bet_id: betId,
-        cashout_amount: cashoutValue.toFixed(2),
+        cashout_amount: finalCashoutValue.toFixed(2),
         status: 'cashout',
         wallet: {
           id: w.id,
           balance: afterBalance.toFixed(2),
           currency: w.currency,
         },
+        // Optional promotion fields — present only when a boost was applied.
+        ...(promotionEnabled && {
+          promotionEnabled: true,
+          promotionType,
+          promotionValue,
+          promotionAmount: promotionAmount.toFixed(2),
+          originalCashOut: cashoutValue.toFixed(2),
+          finalCashOut: finalCashoutValue.toFixed(2),
+        }),
       };
     }
   );
@@ -945,8 +1031,131 @@ async function listMyBets(
          LIMIT $${i++} OFFSET $${i++}`,
       [...values, q.limit, offset]
     );
+
+    // ── Compute cashout availability + value per bet ───────────────────────
+    // Mirrors the eligibility logic in `cashoutBet` so the user panel can
+    // show a "Cash Out" button with the live offer amount on each eligible
+    // ticket. Bets that are already cashed out / settled / void are skipped.
+    const cfg = await loadBettingConfig(client, scope.tenantId);
+    const eligibleBets = rows.rows.filter((b) => b.status === 'pending');
+    const cashoutInfo: Record<string, { available: boolean; value: number }> = {};
+
+    if (cfg.cashout.enabled && eligibleBets.length > 0) {
+      // Load boost config once (applied as an additional layer, never
+      // modifying the base calculation — same approach as `cashoutBet`).
+      let boostCfg: {
+        enabled?: boolean;
+        type?: 'percentage' | 'fixed';
+        value?: number;
+      } = {};
+      try {
+        const boostRow = await client.query<{ value: Record<string, unknown> }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'promotions.cashout_boost'`,
+          [scope.tenantId]
+        );
+        if (boostRow.rows[0]?.value) {
+          const v = boostRow.rows[0].value;
+          boostCfg = {
+            enabled: v.is_enabled === true,
+            type: v.promotion_type === 'fixed' ? 'fixed' : 'percentage',
+            value: typeof v.promotion_value === 'number' ? v.promotion_value : 0,
+          };
+        }
+      } catch {
+        // Non-critical — fall back to no boost.
+      }
+
+      for (const b of eligibleBets) {
+        const stake = Number(b.stake);
+        const totalOdds = Number(b.total_odds);
+        const potential = Number(b.potential_payout);
+        if (stake < cfg.cashout.min_stake) continue;
+        if (totalOdds < cfg.cashout.min_total_odd) continue;
+
+        const legs = await client.query<{
+          odds_at_placement: string;
+          status: string;
+          event_status: string;
+        }>(
+          `SELECT l.odds_at_placement::text, l.status, ev.status AS event_status
+             FROM sportsbook_bet_legs l
+             JOIN sports_selections sel ON sel.id = l.selection_id
+             JOIN sports_markets   m   ON m.id   = sel.market_id
+             JOIN sports_events    ev  ON ev.id  = m.event_id
+            WHERE l.bet_id = $1`,
+          [b.id]
+        );
+        if (legs.rows.length < cfg.cashout.min_matches) continue;
+
+        let blocked = false;
+        for (const l of legs.rows) {
+          if (Number(l.odds_at_placement) < cfg.cashout.min_individual_odd) {
+            blocked = true;
+            break;
+          }
+          if (l.status === 'lost') {
+            blocked = true;
+            break;
+          }
+          if (
+            !cfg.cashout.allow_abandoned_match &&
+            (l.event_status === 'postponed' || l.event_status === 'cancelled')
+          ) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) continue;
+
+        const total = legs.rows.length;
+        const won = legs.rows.filter((l) => l.status === 'won').length;
+        const ratio = total === 0 ? 0 : won / total;
+        const rawValue = potential * ratio * (1 - cfg.cashout.retention_rate);
+        const baseValue = round2(
+          Math.min(
+            Math.max(rawValue, stake * 0.05),
+            cfg.cashout.max_cashout_amount
+          )
+        );
+
+        // Win-criteria gate.
+        let passesGate = true;
+        if (cfg.cashout.win_criteria === 'percentage') {
+          const pct = (baseValue / Math.max(potential, 1)) * 100;
+          passesGate = pct >= cfg.cashout.win_criteria_value;
+        } else {
+          passesGate = baseValue >= cfg.cashout.win_criteria_value;
+        }
+        if (!passesGate) continue;
+
+        // Apply optional boost layer (never modifies base calc).
+        let finalValue = baseValue;
+        if (boostCfg.enabled && boostCfg.value && boostCfg.value > 0) {
+          if (boostCfg.type === 'percentage') {
+            finalValue = round2(baseValue + baseValue * (boostCfg.value / 100));
+          } else {
+            finalValue = round2(baseValue + boostCfg.value);
+          }
+        }
+
+        cashoutInfo[b.id] = { available: true, value: finalValue };
+      }
+    }
+
+    const items = rows.rows.map((b) => {
+      const info = cashoutInfo[b.id];
+      return {
+        ...b,
+        cashout_available: !!info?.available,
+        cashout_value: info ? String(info.value) : null,
+        placed_at: b.placed_at instanceof Date ? b.placed_at.toISOString() : b.placed_at,
+        settled_at: b.settled_at instanceof Date ? b.settled_at?.toISOString() : b.settled_at,
+        postponed_at: b.postponed_at instanceof Date ? b.postponed_at?.toISOString() : b.postponed_at,
+      };
+    });
+
     return {
-      items: rows.rows,
+      items,
       total: Number(total.rows[0]?.count ?? 0),
       page: q.page,
       limit: q.limit,
@@ -978,7 +1187,77 @@ async function reloadTicket(req: Request, rawCode: string) {
       [scope.tenantId, code]
     );
     const b = bet.rows[0];
-    if (!b) throw new NotFoundError('Ticket not found');
+
+    // ── Legacy fallback ────────────────────────────────────────────────
+    // Some online sportsbook slips were placed via the legacy internal-
+    // games endpoint (POST /api/user/bets/place) before every OddsButton
+    // threaded a real selection_id. Those slips live in the `bets` table
+    // with metadata.selection.source = 'sportsbook' and their picks are
+    // stored inline in metadata.selection.picks (no sportsbook_bet_legs
+    // rows). Reconstruct a reload response from that metadata so users
+    // can still see match details and the Bet Code loader works.
+    if (!b) {
+      const legacy = await client.query<{
+        id: string;
+        status: string;
+        stake: string;
+        potential_win: string;
+        currency: string;
+        placed_at: Date;
+        metadata: Record<string, unknown>;
+      }>(
+        `SELECT id, status, stake::text, potential_win::text,
+                currency, placed_at, metadata
+           FROM bets
+          WHERE tenant_id = $1
+            AND (id::text = lower($2) OR id::text LIKE lower($2) || '%')
+          LIMIT 1`,
+        [scope.tenantId, code]
+      );
+      const lb = legacy.rows[0];
+      if (!lb) throw new NotFoundError('Ticket not found');
+
+      const selection = (lb.metadata as Record<string, unknown>)?.selection as
+        | { source?: string; picks?: Array<Record<string, unknown>> }
+        | undefined;
+      const picks = Array.isArray(selection?.picks) ? selection!.picks! : [];
+
+      return {
+        bet: {
+          id: lb.id,
+          coupon_code: lb.id.slice(0, 12).toUpperCase(),
+          status: lb.status,
+          bet_type: 'single',
+          stake: lb.stake,
+          total_odds: '0',
+          potential_payout: lb.potential_win,
+          currency: lb.currency,
+          placed_at: lb.placed_at,
+        },
+        selections: picks.map((p) => {
+          const matchStr = String(p.match ?? '');
+          const [homeTeam, awayTeam] = matchStr.split(/\s+V\s+/i).map((s) => s.trim());
+          return {
+            selection_id: String(p.selection_id ?? ''),
+            market_id: '',
+            event_id: '',
+            home_team: homeTeam ?? matchStr,
+            away_team: awayTeam ?? '',
+            league: String(p.league ?? ''),
+            sport: '',
+            market_label: String(p.market ?? ''),
+            selection_label: String(p.selection ?? ''),
+            odds_at_placement: String(p.odds ?? '0'),
+            current_odds: String(p.odds ?? '0'),
+            starts_at: '',
+            event_status: '',
+            market_status: '',
+            selection_result: null,
+            replayable: false,
+          };
+        }),
+      };
+    }
 
     const legs = await client.query<{
       selection_id: string;
@@ -1177,7 +1456,9 @@ router.post(
         [scope.tenantId]
       );
       const cfg = (cfgRow.rows[0]?.value ?? {}) as Record<string, unknown>;
-      const allowCancel = cfg.allow_user_cancel !== false; // default true
+      // Default: cancellation DISABLED. The admin must explicitly enable
+      // it via the Settlement Rules section of Main Configuration.
+      const allowCancel = cfg.allow_user_cancel === true;
       if (!allowCancel) {
         throw new BadRequestError('Ticket cancellation is not allowed', {
           reason: 'cancel_disabled',

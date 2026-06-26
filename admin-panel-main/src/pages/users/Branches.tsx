@@ -4,6 +4,7 @@ import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { TabGroup } from '../../components/TabGroup';
 import { Building, UserPlus } from 'lucide-react';
+import { CountBadge } from '../../components/CountBadge';
 import { UserActions } from '../../components/UserActions';
 import { BranchWalletModal } from '../../components/BranchWalletModal';
 import { EditUserModal } from '../../components/EditUserModal';
@@ -279,6 +280,21 @@ export function Branches() {
     return true;
   });
 
+  const handleClearFilters = () => {
+    setSelectedAgent('');
+    setSelectedCity('');
+    setStartDate(new Date());
+    setEndDate(new Date());
+  };
+
+  // Total + per-status counts for the header badge.
+  const counts = useMemo(() => {
+    const active = rows.filter((r) => r.status === 'Active').length;
+    const suspended = rows.filter((r) => r.status === 'Suspended').length;
+    const inactive = rows.filter((r) => r.status === 'Inactive').length;
+    return { total: rows.length, active, suspended, inactive };
+  }, [rows]);
+
   const columns = [
     { header: 'Branch ID', accessor: 'branchId' as const },
     { header: 'City', accessor: 'city' as const },
@@ -312,6 +328,20 @@ export function Branches() {
         <div className="flex items-center space-x-3">
           <Building className="h-8 w-8 text-blue-600" />
           <h1 className="text-2xl font-semibold text-gray-900">Branches</h1>
+          {activeTab === 'list' && (
+            <CountBadge
+              total={counts.total}
+              loading={loading && rows.length === 0}
+              breakdown={[
+                { label: 'Active', value: counts.active, tone: 'green' },
+                { label: 'Suspended', value: counts.suspended, tone: 'red' },
+                { label: 'Inactive', value: counts.inactive, tone: 'gray' },
+                ...(filteredRows.length !== rows.length
+                  ? [{ label: 'Showing', value: filteredRows.length, tone: 'blue' as const }]
+                  : []),
+              ]}
+            />
+          )}
         </div>
         {activeTab === 'list' && (
           <button
@@ -338,6 +368,7 @@ export function Branches() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={filters}
+            onClear={handleClearFilters}
           />
 
           <div className="bg-white rounded-lg shadow">

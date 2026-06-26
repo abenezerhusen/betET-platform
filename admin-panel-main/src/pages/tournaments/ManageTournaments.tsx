@@ -376,9 +376,12 @@ export function ManageTournaments() {
   const data = useMemo(
     () =>
       rows.filter(
-        (r) => !selectedType || r.format.toLowerCase() === selectedType.toLowerCase()
+        (r) =>
+          (!selectedType || r.format.toLowerCase() === selectedType.toLowerCase()) &&
+          (!selectedStatus ||
+            r.status.toLowerCase() === selectedStatus.toLowerCase())
       ),
-    [rows, selectedType]
+    [rows, selectedType, selectedStatus]
   );
 
   const columns = [
@@ -468,6 +471,12 @@ export function ManageTournaments() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSelectedType('');
+          setSelectedStatus('');
+          setStartDate(new Date());
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

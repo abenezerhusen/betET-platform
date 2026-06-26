@@ -20,11 +20,14 @@ export const listWalletsSchema = z.object({
   max_balance: z.coerce.number().nonnegative().optional(),
 });
 
+export const walletBucketSchema = z.enum(['deductable', 'withdrawable', 'payable']);
+
 export const creditWalletSchema = z.object({
   amount: amountSchema,
   reason: z.string().trim().min(1).max(1000),
   reference: z.string().trim().max(255).optional(),
   metadata: z.record(z.unknown()).optional(),
+  bucket: walletBucketSchema.default('deductable'),
 });
 
 export const debitWalletSchema = creditWalletSchema;
@@ -32,3 +35,4 @@ export const debitWalletSchema = creditWalletSchema;
 export type ListWalletsQuery = z.infer<typeof listWalletsSchema>;
 export type CreditWalletInput = z.infer<typeof creditWalletSchema>;
 export type DebitWalletInput = z.infer<typeof debitWalletSchema>;
+export type WalletBucket = z.infer<typeof walletBucketSchema>;

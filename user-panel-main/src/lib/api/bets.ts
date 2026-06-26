@@ -165,6 +165,12 @@ export interface BetHistoryRow {
   tax_amount: string;
   actual_payout: string | null;
   cashout_amount: string | null;
+  /** True when the ticket is eligible for early cashout right now. */
+  cashout_available: boolean;
+  /** Live cashout offer (with boost already applied) — present when
+   * `cashout_available` is true. The backend always re-validates on the
+   * actual cashout request, so this is display-only. */
+  cashout_value: string | null;
   status: string;
   /** Extended settlement status (may be null for older tickets). */
   settlement_status: string | null;
@@ -215,6 +221,15 @@ export interface GameBetRow {
   status: string;
   placed_at: string;
   settled_at: string | null;
+  /** Raw row metadata — legacy sportsbook slips carry `selection.source`. */
+  metadata?: { selection?: { source?: string; picks?: unknown[] } } | null;
+  /**
+   * Present on legacy sportsbook slips that were stored in the `bets`
+   * table via the fallback placement path. The `source` field is
+   * 'sports' / 'sport' for sportsbook picks (vs. internal games which
+   * have no `selection.source`). Convenience accessor for `metadata.selection`.
+   */
+  selection?: { source?: string; picks?: unknown[] } | null;
 }
 
 export interface GameBetPage {

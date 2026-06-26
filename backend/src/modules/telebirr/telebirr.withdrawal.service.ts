@@ -242,21 +242,40 @@ export async function initiateWithdrawal(
       );
 
       const beforeBalance = wallet.balance;
-      const debit = await client.query<{ balance: string }>(
+      // Withdrawals must come from the Withdrawable bucket. If the wallet
+      // predates the bucket split, we allow a fallback to the legacy
+      // `balance` column so existing funds remain withdrawable.
+      const debit = await client.query<{ balance: string; withdrawable_balance: string }>(
         `UPDATE wallets
-            SET balance    = balance - $2::numeric,
-                version    = version + 1,
-                updated_at = now()
-          WHERE id = $1 AND balance >= $2::numeric
-          RETURNING balance`,
+            SET withdrawable_balance = withdrawable_balance - $2::numeric,
+                version              = version + 1,
+                updated_at           = now()
+          WHERE id = $1 AND withdrawable_balance >= $2::numeric
+          RETURNING balance, withdrawable_balance`,
         [wallet.id, input.amount]
       );
       if (!debit.rows[0]) {
-        throw new BadRequestError('Insufficient balance', {
-          reason: 'insufficient_balance',
-          available: beforeBalance,
-          requested: input.amount,
-        });
+        // Fallback: legacy wallets where withdrawable_balance is 0 but
+        // the user still has funds in `balance` from before the split.
+        const fallback = await client.query<{ balance: string; withdrawable_balance: string }>(
+          `UPDATE wallets
+              SET balance              = balance - $2::numeric,
+                  version              = version + 1,
+                  updated_at           = now()
+            WHERE id = $1
+              AND withdrawable_balance < $2::numeric
+              AND balance >= $2::numeric
+            RETURNING balance, withdrawable_balance`,
+          [wallet.id, input.amount]
+        );
+        if (!fallback.rows[0]) {
+          throw new BadRequestError('Insufficient withdrawable balance', {
+            reason: 'insufficient_withdrawable_balance',
+            available: beforeBalance,
+            requested: input.amount,
+          });
+        }
+        debit.rows[0] = fallback.rows[0];
       }
       const afterBalance = debit.rows[0].balance;
 

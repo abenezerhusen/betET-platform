@@ -16,6 +16,7 @@ import { Referrals } from './pages/promotions/Referrals';
 import { Raffles } from './pages/promotions/Raffles';
 import { BonusEngine } from './pages/promotions/BonusEngine';
 import { Affiliates } from './pages/promotions/Affiliates';
+import CashoutPromotion from './pages/promotions/CashoutPromotion';
 import { SuperAdmin } from './pages/users/SuperAdmin';
 import { Administrators } from './pages/users/Administrators';
 import { Agents } from './pages/users/Agents';
@@ -107,6 +108,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/promotions/referrals', perm: 'promotions.referrals.view', element: <Referrals /> },
   { path: '/promotions/bonus', perm: 'promotions.bonus.view', element: <BonusEngine /> },
   { path: '/promotions/affiliates', perm: 'promotions.affiliates.view', element: <Affiliates /> },
+  { path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', element: <CashoutPromotion /> },
 
   /* Users */
   { path: '/users/super-admin', perm: 'users.super_admin.view', element: <SuperAdmin /> },

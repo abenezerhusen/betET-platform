@@ -533,6 +533,21 @@ export function OnlineBets() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setBetIdFilter('');
+          setPhoneNumber('');
+          setSelectedStatus('');
+          setSelectedPaidStatus('');
+          setSelectedPaymentType('');
+          setMinStake('');
+          setMaxStake('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 7);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

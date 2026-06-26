@@ -1,0 +1,36 @@
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⨯ ReferenceError: Cannot access 'activeCashbackSlots' before initialization
+    at PromotionsPage (src\app\promotions\page.tsx:140:5)
+  138 |   const hasActiveCashback = useMemo(
+  139 |     () => activeCashbackSlots.length > 0,
+> 140 |     [activeCashbackSlots]
+      |     ^
+  141 |   );
+  142 |   const visibleTabs = useMemo(
+  143 |     () => {
+  digest: '4238830736'
+}
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⨯ ReferenceError: Cannot access 'activeCashbackSlots' before initialization
+    at PromotionsPage (src\app\promotions\page.tsx:140:5)
+  138 |   const hasActiveCashback = useMemo(
+  139 |     () => activeCashbackSlots.length > 0,
+> 140 |     [activeCashbackSlots]
+      |     ^
+  141 |   );
+  142 |   const visibleTabs = useMemo(
+  143 |     () => {
+  digest: '4238830736'
+}
+ ⨯ ReferenceError: Cannot access 'activeCashbackSlots' before initialization
+    at PromotionsPage (src\app\promotions\page.tsx:140:5)
+  138 |   const hasActiveCashback = useMemo(
+  139 |     () => activeCashbackSlots.length > 0,
+> 140 |     [activeCashbackSlots]
+      |     ^
+  141 |   );
+  142 |   const visibleTabs = useMemo(
+  143 |     () => {
+  digest: '4238830736'
+}
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.

@@ -21,6 +21,7 @@ import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import { useAuthStore } from '../../store/auth';
 import { reports } from '../../lib/api';
+import { useAdminUsersByRole } from '../../lib/hooks';
 
 type ScopeId = 'branch' | 'cashier';
 
@@ -56,6 +57,27 @@ const cashierColumns = [
   { header: 'Net', accessor: 'net' as const, render: (v: string) => fmt(v) },
 ];
 
+/**
+ * Build a display label for a cashier/sales user. Mirrors the backend's
+ * `cashier_branch` CTE so the dropdown labels line up with the names shown
+ * in the report rows.
+ */
+function cashierLabel(u: {
+  metadata?: Record<string, unknown> | null;
+  email?: string | null;
+  phone?: string | null;
+  id: string;
+}): string {
+  const md = (u.metadata ?? {}) as Record<string, unknown>;
+  const name =
+    String(md.full_name ?? '').trim() ||
+    String(md.username ?? '').trim() ||
+    [String(md.first_name ?? '').trim(), String(md.last_name ?? '').trim()]
+      .filter(Boolean)
+      .join(' ').trim();
+  return name || u.email || u.phone || u.id.slice(0, 8);
+}
+
 export function OfflineCashReport() {
   const isAuth = useAuthStore((s) => s.isAuthenticated);
   const role = useAuthStore((s) => s.user?.role);
@@ -69,7 +91,24 @@ export function OfflineCashReport() {
   });
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [selectedBranchId, setSelectedBranchId] = useState('');
-  const [cashierId, setCashierId] = useState('');
+  const [selectedCashierId, setSelectedCashierId] = useState('');
+
+  // Cashier/Sales staff list — used to populate the Cashier dropdown with
+  // real usernames instead of asking the admin to paste a UUID. The
+  // `sales` role alias widens on the backend to include `cashier` accounts
+  // too, so a single fetch covers both.
+  const { items: cashierUsers } = useAdminUsersByRole('sales', {
+    pollIntervalMs: 60000,
+    initialLimit: 500,
+  });
+
+  const cashierOptions = useMemo(
+    () =>
+      cashierUsers
+        .map((u) => ({ id: u.id, label: cashierLabel(u) }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [cashierUsers]
+  );
 
   const [data, setData] = useState<reports.OfflineCashResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,7 +122,7 @@ export function OfflineCashReport() {
         from: toIso(startDate),
         to: toIso(endDate),
         branch_id: selectedBranchId || undefined,
-        cashier_id: cashierId || undefined,
+        cashier_id: selectedCashierId || undefined,
       })
       .then((res) => {
         if (!cancelled) setData(res);
@@ -97,7 +136,7 @@ export function OfflineCashReport() {
     return () => {
       cancelled = true;
     };
-  }, [isAuth, canView, startDate, endDate, selectedBranchId, cashierId]);
+  }, [isAuth, canView, startDate, endDate, selectedBranchId, selectedCashierId]);
 
   const summary = data?.summary;
   const byBranch = useMemo(() => data?.by_branch ?? [], [data]);
@@ -112,7 +151,7 @@ export function OfflineCashReport() {
   }, [byBranch]);
 
   const branchOptions = useMemo(
-    () => Array.from(branchByName.keys()),
+    () => Array.from(branchByName.keys()).sort((a, b) => a.localeCompare(b)),
     [branchByName]
   );
 
@@ -120,6 +159,9 @@ export function OfflineCashReport() {
     Array.from(branchByName.entries()).find(
       ([, id]) => id === selectedBranchId
     )?.[0] ?? '';
+
+  const selectedCashierLabel =
+    cashierOptions.find((c) => c.id === selectedCashierId)?.label ?? '';
 
   const filters = [
     {
@@ -130,13 +172,26 @@ export function OfflineCashReport() {
         setSelectedBranchId(val ? (branchByName.get(val) ?? '') : ''),
     },
     {
-      label: 'Cashier ID',
-      options: [] as string[],
-      value: cashierId,
-      onChange: setCashierId,
-      type: 'text' as const,
+      label: 'Cashier',
+      options: cashierOptions.map((c) => c.label),
+      value: selectedCashierLabel,
+      onChange: (val: string) => {
+        const match = cashierOptions.find((c) => c.label === val);
+        setSelectedCashierId(match ? match.id : '');
+      },
     },
   ];
+
+  const handleClearFilters = () => {
+    setSelectedBranchId('');
+    setSelectedCashierId('');
+    setStartDate(() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 13);
+      return d;
+    });
+    setEndDate(new Date());
+  };
 
   const handleExport = () => {
     const cols = activeTab === 'branch' ? branchColumns : cashierColumns;
@@ -190,6 +245,7 @@ export function OfflineCashReport() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={handleClearFilters}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">

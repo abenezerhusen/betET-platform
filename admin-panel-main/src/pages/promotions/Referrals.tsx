@@ -653,6 +653,12 @@ export function Referrals() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={filters}
+            onClear={() => {
+              setSelectedStatus('');
+              setPhoneNumber('');
+              setStartDate(new Date());
+              setEndDate(new Date());
+            }}
           />
 
           <div className="bg-white rounded-lg shadow">

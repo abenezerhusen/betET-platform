@@ -227,6 +227,12 @@ export function P2PTransactions() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setWallet('');
+          setStatus('');
+          setStartDate(new Date());
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

@@ -4,6 +4,7 @@ import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { TabGroup } from '../../components/TabGroup';
 import { UserPlus } from 'lucide-react';
+import { CountBadge } from '../../components/CountBadge';
 import { UserActions } from '../../components/UserActions';
 import { UserDetailsModal } from '../../components/UserDetailsModal';
 import { EditUserModal } from '../../components/EditUserModal';
@@ -323,6 +324,23 @@ export function Sales() {
     return true;
   });
 
+  const handleClearFilters = () => {
+    setSelectedAgent('');
+    setSelectedBranch('');
+    setSelectedChannel('');
+    setStartDate(new Date());
+    setEndDate(new Date());
+  };
+
+  // Total + per-status counts for the header badge. Computed from the
+  // unfiltered list so the totals reflect the whole tenant.
+  const counts = useMemo(() => {
+    const active = rows.filter((r) => r.status === 'Active').length;
+    const suspended = rows.filter((r) => r.status === 'Suspended').length;
+    const inactive = rows.filter((r) => r.status === 'Inactive').length;
+    return { total: rows.length, active, suspended, inactive };
+  }, [rows]);
+
   const columns = [
     { header: 'First Name', accessor: 'firstName' as const },
     { header: 'Last Name', accessor: 'lastName' as const },
@@ -355,7 +373,23 @@ export function Sales() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Sales Staff</h1>
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-2xl font-semibold text-gray-900">Sales Staff</h1>
+          {activeTab === 'list' && (
+            <CountBadge
+              total={counts.total}
+              loading={loading && rows.length === 0}
+              breakdown={[
+                { label: 'Active', value: counts.active, tone: 'green' },
+                { label: 'Suspended', value: counts.suspended, tone: 'red' },
+                { label: 'Inactive', value: counts.inactive, tone: 'gray' },
+                ...(filteredRows.length !== rows.length
+                  ? [{ label: 'Showing', value: filteredRows.length, tone: 'blue' as const }]
+                  : []),
+              ]}
+            />
+          )}
+        </div>
         {activeTab === 'list' && canManageSales && (
           <button
             onClick={() => setActiveTab('add')}
@@ -377,6 +411,7 @@ export function Sales() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={filters}
+            onClear={handleClearFilters}
           />
 
           <div className="bg-white rounded-lg shadow overflow-hidden">

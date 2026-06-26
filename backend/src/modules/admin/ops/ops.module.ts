@@ -104,6 +104,74 @@ router.put(
   })
 );
 
+/* ------------------------- Cashout Boost configuration --------------------- */
+
+const cashoutBoostSchema = z.object({
+  is_enabled: z.boolean().default(false),
+  promotion_type: z.enum(['percentage', 'fixed']).default('percentage'),
+  promotion_value: z.coerce.number().nonnegative().default(10),
+  availability: z.object({
+    live_bets: z.boolean().default(true),
+    prematch_bets: z.boolean().default(true),
+    single_bets: z.boolean().default(true),
+    multiple_bets: z.boolean().default(true),
+    system_bets: z.boolean().default(false),
+  }).default({}),
+  sports: z.object({
+    football: z.boolean().default(true),
+    basketball: z.boolean().default(true),
+    tennis: z.boolean().default(true),
+    volleyball: z.boolean().default(true),
+    esports: z.boolean().default(false),
+    virtual: z.boolean().default(false),
+    others: z.boolean().default(true),
+  }).default({}),
+  display: z.object({
+    show_badge: z.boolean().default(true),
+    show_original_amount: z.boolean().default(true),
+    show_promotion_amount: z.boolean().default(true),
+    show_final_amount: z.boolean().default(true),
+    badge_text: z.string().trim().max(60).default('🔥 Cash Out Boost'),
+  }).default({}),
+});
+
+export type CashoutBoostConfig = z.infer<typeof cashoutBoostSchema>;
+
+const DEFAULT_CASHOUT_BOOST: CashoutBoostConfig = cashoutBoostSchema.parse({});
+
+router.get(
+  '/promotions/cashout-boost',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const row = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'promotions.cashout_boost'`,
+        [tenantId]
+      );
+      return row.rows[0]?.value ?? DEFAULT_CASHOUT_BOOST;
+    });
+  })
+);
+
+router.put(
+  '/promotions/cashout-boost',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = cashoutBoostSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      await client.query(
+        `INSERT INTO settings (tenant_id, key, value)
+         VALUES ($1,'promotions.cashout_boost',$2::jsonb)
+         ON CONFLICT (tenant_id,key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [tenantId, JSON.stringify(body)]
+      );
+      return body;
+    });
+  })
+);
+
 /* ------------------------------- Match stats ------------------------------- */
 
 router.get(

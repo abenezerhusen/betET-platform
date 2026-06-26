@@ -174,3 +174,21 @@ export interface NavbarItem {
 export function listNavbarItems(): Promise<{ items: NavbarItem[] }> {
   return apiRequest<{ items: NavbarItem[] }>('/api/public/navbar');
 }
+
+/* -------------------------------------------------------------------------- */
+/* Public Feature Flags — admin-controlled toggles the user panel needs       */
+/* -------------------------------------------------------------------------- */
+
+export interface PublicFeatures {
+  /** Whether the cashout feature is globally enabled by the admin. */
+  cashout_enabled: boolean;
+  /** Whether users may self-cancel pending tickets. Defaults to false. */
+  user_cancel_enabled: boolean;
+  /** Cancel window (minutes before kickoff) — display-only; backend
+   * always re-validates on the actual cancel request. */
+  cancel_window_minutes: number;
+}
+
+export function getPublicFeatures(): Promise<PublicFeatures> {
+  return apiRequest<PublicFeatures>('/api/public/features');
+}

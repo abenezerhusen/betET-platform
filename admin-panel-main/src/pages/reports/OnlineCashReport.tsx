@@ -153,6 +153,15 @@ export function OnlineCashReport() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSport('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 29);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">

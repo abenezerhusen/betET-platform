@@ -344,6 +344,21 @@ export function BranchTransactions() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setPhoneNumber('');
+          setSelectedBranch('');
+          setSelectedCashier('');
+          setSelectedType('');
+          setSelectedStatus('');
+          setMinAmount('');
+          setMaxAmount('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 30);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

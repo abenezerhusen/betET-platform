@@ -953,6 +953,13 @@ export function BonusEngine() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={filters}
+            onClear={() => {
+              setSelectedType('');
+              setSelectedStatus('');
+              setSearch('');
+              setStartDate(new Date());
+              setEndDate(new Date());
+            }}
           />
 
           <div className="bg-white rounded-lg shadow">

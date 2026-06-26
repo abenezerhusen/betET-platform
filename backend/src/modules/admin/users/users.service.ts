@@ -211,8 +211,8 @@ export async function createUser(req: Request, body: CreateUserInput) {
 
   const created = await withTenantClient(
     { tenantId, bypassRls: scope.bypassRls },
-    async (client) =>
-      repo.insertUser(client, {
+    async (client) => {
+      const user = await repo.insertUser(client, {
         tenantId,
         email: body.email ?? null,
         phone: body.phone ?? null,
@@ -221,7 +221,24 @@ export async function createUser(req: Request, body: CreateUserInput) {
         status: body.status ?? 'active',
         kycStatus: body.kyc_status ?? 'pending',
         metadata,
-      })
+      });
+      // Auto-provision a wallet for regular users so the admin wallet feature
+      // works immediately after creation without a separate step.
+      if (body.role === 'user' || body.role === 'affiliate') {
+        const cfgRow = await client.query<{ value: Record<string, unknown> }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'main.config' LIMIT 1`,
+          [tenantId]
+        );
+        const currency = String(cfgRow.rows[0]?.value?.currency ?? 'ETB');
+        await client.query(
+          `INSERT INTO wallets (tenant_id, user_id, currency, balance)
+           VALUES ($1, $2, $3, 0)
+           ON CONFLICT ON CONSTRAINT wallets_user_currency_unique DO NOTHING`,
+          [tenantId, user.id, currency]
+        );
+      }
+      return user;
+    }
   );
 
   await tryAudit(

@@ -17,6 +17,7 @@ import { ApiError } from '../../lib/api/client';
 import type { AdminUser } from '../../lib/api/types';
 import { useAuthStore } from '../../store/auth';
 import { UserPlus, FileDown, FileUp, Download, Shield } from 'lucide-react';
+import { CountBadge } from '../../components/CountBadge';
 
 interface OnlineUserData {
   id: string;
@@ -34,6 +35,7 @@ interface OnlineUserData {
   dateJoined: string;
   lastBetAt: string | null;
   lastBetTimestamp: number | null;
+  joinedTimestamp: number | null;
 }
 
 const tabs = [
@@ -80,6 +82,7 @@ function toRow(u: AdminUser): OnlineUserData {
   const md = (u.metadata ?? {}) as Record<string, unknown>;
   const lastBetIso = u.last_bet_at ?? null;
   const lastBetTs = lastBetIso ? new Date(lastBetIso).getTime() : null;
+  const joinedTs = u.created_at ? new Date(u.created_at).getTime() : null;
   return {
     id: u.id,
     name:
@@ -111,6 +114,7 @@ function toRow(u: AdminUser): OnlineUserData {
     dateJoined: u.created_at ? new Date(u.created_at).toLocaleDateString() : '-',
     lastBetAt: lastBetIso,
     lastBetTimestamp: lastBetTs,
+    joinedTimestamp: joinedTs,
   };
 }
 
@@ -120,7 +124,15 @@ export function OnlineUsers() {
   // Spec: Admin / Super Admin only. Block other roles.
   const canView = currentRole === 'admin' || currentRole === 'superadmin';
   const [activeTab, setActiveTab] = useState('all');
-  const [startDate, setStartDate] = useState(new Date());
+  // Default to a wide window (1 year back → today) so every existing
+  // member shows up on first load. The date filter is applied against
+  // created_at (dateJoined), so a "today only" default would hide all
+  // previously-registered users.
+  const [startDate, setStartDate] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 365);
+    return d;
+  });
   const [endDate, setEndDate] = useState(new Date());
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedType, setSelectedType] = useState('');
@@ -232,7 +244,15 @@ export function OnlineUsers() {
     }
 
     if (phoneNumber) {
-      filtered = filtered.filter((u) => u.phone.includes(phoneNumber));
+      const needle = phoneNumber.trim().toLowerCase();
+      if (needle) {
+        filtered = filtered.filter(
+          (u) =>
+            String(u.phone ?? '').toLowerCase().includes(needle) ||
+            String(u.email ?? '').toLowerCase().includes(needle) ||
+            String(u.name ?? '').toLowerCase().includes(needle)
+        );
+      }
     }
     if (selectedStatus) {
       filtered = filtered.filter((u) => u.status === selectedStatus);
@@ -240,8 +260,40 @@ export function OnlineUsers() {
     if (selectedType) {
       filtered = filtered.filter((u) => u.memberType === selectedType);
     }
+    // Date range filter — applied client-side against the user's
+    // dateJoined (created_at). The backend listUsers endpoint does not
+    // support date filtering, so we do it here. Both bounds inclusive.
+    const fromMs = startDate.getTime();
+    const inclusiveTo = new Date(endDate.getTime());
+    inclusiveTo.setHours(23, 59, 59, 999);
+    const toMsInclusive = inclusiveTo.getTime();
+    filtered = filtered.filter((u) => {
+      const ts = u.joinedTimestamp;
+      if (ts == null || !Number.isFinite(ts)) return true;
+      return ts >= fromMs && ts <= toMsInclusive;
+    });
     return filtered;
-  }, [rows, activeTab, phoneNumber, selectedStatus, selectedType]);
+  }, [rows, activeTab, phoneNumber, selectedStatus, selectedType, startDate, endDate]);
+
+  // Total + per-status counts for the header badge. Computed from the
+  // unfiltered list so the totals reflect the whole tenant, not just the
+  // current filter view (matches what admins expect on a list page).
+  const counts = useMemo(() => {
+    const now = Date.now();
+    const active = rows.filter(
+      (u) =>
+        u.rawStatus === 'active' &&
+        u.lastBetTimestamp !== null &&
+        now - u.lastBetTimestamp <= ACTIVE_BET_WINDOW_MS
+    ).length;
+    const inactive = rows.filter(
+      (u) =>
+        u.rawStatus === 'active' &&
+        (u.lastBetTimestamp === null || now - u.lastBetTimestamp > ACTIVE_BET_WINDOW_MS)
+    ).length;
+    const blocked = rows.filter((u) => u.rawStatus !== 'active').length;
+    return { total: rows.length, active, inactive, blocked };
+  }, [rows]);
 
   const handleViewWallet = (id: string) => {
     const member = rows.find((u) => u.id === id);
@@ -523,7 +575,21 @@ export function OnlineUsers() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow">
-        <h1 className="text-2xl font-semibold text-gray-900">Online Users</h1>
+        <div className="flex items-center gap-4 flex-wrap">
+          <h1 className="text-2xl font-semibold text-gray-900">Online Users</h1>
+          <CountBadge
+            total={counts.total}
+            loading={loading && rows.length === 0}
+            breakdown={[
+              { label: 'Active', value: counts.active, tone: 'green' },
+              { label: 'Inactive', value: counts.inactive, tone: 'yellow' },
+              { label: 'Blocked', value: counts.blocked, tone: 'red' },
+              ...(filteredRows.length !== rows.length
+                ? [{ label: 'Showing', value: filteredRows.length, tone: 'blue' as const }]
+                : []),
+            ]}
+          />
+        </div>
         <div className="flex space-x-4">
           <button
             onClick={handleExportTemplate}
@@ -564,6 +630,17 @@ export function OnlineUsers() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setPhoneNumber('');
+          setSelectedStatus('');
+          setSelectedType('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 365);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow overflow-hidden">

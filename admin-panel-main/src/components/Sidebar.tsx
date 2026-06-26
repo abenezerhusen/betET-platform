@@ -42,6 +42,7 @@ const menuItems: MenuItem[] = [
       { title: 'Referrals', path: '/promotions/referrals', perm: 'promotions.referrals.view', icon: <ChevronRight size={16} /> },
       { title: 'Bonus Engine', path: '/promotions/bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
       { title: 'Affiliates', path: '/promotions/affiliates', perm: 'promotions.affiliates.view', icon: <ChevronRight size={16} /> },
+      { title: 'Cash Out Boost', path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
     ],
   },
   {

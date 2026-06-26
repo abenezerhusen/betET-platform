@@ -329,6 +329,16 @@ export function ErrorTracking() {
         onStartDateChange={setStartDate}
         onEndDateChange={setEndDate}
         filters={filters}
+        onClear={() => {
+          setSelectedType('');
+          setSelectedSeverity('');
+          setStartDate(() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 7);
+            return d;
+          });
+          setEndDate(new Date());
+        }}
       />
 
       <div className="bg-white rounded-lg shadow">

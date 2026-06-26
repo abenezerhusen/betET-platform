@@ -8,6 +8,8 @@ export interface WalletRow {
   balance: string;
   bonus_balance: string;
   locked_balance: string;
+  withdrawable_balance: string;
+  payable_balance: string;
   status: string;
   version: number;
   created_at: Date;
@@ -38,7 +40,15 @@ export interface TransactionRow {
 
 const SELECT_WALLET = `
   id, tenant_id, user_id, currency, balance, bonus_balance, locked_balance,
-  status, version, created_at, updated_at
+  withdrawable_balance, payable_balance, status, version, created_at, updated_at
+`;
+
+// Same columns but table-aliased for queries that JOIN with users (avoids
+// "column reference is ambiguous" errors on id, status, etc.).
+const SELECT_WALLET_W = `
+  w.id, w.tenant_id, w.user_id, w.currency, w.balance, w.bonus_balance,
+  w.locked_balance, w.withdrawable_balance, w.payable_balance,
+  w.status, w.version, w.created_at, w.updated_at
 `;
 
 export async function listWallets(
@@ -91,7 +101,7 @@ export async function listWallets(
   const total = totalRes.rows[0].count;
 
   const r = await client.query<WalletWithUserRow>(
-    `SELECT ${SELECT_WALLET},
+    `SELECT ${SELECT_WALLET_W},
             u.email::text AS user_email,
             u.phone       AS user_phone,
             u.status      AS user_status
@@ -130,17 +140,28 @@ export async function findWalletById(
   return r.rows[0] ?? null;
 }
 
-/** Credit wallet by `amount`. Caller MUST already hold a row lock on the wallet. */
+/** Which balance bucket a credit/debit targets. */
+export type WalletBucket = 'deductable' | 'withdrawable' | 'payable';
+
+const BUCKET_COLUMN: Record<WalletBucket, string> = {
+  deductable: 'balance',
+  withdrawable: 'withdrawable_balance',
+  payable: 'payable_balance',
+};
+
+/** Credit a specific bucket by `amount`. Caller MUST hold a row lock. */
 export async function creditWalletBalance(
   client: PoolClient,
   id: string,
-  amount: string
+  amount: string,
+  bucket: WalletBucket = 'deductable'
 ): Promise<WalletRow> {
+  const col = BUCKET_COLUMN[bucket];
   const r = await client.query<WalletRow>(
     `UPDATE wallets
-        SET balance    = balance + $2::numeric,
-            version    = version + 1,
-            updated_at = now()
+        SET ${col}      = ${col} + $2::numeric,
+            version     = version + 1,
+            updated_at  = now()
       WHERE id = $1
       RETURNING ${SELECT_WALLET}`,
     [id, amount]
@@ -149,26 +170,84 @@ export async function creditWalletBalance(
 }
 
 /**
- * Debit wallet by `amount`. Atomic: the WHERE clause checks balance >= amount.
- * Returns null when insufficient balance (or wallet not found).
+ * Debit a specific bucket by `amount`. Atomic: the WHERE clause checks the
+ * target bucket >= amount. Returns null when insufficient balance.
  * Caller MUST already hold a row lock on the wallet.
  */
 export async function debitWalletBalance(
   client: PoolClient,
   id: string,
-  amount: string
+  amount: string,
+  bucket: WalletBucket = 'deductable'
 ): Promise<WalletRow | null> {
+  const col = BUCKET_COLUMN[bucket];
   const r = await client.query<WalletRow>(
     `UPDATE wallets
-        SET balance    = balance - $2::numeric,
-            version    = version + 1,
-            updated_at = now()
+        SET ${col}      = ${col} - $2::numeric,
+            version     = version + 1,
+            updated_at  = now()
       WHERE id = $1
-        AND balance >= $2::numeric
+        AND ${col} >= $2::numeric
       RETURNING ${SELECT_WALLET}`,
     [id, amount]
   );
   return r.rows[0] ?? null;
+}
+
+/**
+ * Move funds from one bucket to another within the same wallet
+ * (e.g. payable -> withdrawable when a bet settles). Atomic.
+ */
+export async function moveWalletBucket(
+  client: PoolClient,
+  id: string,
+  amount: string,
+  from: WalletBucket,
+  to: WalletBucket
+): Promise<WalletRow | null> {
+  const fromCol = BUCKET_COLUMN[from];
+  const toCol = BUCKET_COLUMN[to];
+  if (from === to) {
+    return findWalletByIdForUpdate(client, id);
+  }
+  const r = await client.query<WalletRow>(
+    `UPDATE wallets
+        SET ${fromCol} = ${fromCol} - $2::numeric,
+            ${toCol}   = ${toCol}   + $2::numeric,
+            version    = version + 1,
+            updated_at = now()
+      WHERE id = $1
+        AND ${fromCol} >= $2::numeric
+      RETURNING ${SELECT_WALLET}`,
+    [id, amount]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * Upsert: create a wallet for the user if one does not already exist (idempotent).
+ * Returns the wallet row (pre-existing or newly created).
+ */
+export async function ensureWallet(
+  client: PoolClient,
+  tenantId: string,
+  userId: string,
+  currency: string = 'ETB'
+): Promise<WalletRow> {
+  // Try to create; silently skip if already exists.
+  await client.query(
+    `INSERT INTO wallets (tenant_id, user_id, currency, balance)
+     VALUES ($1, $2, $3, 0)
+     ON CONFLICT ON CONSTRAINT wallets_user_currency_unique DO NOTHING`,
+    [tenantId, userId, currency]
+  );
+  const r = await client.query<WalletRow>(
+    `SELECT ${SELECT_WALLET} FROM wallets
+      WHERE tenant_id = $1 AND user_id = $2 AND currency = $3
+      LIMIT 1`,
+    [tenantId, userId, currency]
+  );
+  return r.rows[0];
 }
 
 export async function insertWalletTransaction(

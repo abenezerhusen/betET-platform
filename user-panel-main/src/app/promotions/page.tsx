@@ -135,22 +135,6 @@ export default function PromotionsPage() {
   }, []);
 
   const hasPromos = useMemo(() => promotions.length > 0, [promotions]);
-  const visibleTabs = useMemo(
-    () =>
-      CATEGORY_TABS.filter(
-        (t) => t.key === "all" || promotions.some((p) => p.category === t.key)
-      ),
-    [promotions]
-  );
-  const visiblePromotions = useMemo(
-    () =>
-      activeCategory === "all"
-        ? promotions
-        : promotions.filter((p) => p.category === activeCategory),
-    [promotions, activeCategory]
-  );
-  const showCashbackRuleOnly = activeCategory === "cashback-bonuses";
-  const promotionsForRender = showCashbackRuleOnly ? [] : visiblePromotions;
   const activeCashbackSlots = useMemo(
     () =>
       cashbackRules
@@ -166,6 +150,29 @@ export default function PromotionsPage() {
         ),
     [cashbackRules]
   );
+  const hasActiveCashback = useMemo(
+    () => activeCashbackSlots.length > 0,
+    [activeCashbackSlots]
+  );
+  const visibleTabs = useMemo(
+    () =>
+      CATEGORY_TABS.filter(
+        (t) =>
+          t.key === "all" ||
+          (t.key === "cashback-bonuses" && hasActiveCashback) ||
+          promotions.some((p) => p.category === t.key)
+      ),
+    [promotions, hasActiveCashback]
+  );
+  const visiblePromotions = useMemo(
+    () =>
+      activeCategory === "all"
+        ? promotions
+        : promotions.filter((p) => p.category === activeCategory),
+    [promotions, activeCategory]
+  );
+  const showCashbackRuleOnly = activeCategory === "cashback-bonuses";
+  const promotionsForRender = showCashbackRuleOnly ? [] : visiblePromotions;
   return (
     <div className="flex flex-col min-h-[calc(100vh-120px)] md:min-h-[calc(100vh-180px)]">
       {/* Promotions Content */}
@@ -188,7 +195,7 @@ export default function PromotionsPage() {
           </div>
 
           {/* Category tabs — shown when more than one category is active */}
-          {!loading && hasPromos && visibleTabs.length > 2 && (
+          {(!loading && hasPromos && visibleTabs.length > 2) || (!loading && hasActiveCashback) ? (
             <div className="flex gap-2 mb-6 overflow-x-auto">
               {visibleTabs.map((tab) => (
                 <button
@@ -208,7 +215,7 @@ export default function PromotionsPage() {
                 </button>
               ))}
             </div>
-          )}
+          ) : null}
 
           <div className="space-y-6">
             {loading && <p className="text-sm text-gray-400">Loading promotions...</p>}
@@ -243,9 +250,22 @@ export default function PromotionsPage() {
                 </div>
               </div>
             )}
-            {!loading && !hasPromos && (
+            {!loading && !hasPromos && !hasActiveCashback && (
               <p className="text-sm text-gray-400">
                 No active promotions are available right now.
+              </p>
+            )}
+            {!loading && !hasPromos && hasActiveCashback && activeCategory === "all" && (
+              <p className="text-sm text-gray-400">
+                No promotional banners right now — check the{" "}
+                <button
+                  type="button"
+                  onClick={() => setActiveCategory("cashback-bonuses")}
+                  className="underline text-[var(--mezzo-accent-green)] hover:opacity-80"
+                >
+                  Cashback Bonuses
+                </button>{" "}
+                tab for active cashback rules.
               </p>
             )}
             {!loading && hasPromos && promotionsForRender.length === 0 && !showCashbackRuleOnly && (

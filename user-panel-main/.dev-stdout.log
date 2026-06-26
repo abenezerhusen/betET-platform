@@ -1,0 +1,118 @@
+   ▲ Next.js 15.3.7 (Turbopack)
+   - Local:        http://localhost:3001
+   - Network:      http://0.0.0.0:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.7s
+ ○ Compiling /bets-history ...
+ ✓ Compiled /bets-history in 5.4s
+ GET /bets-history 200 in 6934ms
+ GET /bets-history 200 in 2246ms
+ ○ Compiling / ...
+ ✓ Compiled / in 3s
+ GET / 200 in 3228ms
+ ○ Compiling /sport ...
+ ✓ Compiled /sport in 4.9s
+ GET /deposit 200 in 7419ms
+ GET /live 200 in 12121ms
+ GET /sport 200 in 17007ms
+ GET / 200 in 7278ms
+ GET /sport 200 in 14304ms
+ GET /live 200 in 14307ms
+ GET /deposit 200 in 14311ms
+ GET /bets-history 200 in 9211ms
+ GET /bets-history 200 in 148ms
+ GET / 200 in 186ms
+ GET /sport 200 in 5433ms
+ GET /live 200 in 10235ms
+ GET /deposit 200 in 7802ms
+ GET / 200 in 198ms
+ GET /?sport=football&country=Spain&league=La+Liga 200 in 214ms
+ GET /?sport=football&country=England&league=Premier+League 200 in 172ms
+ ✓ Compiled in 449ms
+ ✓ Compiled in 469ms
+ GET /bets-history 200 in 1673ms
+ GET /?sport=football&country=England&league=Premier+League 200 in 5921ms
+ GET /sport 200 in 14196ms
+ GET /deposit 200 in 14216ms
+ GET /live 200 in 14221ms
+ GET /bets-history 200 in 9124ms
+ GET / 200 in 6045ms
+ GET / 200 in 149ms
+ GET / 200 in 207ms
+ GET / 200 in 175ms
+ GET / 200 in 164ms
+ GET / 200 in 140ms
+ GET / 200 in 267ms
+ GET / 200 in 165ms
+ GET / 200 in 159ms
+ GET / 200 in 133ms
+ GET / 200 in 139ms
+ GET / 200 in 163ms
+ GET / 200 in 156ms
+ GET / 200 in 144ms
+ GET / 200 in 132ms
+ GET / 200 in 305ms
+ GET / 200 in 271ms
+ GET / 200 in 180ms
+ GET / 200 in 168ms
+ GET / 200 in 137ms
+ ○ Compiling /games ...
+ ✓ Compiled /games in 2.9s
+ GET /games 200 in 3017ms
+ GET / 200 in 247ms
+ GET /sport 200 in 15408ms
+ GET /deposit 200 in 15430ms
+ GET /live 200 in 15440ms
+ GET /bets-history 200 in 9033ms
+ GET /bets-history 200 in 141ms
+ GET / 200 in 210ms
+ GET /sport 200 in 11202ms
+ GET /live 200 in 11204ms
+ GET /deposit 200 in 7916ms
+ GET / 200 in 5889ms
+ GET /sport 200 in 12950ms
+ GET /deposit 200 in 12950ms
+ GET /live 200 in 12955ms
+ GET /bets-history 200 in 7770ms
+ GET /bets-history 200 in 2289ms
+ ○ Compiling /promotions ...
+ ✓ Compiled /promotions in 3.1s
+ GET /promotions 200 in 3231ms
+ ✓ Compiled in 215ms
+ ✓ Compiled in 220ms
+ GET /promotions 500 in 1075ms
+ ✓ Compiled in 193ms
+ GET /promotions 500 in 850ms
+ GET /promotions 500 in 295ms
+ ✓ Compiled in 295ms
+ ✓ Compiled in 158ms
+ ✓ Compiled /promotions in 60ms
+ GET /promotions 200 in 1449ms
+ GET /promotions 200 in 1581ms
+ GET /bets-history 200 in 1572ms
+ GET / 200 in 323ms
+ GET /sport 200 in 12533ms
+ GET /live 200 in 12558ms
+ GET /deposit 200 in 12549ms
+ GET /bets-history 200 in 7116ms
+ GET / 200 in 278ms
+ GET /sport 200 in 5218ms
+ GET /live 200 in 4936ms
+ GET /deposit 200 in 7745ms
+ GET / 200 in 5722ms
+ GET /sport 200 in 5230ms
+ GET /deposit 200 in 14345ms
+ GET /live 200 in 14370ms
+ GET /bets-history 200 in 9258ms
+ GET /bets-history 200 in 231ms
+ GET / 200 in 255ms
+ GET /sport 200 in 5349ms
+ GET /live 200 in 10037ms
+ GET /deposit 200 in 7548ms
+ GET / 200 in 5275ms
+ GET /sport 200 in 12623ms
+ GET /live 200 in 12624ms
+ GET /deposit 200 in 12614ms
+ GET /bets-history 200 in 7569ms

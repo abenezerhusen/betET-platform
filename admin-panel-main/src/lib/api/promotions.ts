@@ -322,3 +322,79 @@ export function listAdminRaffleWinners(id: string) {
     `/api/admin/raffles/${id}/winners`
   );
 }
+
+/* ─────────────────────── Cashout Boost Promotion ─────────────────────── */
+
+export interface CashoutBoostAvailability {
+  live_bets: boolean;
+  prematch_bets: boolean;
+  single_bets: boolean;
+  multiple_bets: boolean;
+  system_bets: boolean;
+}
+
+export interface CashoutBoostSports {
+  football: boolean;
+  basketball: boolean;
+  tennis: boolean;
+  volleyball: boolean;
+  esports: boolean;
+  virtual: boolean;
+  others: boolean;
+}
+
+export interface CashoutBoostDisplay {
+  show_badge: boolean;
+  show_original_amount: boolean;
+  show_promotion_amount: boolean;
+  show_final_amount: boolean;
+  badge_text: string;
+}
+
+export interface CashoutBoostConfig {
+  is_enabled: boolean;
+  promotion_type: 'percentage' | 'fixed';
+  promotion_value: number;
+  availability: CashoutBoostAvailability;
+  sports: CashoutBoostSports;
+  display: CashoutBoostDisplay;
+}
+
+const DEFAULT_CASHOUT_BOOST: CashoutBoostConfig = {
+  is_enabled: false,
+  promotion_type: 'percentage',
+  promotion_value: 10,
+  availability: {
+    live_bets: true,
+    prematch_bets: true,
+    single_bets: true,
+    multiple_bets: true,
+    system_bets: false,
+  },
+  sports: {
+    football: true,
+    basketball: true,
+    tennis: true,
+    volleyball: true,
+    esports: false,
+    virtual: false,
+    others: true,
+  },
+  display: {
+    show_badge: true,
+    show_original_amount: true,
+    show_promotion_amount: true,
+    show_final_amount: true,
+    badge_text: '🔥 Cash Out Boost',
+  },
+};
+
+export function getCashoutBoostConfig(): Promise<CashoutBoostConfig> {
+  return http
+    .get<CashoutBoostConfig>('/api/admin/promotions/cashout-boost')
+    .then((r) => ({ ...DEFAULT_CASHOUT_BOOST, ...r }));
+}
+
+export function updateCashoutBoostConfig(config: CashoutBoostConfig): Promise<CashoutBoostConfig> {
+  return http.put<CashoutBoostConfig>('/api/admin/promotions/cashout-boost', config);
+}

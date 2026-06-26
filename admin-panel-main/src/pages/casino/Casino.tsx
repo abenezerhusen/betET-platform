@@ -654,6 +654,14 @@ export function Casino() {
             onStartDateChange={setStartDate}
             onEndDateChange={setEndDate}
             filters={commonFilters}
+            onClear={() => {
+              setSelectedGame('');
+              setSelectedProvider('');
+              setSelectedCategory('');
+              setSelectedStatus('');
+              setStartDate(new Date());
+              setEndDate(new Date());
+            }}
           />
 
           {activeReportTab === 'summary' ? (

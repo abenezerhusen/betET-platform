@@ -29,9 +29,9 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { betsApi } from "@/lib/api";
-import type { BetHistoryRow, ReloadedTicket } from "@/lib/api/bets";
-import { cancelBet } from "@/lib/api/bets";
+import { betsApi, publicConfigApi } from "@/lib/api";
+import type { BetHistoryRow, GameBetRow, ReloadedTicket } from "@/lib/api/bets";
+import { cancelBet, cashoutBet } from "@/lib/api/bets";
 
 type StatusLabel =
   | "Won"
@@ -73,6 +73,11 @@ interface DisplayBet {
   legsCount: number;
   /** Coupon code / ID used to lazy-load the selections on expand. */
   reloadKey: string;
+  /** True when the backend reports this pending ticket is eligible for
+   * early cashout right now. */
+  cashoutAvailable: boolean;
+  /** Live cashout offer (boost already applied). Display-only. */
+  cashoutValue: number;
 }
 
 function toNumber(v: string | number | null | undefined): number {
@@ -221,6 +226,45 @@ function InfoTooltip({ explanation }: { explanation: string }) {
 /* Data mappers                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Convert a legacy-path sportsbook slip (stored in the `bets` table with
+ * metadata.selection.source = 'sports' / 'sport') into the same
+ * BetHistoryRow shape used by the proper `sportsbook_bets` flow, so the
+ * My Bets page can display both sources uniformly.
+ */
+function legacyGameBetToHistoryRow(g: GameBetRow): BetHistoryRow {
+  const stake = toNumber(g.stake);
+  const potential = toNumber(g.potential_win);
+  // Derive total odds from potential / stake when possible.
+  const totalOdds = stake > 0 ? potential / stake : 0;
+  const picks = Array.isArray(g.selection?.picks) ? g.selection!.picks! : [];
+  return {
+    id: g.id,
+    // Display a short, readable code on the card; the full UUID is used
+    // as reloadKey so the reload endpoint can find the legacy row.
+    coupon_code: g.id.slice(0, 12).toUpperCase(),
+    bet_type: "single",
+    stake: g.stake,
+    total_odds: String(totalOdds.toFixed(2)),
+    potential_payout: g.potential_win,
+    tax_amount: "0",
+    actual_payout: g.payout,
+    cashout_amount: null,
+    status: g.status,
+    settlement_status: null,
+    void_reason: null,
+    settlement_reason: null,
+    postponed_at: null,
+    postpone_wait_hours: null,
+    currency: g.currency || "ETB",
+    placed_at: g.placed_at,
+    settled_at: g.settled_at,
+    legs_count: picks.length || 1,
+    cashout_available: false,
+    cashout_value: null,
+  };
+}
+
 function sportsbookToDisplay(b: BetHistoryRow): DisplayBet {
   const stake = toNumber(b.stake);
   const totalOdds = toNumber(b.total_odds);
@@ -247,7 +291,14 @@ function sportsbookToDisplay(b: BetHistoryRow): DisplayBet {
     actualWin: actual,
     postponeDeadline,
     legsCount: b.legs_count,
-    reloadKey: b.coupon_code || b.id,
+    // Use the full UUID for reload when the coupon_code is a truncated
+    // UUID (legacy bets don't have a real SBK- coupon). The backend
+    // reload endpoint matches on either coupon_code OR id.
+    reloadKey: b.coupon_code && b.coupon_code.startsWith("SBK-")
+      ? b.coupon_code
+      : b.id,
+    cashoutAvailable: !!b.cashout_available,
+    cashoutValue: toNumber(b.cashout_value),
   };
 }
 
@@ -369,18 +420,65 @@ export default function BetsHistoryPage() {
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
-  /* ---- Fetch sportsbook bets ---- */
+  // Admin-controlled feature flags (whether cashout + user-cancel are
+  // enabled). Defaults assume both disabled — the UI only shows the
+  // buttons once the backend confirms the admin has enabled them.
+  const [cashoutEnabled, setCashoutEnabled] = useState(false);
+  const [userCancelEnabled, setUserCancelEnabled] = useState(false);
+
+  // Cashout state
+  const [cashingOutId, setCashingOutId] = useState<string | null>(null);
+  const [cashoutConfirmId, setCashoutConfirmId] = useState<string | null>(null);
+  const [cashoutError, setCashoutError] = useState<string | null>(null);
+  const [cashoutSuccess, setCashoutSuccess] = useState<string | null>(null);
+
+  /* ---- Fetch admin-controlled feature flags ---- */
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .getPublicFeatures()
+      .then((feat) => {
+        if (cancelled) return;
+        setCashoutEnabled(!!feat.cashout_enabled);
+        setUserCancelEnabled(!!feat.user_cancel_enabled);
+      })
+      .catch(() => {
+        // Stay disabled on error — safer default.
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  /* ---- Fetch sportsbook bets (from both storage paths) ---- */
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     const fromIso = fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined;
     const toIso   = toDate   ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined;
 
-    betsApi
-      .listMyBets({ page: 1, limit: 100, from: fromIso, to: toIso })
-      .then((res) => {
+    // Primary source: proper sportsbook_bets table.
+    const primary = betsApi.listMyBets({ page: 1, limit: 100, from: fromIso, to: toIso });
+    // Secondary source: the legacy `bets` table also stores sportsbook slips
+    // that were placed without a selectionId (they fell back to the internal
+    // games placement endpoint). We surface them here so users always see
+    // every sportsbook ticket they placed online, regardless of which path
+    // the slip happened to take.
+    const secondary = betsApi.listMyGameBets({ page: 1, limit: 100, from: fromIso, to: toIso });
+
+    Promise.all([primary, secondary])
+      .then(([sb, gb]) => {
         if (cancelled) return;
-        setSportsRows(res.items ?? []);
+        const legacySports = (gb.items ?? []).filter((g) => {
+          // Internal games have a real game_id; legacy sportsbook slips
+          // share a single placeholder game id. The metadata.selection.source
+          // field reliably marks them as sportsbook picks.
+          const src = String(g.selection?.source ?? "").toLowerCase();
+          return src.startsWith("sport");
+        });
+        const merged = [
+          ...(sb.items ?? []),
+          ...legacySports.map(legacyGameBetToHistoryRow),
+        ];
+        setSportsRows(merged);
         setError(null);
       })
       .catch((err) => {
@@ -442,6 +540,42 @@ export default function BetsHistoryPage() {
       })
       .finally(() => {
         setCancellingId(null);
+      });
+  };
+
+  /* ---- Cash Out ---- */
+  const handleCashoutBet = (rawId: string) => {
+    if (cashingOutId) return;
+    setCashingOutId(rawId);
+    setCashoutConfirmId(null);
+    setCashoutError(null);
+    cashoutBet(rawId)
+      .then((res) => {
+        const amount = Number(res.cashout_amount ?? 0);
+        setCashoutSuccess(
+          `Cash out successful! ${amount.toFixed(2)} ${res.currency ?? ""} has been credited to your wallet.`
+        );
+        setSportsRows((prev) =>
+          prev.map((r) =>
+            r.id === rawId
+              ? {
+                  ...r,
+                  status: "cashout",
+                  settlement_status: "cashed_out",
+                  cashout_amount: res.cashout_amount,
+                  actual_payout: res.cashout_amount,
+                  cashout_available: false,
+                  cashout_value: null,
+                }
+              : r
+          )
+        );
+      })
+      .catch((err: Error) => {
+        setCashoutError(err?.message ?? "Failed to cash out. Please try again.");
+      })
+      .finally(() => {
+        setCashingOutId(null);
       });
   };
 
@@ -566,6 +700,54 @@ export default function BetsHistoryPage() {
             </div>
           )}
 
+          {/* Cashout success banner */}
+          {cashoutSuccess && (
+            <div className="mb-4 p-3 rounded-lg bg-green-500/15 border border-green-500/40 text-green-400 text-sm flex items-center justify-between">
+              <span>{cashoutSuccess}</span>
+              <button type="button" onClick={() => setCashoutSuccess(null)} className="ml-2 hover:text-white">✕</button>
+            </div>
+          )}
+
+          {/* Cashout error */}
+          {cashoutError && (
+            <div className="mb-4 p-3 rounded-lg bg-red-500/15 border border-red-500/40 text-red-400 text-sm flex items-center justify-between">
+              <span>{cashoutError}</span>
+              <button type="button" onClick={() => setCashoutError(null)} className="ml-2 hover:text-white">✕</button>
+            </div>
+          )}
+
+          {/* Cashout confirm modal */}
+          {cashoutConfirmId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+              <div className="rounded-xl p-6 w-80 space-y-4 border border-gray-600" style={{ background: "var(--mezzo-bg-secondary)" }}>
+                <div className="flex items-center gap-2 text-green-400">
+                  <DollarSign className="w-5 h-5" />
+                  <h3 className="font-bold text-lg">Cash Out?</h3>
+                </div>
+                <p className="text-sm text-gray-300">
+                  The displayed amount will be credited to your wallet immediately and the ticket will be closed. This cannot be undone.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCashoutConfirmId(null)}
+                    className="flex-1 px-4 py-2 rounded-lg border border-gray-600 text-gray-300 hover:text-white text-sm"
+                  >
+                    Keep Bet
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!!cashingOutId}
+                    onClick={() => handleCashoutBet(cashoutConfirmId)}
+                    className="flex-1 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold disabled:opacity-60"
+                  >
+                    {cashingOutId ? "Cashing out…" : "Yes, Cash Out"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Main content */}
           {loading ? (
             <div className="p-12 text-center text-gray-400 text-sm">Loading your tickets…</div>
@@ -629,7 +811,20 @@ export default function BetsHistoryPage() {
                             <StatusBadge status={ticket.status} />
                             <InfoTooltip explanation={ticket.statusExplanation} />
                           </div>
-                          {ticket.status === "Pending" && (
+                          {ticket.status === "Pending" && ticket.cashoutAvailable && cashoutEnabled && ticket.cashoutValue > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setCashoutConfirmId(ticket.rawId)}
+                              disabled={cashingOutId === ticket.rawId}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-500/15 text-green-400 hover:bg-green-500/25 transition-colors disabled:opacity-50"
+                            >
+                              <DollarSign className="w-3 h-3" />
+                              {cashingOutId === ticket.rawId
+                                ? "Cashing out…"
+                                : `Cash Out ${ticket.cashoutValue.toFixed(2)}`}
+                            </button>
+                          )}
+                          {ticket.status === "Pending" && userCancelEnabled && (
                             <button
                               type="button"
                               onClick={() => setCancelConfirmId(ticket.rawId)}

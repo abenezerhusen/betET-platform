@@ -80,10 +80,15 @@ export interface Wallet {
   balance: string;
   bonus_balance?: string | null;
   locked_balance?: string | null;
+  withdrawable_balance?: string | null;
+  payable_balance?: string | null;
   status: string;
   created_at: string;
   updated_at: string;
 }
+
+/** Wallet balance buckets used by the admin credit/debit endpoints. */
+export type WalletBucket = 'deductable' | 'withdrawable' | 'payable';
 
 export interface Bonus {
   id: string;

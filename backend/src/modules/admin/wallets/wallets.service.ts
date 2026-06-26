@@ -10,12 +10,14 @@ import {
   getAdminScope,
   getIp,
   getUa,
+  requireScopedTenantId,
 } from '../admin-shared';
 import * as repo from './wallets.repository';
 import type {
   CreditWalletInput,
   DebitWalletInput,
   ListWalletsQuery,
+  WalletBucket,
 } from './wallets.dto';
 
 function pickAuditWallet(w: repo.WalletRow): Record<string, unknown> {
@@ -27,6 +29,8 @@ function pickAuditWallet(w: repo.WalletRow): Record<string, unknown> {
     balance: w.balance,
     bonus_balance: w.bonus_balance,
     locked_balance: w.locked_balance,
+    withdrawable_balance: w.withdrawable_balance,
+    payable_balance: w.payable_balance,
     status: w.status,
     version: w.version,
   };
@@ -57,6 +61,50 @@ export async function listWallets(req: Request, params: ListWalletsQuery) {
     limit: params.limit,
     pages: Math.max(1, Math.ceil(data.total / params.limit)),
   };
+}
+
+/**
+ * Ensure a wallet exists for `userId`. Creates one (ETB, balance=0) if none is
+ * found. Idempotent — safe to call multiple times. Returns the wallet row.
+ */
+export async function ensureWallet(req: Request, userId: string) {
+  const scope = getAdminScope(req);
+  const tenantId = requireScopedTenantId(scope);
+
+  // Resolve currency from tenant settings; fall back to ETB.
+  const wallet = await withTenantClient(
+    { tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      // Check tenant default currency.
+      const cfg = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'main.config' LIMIT 1`,
+        [tenantId]
+      );
+      const currency =
+        String(cfg.rows[0]?.value?.currency ?? 'ETB');
+      return repo.ensureWallet(client, tenantId, userId, currency);
+    }
+  );
+
+  if (!wallet) throw new NotFoundError('User not found or wallet could not be created');
+
+  await tryAudit(
+    {
+      tenantId: wallet.tenant_id,
+      actorId: scope.actorId,
+      actorType: scope.actorType,
+      action: 'admin.wallet.ensure',
+      resource: 'wallet',
+      resourceId: wallet.id,
+      payload: { user_id: userId, currency: wallet.currency, created: true },
+      ip: getIp(req),
+      userAgent: getUa(req),
+      status: 'success',
+    },
+    { bypassRls: true }
+  );
+
+  return wallet;
 }
 
 export async function getWallet(req: Request, id: string) {
@@ -97,7 +145,8 @@ export async function creditWallet(
         });
       }
 
-      const after = await repo.creditWalletBalance(client, id, body.amount);
+      const bucket: WalletBucket = (body.bucket ?? 'deductable') as WalletBucket;
+      const after = await repo.creditWalletBalance(client, id, body.amount, bucket);
 
       const tx = await repo.insertWalletTransaction(client, {
         tenantId: before.tenant_id,
@@ -111,6 +160,7 @@ export async function creditWallet(
         reference: body.reference ?? null,
         metadata: {
           admin_action: 'credit',
+          bucket,
           actor_id: scope.actorId,
           actor_role: scope.actorRole,
           reason: body.reason,
@@ -134,6 +184,7 @@ export async function creditWallet(
         before: pickAuditWallet(result.before),
         after: pickAuditWallet(result.after),
         amount: body.amount,
+        bucket: (body.bucket ?? 'deductable'),
         reason: body.reason,
         reference: body.reference ?? null,
         transaction_id: result.transaction.id,
@@ -173,10 +224,12 @@ export async function debitWallet(
         });
       }
 
-      const after = await repo.debitWalletBalance(client, id, body.amount);
+      const bucket: WalletBucket = (body.bucket ?? 'deductable') as WalletBucket;
+      const after = await repo.debitWalletBalance(client, id, body.amount, bucket);
       if (!after) {
-        throw new BadRequestError('Insufficient balance', {
+        throw new BadRequestError('Insufficient balance in selected bucket', {
           reason: 'insufficient_balance',
+          bucket,
           balance: before.balance,
           amount: body.amount,
         });
@@ -196,6 +249,7 @@ export async function debitWallet(
         reference: body.reference ?? null,
         metadata: {
           admin_action: 'debit',
+          bucket,
           actor_id: scope.actorId,
           actor_role: scope.actorRole,
           reason: body.reason,
@@ -219,6 +273,7 @@ export async function debitWallet(
         before: pickAuditWallet(result.before),
         after: pickAuditWallet(result.after),
         amount: body.amount,
+        bucket: (body.bucket ?? 'deductable'),
         reason: body.reason,
         reference: body.reference ?? null,
         transaction_id: result.transaction.id,

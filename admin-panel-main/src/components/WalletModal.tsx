@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, DollarSign, ArrowUpDown, Clock, FileText } from 'lucide-react';
+import { X, DollarSign, ArrowUpDown, Clock, FileText, Wallet as WalletIcon } from 'lucide-react';
 import { z } from 'zod';
 import { downloadCsv, todayStamp } from '../lib/csv';
 import { toast } from '../lib/toast';
 import * as walletsApi from '../lib/api/wallets';
 import * as usersApi from '../lib/api/users';
 import { ApiError } from '../lib/api/client';
-import type { Wallet as WalletRow } from '../lib/api/types';
+import type { Wallet as WalletRow, WalletBucket } from '../lib/api/types';
 
 interface WalletModalProps {
   isOpen: boolean;
@@ -43,6 +43,7 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
+  const [bucket, setBucket] = useState<WalletBucket>('deductable');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -51,6 +52,7 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
     if (!memberData?.userId) return;
     setWalletLoading(true);
     try {
+      // Load wallet list and transactions in parallel.
       const [walletList, activity] = await Promise.all([
         walletsApi.listWallets({ user_id: memberData.userId, limit: 1 }),
         usersApi.userActivity(memberData.userId, {
@@ -59,7 +61,18 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
           page: 1,
         }),
       ]);
-      const w = walletList.items[0] ?? null;
+
+      // If no wallet exists yet, auto-create one so the admin can credit
+      // the user immediately (e.g. for users who registered online but
+      // haven't played a game yet).
+      let w = walletList.items[0] ?? null;
+      if (!w) {
+        try {
+          w = await walletsApi.ensureWallet(memberData.userId);
+        } catch {
+          w = null;
+        }
+      }
       setWallet(w);
 
       setTransactions(
@@ -104,6 +117,14 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
     () => Number(wallet?.bonus_balance ?? memberData?.bonus ?? 0),
     [wallet?.bonus_balance, memberData?.bonus]
   );
+  const withdrawable = useMemo(
+    () => Number(wallet?.withdrawable_balance ?? 0),
+    [wallet?.withdrawable_balance]
+  );
+  const payable = useMemo(
+    () => Number(wallet?.payable_balance ?? 0),
+    [wallet?.payable_balance]
+  );
   const won = memberData?.won ?? 0;
 
   if (!isOpen || !memberData) return null;
@@ -131,13 +152,14 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
       const payload = {
         amount: parsed.data.amount.toFixed(2),
         reason: parsed.data.description,
+        bucket,
       };
       if (activeTab === 'deposit') {
         await walletsApi.creditWallet(wallet.id, payload);
-        toast(`Deposited $${parsed.data.amount.toFixed(2)} to ${memberData.name}.`);
+        toast(`Deposited ${parsed.data.amount.toFixed(2)} to ${memberData.name} (${bucket}).`);
       } else {
         await walletsApi.debitWallet(wallet.id, payload);
-        toast(`Withdrew $${parsed.data.amount.toFixed(2)} from ${memberData.name}.`);
+        toast(`Withdrew ${parsed.data.amount.toFixed(2)} from ${memberData.name} (${bucket}).`);
       }
       setAmount('');
       setDescription('');
@@ -163,32 +185,45 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-blue-50 p-4 rounded-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-blue-600">Available Balance</p>
-                <p className="text-2xl font-semibold text-blue-900">${balance.toFixed(2)}</p>
+                <p className="text-xs text-blue-600 font-medium uppercase">Deductable</p>
+                <p className="text-2xl font-semibold text-blue-900">{balance.toFixed(2)} ETB</p>
+                <p className="text-[10px] text-blue-500 mt-1">Used for staking bets</p>
               </div>
               <DollarSign className="h-8 w-8 text-blue-500" />
+            </div>
+          </div>
+          <div className="bg-emerald-50 p-4 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-emerald-600 font-medium uppercase">Withdrawable</p>
+                <p className="text-2xl font-semibold text-emerald-900">{withdrawable.toFixed(2)} ETB</p>
+                <p className="text-[10px] text-emerald-500 mt-1">User can cash out</p>
+              </div>
+              <WalletIcon className="h-8 w-8 text-emerald-500" />
+            </div>
+          </div>
+          <div className="bg-amber-50 p-4 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-amber-600 font-medium uppercase">Payable</p>
+                <p className="text-2xl font-semibold text-amber-900">{payable.toFixed(2)} ETB</p>
+                <p className="text-[10px] text-amber-500 mt-1">Pending winnings</p>
+              </div>
+              <Clock className="h-8 w-8 text-amber-500" />
             </div>
           </div>
           <div className="bg-green-50 p-4 rounded-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-green-600">Bonus Balance</p>
-                <p className="text-2xl font-semibold text-green-900">${bonus.toFixed(2)}</p>
+                <p className="text-xs text-green-600 font-medium uppercase">Bonus Balance</p>
+                <p className="text-2xl font-semibold text-green-900">{bonus.toFixed(2)} ETB</p>
+                <p className="text-[10px] text-green-500 mt-1">Promo credits</p>
               </div>
               <ArrowUpDown className="h-8 w-8 text-green-500" />
-            </div>
-          </div>
-          <div className="bg-purple-50 p-4 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-purple-600">Total Won</p>
-                <p className="text-2xl font-semibold text-purple-900">${won.toFixed(2)}</p>
-              </div>
-              <Clock className="h-8 w-8 text-purple-500" />
             </div>
           </div>
         </div>
@@ -219,16 +254,44 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && <p className="text-sm text-red-600">{error}</p>}
-            {!wallet && !walletLoading && (
-              <p className="text-sm text-amber-700 bg-amber-50 p-2 rounded">
-                No wallet exists yet for this member.
+            {!wallet && walletLoading && (
+              <p className="text-sm text-blue-700 bg-blue-50 p-2 rounded">
+                Setting up wallet…
               </p>
             )}
+
+            {/* Balance bucket selector */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Balance Bucket
+              </label>
+              <select
+                value={bucket}
+                onChange={(e) => setBucket(e.target.value as WalletBucket)}
+                className="block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500 bg-white"
+              >
+                <option value="deductable">
+                  Deductable (non-withdrawable — for staking bets)
+                </option>
+                <option value="withdrawable">
+                  Withdrawable (user can cash out)
+                </option>
+                <option value="payable">
+                  Payable (pending winnings awaiting settlement)
+                </option>
+              </select>
+              <p className="text-[11px] text-gray-500 mt-1">
+                {activeTab === 'deposit'
+                  ? 'Choose which bucket to credit. Cashier deposits must use Deductable.'
+                  : 'Choose which bucket to debit from.'}
+              </p>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700">Amount</label>
               <div className="mt-1 relative rounded-md shadow-sm">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <span className="text-gray-500 sm:text-sm">$</span>
+                  <span className="text-gray-500 sm:text-sm">ETB</span>
                 </div>
                 <input
                   type="number"
@@ -236,7 +299,7 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
                   min="0"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
+                  className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-12 pr-3 sm:text-sm border-gray-300 rounded-md"
                   placeholder="0.00"
                   required
                 />
@@ -259,7 +322,7 @@ export function WalletModal({ isOpen, onClose, memberData, onSuccess }: WalletMo
             >
               {submitting
                 ? 'Processing…'
-                : `Process ${activeTab === 'deposit' ? 'Deposit' : 'Withdrawal'}`}
+                : `Process ${activeTab === 'deposit' ? 'Deposit' : 'Withdrawal'} (${bucket})`}
             </button>
           </form>
         </div>

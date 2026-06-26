@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { z } from 'zod';
 import * as service from './wallets.service';
 import * as swagger from '../../../swagger/registry';
 import {
@@ -29,6 +30,20 @@ swagger.registerPath({
     content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } },
   },
   responses: { '200': { description: 'Wallet credited' } },
+});
+
+/**
+ * POST /api/admin/wallets/ensure
+ * Create a wallet for a user if it doesn't exist; returns the wallet.
+ */
+router.post('/ensure', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { user_id } = z.object({ user_id: z.string().uuid() }).parse(req.body);
+    const wallet = await service.ensureWallet(req, user_id);
+    res.json(wallet);
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {

@@ -158,6 +158,8 @@ export interface UserDetailsBalance {
   balance: string;
   bonus_balance: string;
   locked_balance: string;
+  withdrawable_balance: string;
+  payable_balance: string;
 }
 
 export interface UserDetailsBet {
@@ -174,11 +176,34 @@ export interface UserDetailsBet {
 
 export interface UserDetailsTransaction {
   id: string;
+  type: string;
   amount: string;
   status: string;
   reference: string | null;
   created_at: string;
   metadata: Record<string, unknown>;
+}
+
+export interface UserDetailsBonusHistory {
+  id: string;
+  awarded_at: string;
+  amount: string;
+  type: string;
+  description: string;
+  status: string;
+  expires_at: string | null;
+}
+
+export interface UserDetailsBranchTransaction {
+  id: string;
+  type: string;
+  amount: string;
+  status: string;
+  reference: string | null;
+  notes: string | null;
+  created_at: string;
+  cashier_name: string | null;
+  branch_id: string | null;
 }
 
 export interface UserDetailsBundle {
@@ -188,6 +213,8 @@ export interface UserDetailsBundle {
   recent_bets: UserDetailsBet[];
   recent_deposits: UserDetailsTransaction[];
   recent_withdrawals: UserDetailsTransaction[];
+  bonus_history: UserDetailsBonusHistory[];
+  branch_transactions: UserDetailsBranchTransaction[];
 }
 
 export function getUserDetails(id: string) {
