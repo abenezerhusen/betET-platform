@@ -1587,11 +1587,11 @@ export async function listUnifiedTransactions(
     ? `(${parts.join(') UNION ALL (')})`
     : depositSelect; // fallback
 
-  const totalSql = `SELECT COUNT(*)::text AS count FROM ${merged} merged`;
+  const totalSql = `SELECT COUNT(*)::text AS count FROM (${merged}) AS merged`;
   const totalRes = await client.query<{ count: string }>(totalSql, values);
 
   const rowsSql = `
-    SELECT * FROM ${merged} merged
+    SELECT * FROM (${merged}) AS merged
     ORDER BY created_at DESC
     LIMIT $${i++} OFFSET $${i++}
   `;

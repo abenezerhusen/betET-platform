@@ -583,15 +583,21 @@ const wrap =
 router.get(
   '/',
   wrap(async (req) => {
-    const t = String(req.query.type ?? 'online').toLowerCase();
+    // `type` does double duty: it selects the endpoint (online|branch|wallet)
+    // AND each per-tab schema re-declares `type` as the transaction-kind
+    // filter (deposit|withdrawal|...). Strip the selector before handing the
+    // rest of the query to the matching schema, otherwise Zod rejects with
+    // "Invalid enum value, received 'branch'".
+    const { type: typeSelector, ...rest } = req.query;
+    const t = String(typeSelector ?? 'online').toLowerCase();
     if (t === 'online') {
-      return listOnlineTransactions(req, onlineQuery.parse(req.query));
+      return listOnlineTransactions(req, onlineQuery.parse(rest));
     }
     if (t === 'branch' || t === 'offline') {
-      return listBranchTransactions(req, branchQuery.parse(req.query));
+      return listBranchTransactions(req, branchQuery.parse(rest));
     }
     if (t === 'wallet') {
-      return listWalletTransactions(req, walletQuery.parse(req.query));
+      return listWalletTransactions(req, walletQuery.parse(rest));
     }
     throw new BadRequestError(
       `Unknown transactions type "${t}" — expected one of: online, branch, wallet.`

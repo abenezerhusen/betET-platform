@@ -30,7 +30,7 @@ async function offlineCashReport(req: Request, q: z.infer<typeof offlineCashQuer
   return withTenantClient(
     { tenantId: scope.tenantId, bypassRls: scope.bypassRls, readOnly: true },
     async (client) => {
-      const filters: string[] = [`b.channel = 'offline'`];
+      const filters: string[] = [`b.channel = 'offline'`, `b.sold_at IS NOT NULL`];
       const values: unknown[] = [];
       let i = 1;
       if (scope.tenantId) {

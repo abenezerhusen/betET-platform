@@ -116,3 +116,14 @@
  GET /live 200 in 12624ms
  GET /deposit 200 in 12614ms
  GET /bets-history 200 in 7569ms
+ GET / 200 in 1960ms
+ GET /bets-history 200 in 927ms
+ GET / 200 in 82ms
+ GET /sport 200 in 4517ms
+ GET /deposit 200 in 4537ms
+ GET /live 200 in 4541ms
+ GET /bets-history 200 in 99ms
+ GET / 200 in 77ms
+ GET /sport 200 in 3884ms
+ GET /live 200 in 3886ms
+ GET /deposit 200 in 3010ms

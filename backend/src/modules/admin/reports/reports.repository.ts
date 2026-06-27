@@ -566,6 +566,7 @@ export async function offlineCashReport(
         FROM sportsbook_bets b
         LEFT JOIN cashier_to_branch ctb ON ctb.cashier_id = b.cashier_id
        WHERE b.channel = 'offline'
+         AND b.sold_at IS NOT NULL
          AND b.placed_at >= $2 AND b.placed_at <= $3
          AND ($1::uuid IS NULL OR b.tenant_id = $1::uuid)
          ${branchClause}
@@ -706,7 +707,7 @@ export async function computePayableRows(
                NULL
              )                                          AS agent_id,
              COALESCE(NULLIF((u.metadata->>'commission_rate'),'')::numeric,
-                      CASE WHEN u.role = 'sales' THEN $6 ELSE NULL END
+                      CASE WHEN u.role = 'sales' THEN $6::numeric ELSE NULL END
              )                                          AS sales_rate
         FROM users u
        WHERE u.role IN ('cashier', 'sales')
@@ -746,6 +747,7 @@ export async function computePayableRows(
         FROM sportsbook_bets b
         LEFT JOIN cashier_to_branch ctb ON ctb.cashier_id = b.cashier_id
        WHERE b.channel = 'offline'
+         AND b.sold_at IS NOT NULL
          AND b.placed_at >= $2 AND b.placed_at <= $3
          AND ($1::uuid IS NULL OR b.tenant_id = $1::uuid)
     )
@@ -939,7 +941,7 @@ export async function upsertPayableRow(
   }
 
   const inserted = await client.query<PayableRecordRow>(
-    `INSERT INTO payable_records
+    `INSERT INTO payable_records AS pr
        (tenant_id, scope, entity_id, entity_label, period_date,
         total_stakes, total_payouts, total_payable, commission_rate,
         currency, status)

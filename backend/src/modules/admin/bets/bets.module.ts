@@ -312,12 +312,21 @@ async function listBets(req: Request, q: ListBetsQuery) {
       }>(
         `${allBetsCte}
          SELECT
-           COALESCE(SUM(b.stake), 0)::text                                                      AS total_stake,
-           COALESCE(SUM(b.actual_payout) FILTER (WHERE b.status = 'won'), 0)::text              AS total_payout,
-           COUNT(*) FILTER (WHERE b.status = 'won')::text                                       AS won_count,
-           COUNT(*) FILTER (WHERE b.status = 'lost')::text                                      AS lost_count,
-           COUNT(*) FILTER (WHERE b.status = 'pending')::text                                   AS pending_count,
-           COUNT(*) FILTER (WHERE b.status IN ('cancelled','void'))::text                       AS cancelled_count
+           /* Net Pay / Profit inputs — exclude "booked" offline tickets
+              (placed at a cashier but not yet sold/printed). Online and
+              internal-game bets are auto-confirmed at placement, so the
+              sold_at filter only applies to the offline channel. */
+           COALESCE(SUM(b.stake) FILTER (
+                      WHERE NOT (b.channel = 'offline' AND b.sold_at IS NULL)
+                    ), 0)::text                                                      AS total_stake,
+           COALESCE(SUM(b.actual_payout) FILTER (
+                      WHERE b.status = 'won'
+                        AND NOT (b.channel = 'offline' AND b.sold_at IS NULL)
+                    ), 0)::text                                                       AS total_payout,
+           COUNT(*) FILTER (WHERE b.status = 'won')::text                              AS won_count,
+           COUNT(*) FILTER (WHERE b.status = 'lost')::text                             AS lost_count,
+           COUNT(*) FILTER (WHERE b.status = 'pending')::text                          AS pending_count,
+           COUNT(*) FILTER (WHERE b.status IN ('cancelled','void'))::text              AS cancelled_count
            FROM all_bets b
            LEFT JOIN users u ON u.id = b.user_id
            ${where}`,

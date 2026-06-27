@@ -51,7 +51,11 @@ const gameConfigSchema = z
 
 export const listGamesSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().positive().max(100).default(50),
+  // Cap raised to 500 so the "simple list" endpoint used by the Packages
+  // page (which forces limit=500 to return every available game in one
+  // shot) passes validation. The paginated `/` endpoint still defaults
+  // to 50, so existing callers see no behaviour change.
+  limit: z.coerce.number().int().positive().max(500).default(50),
   provider: z.string().trim().max(255).optional(),
   type: z.enum(GAME_TYPES).optional(),
   status: z.enum(GAME_STATUSES).optional(),

@@ -43,6 +43,7 @@ import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import {
   BadRequestError,
   ConflictError,
+  ForbiddenError,
   NotFoundError,
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
@@ -222,6 +223,102 @@ async function loadTicket(
     [tenantId, upper]
   );
   return sportsbook.rows[0] ?? null;
+}
+
+/**
+ * Cross-branch guard for cashier ticket actions (cancel / payout).
+ *
+ * The rule: a cashier may only cancel or pay tickets that were sold in
+ * their OWN branch. `bet.sold_branch_id` is the authoritative branch
+ * stamp set when the ticket was sold through a cashier; if it's missing
+ * (e.g. online tickets, legacy slips) we fall back to resolving the
+ * branch from `sold_by_cashier_id` (and finally `cashier_id`) via the
+ * same `cashier_to_branch` join the reports module uses.
+ *
+ * Resolution chain for the ticket's branch:
+ *   1. bet.sold_branch_id            (UUID of the branch user row)
+ *   2. sold_by_cashier_id → users.metadata.branch_id  (matched to branches)
+ *   3. cashier_id        → users.metadata.branch_id  (matched to branches)
+ *
+ * If neither the acting cashier nor the ticket has a resolvable branch,
+ * the check is skipped (legacy / unattributed tickets remain actionable
+ * to preserve backwards compatibility). When BOTH resolve and differ,
+ * we throw `ForbiddenError` with the spec-mandated popup message.
+ */
+const CROSS_BRANCH_MESSAGE =
+  'This ticket belongs to another branch. You are not authorized to cancel or pay this ticket.';
+
+async function assertTicketBranchAccess(
+  client: PoolClient,
+  cashierId: string,
+  bet: BetRow
+): Promise<void> {
+  // Resolve the acting cashier's branch UUID.
+  const cashierMeta = await client.query<{
+    metadata: Record<string, unknown>;
+  }>(`SELECT metadata FROM users WHERE id = $1`, [cashierId]);
+  const cashierBranchRaw =
+    (cashierMeta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
+    null;
+  // Normalize: branch_id in metadata may be either a UUID or a human
+  // branch code like "PC001". Resolve to the canonical branch user UUID
+  // via the branches lookup so we can compare apples-to-apples.
+  const cashierBranchId = await resolveBranchId(client, cashierBranchRaw);
+  if (!cashierBranchId) {
+    // Legacy cashier without branch attribution — no branch scope to
+    // enforce. Allow the action to preserve backwards compatibility.
+    return;
+  }
+
+  // Resolve the ticket's branch. Prefer the stamped `sold_branch_id`,
+  // then fall back to the selling cashier's branch.
+  let ticketBranchId: string | null = bet.sold_branch_id ?? null;
+  if (!ticketBranchId && bet.sold_by_cashier_id) {
+    const fb = await client.query<{
+      metadata: Record<string, unknown>;
+    }>(`SELECT metadata FROM users WHERE id = $1`, [bet.sold_by_cashier_id]);
+    const fbBranchRaw =
+      (fb.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
+      null;
+    ticketBranchId = await resolveBranchId(client, fbBranchRaw);
+  }
+
+  if (!ticketBranchId) {
+    // Ticket has no resolvable branch (online bet, legacy slip). No
+    // cross-branch violation possible — allow.
+    return;
+  }
+
+  if (ticketBranchId !== cashierBranchId) {
+    throw new ForbiddenError(CROSS_BRANCH_MESSAGE, {
+      reason: 'cross_branch',
+      ticket_branch_id: ticketBranchId,
+      cashier_branch_id: cashierBranchId,
+    });
+  }
+}
+
+/**
+ * Resolve a `users.metadata.branch_id` value (which may be a UUID or a
+ * human-readable branch code like "PC001") to the canonical branch user
+ * UUID. Returns null when the value is empty or no matching branch is
+ * found.
+ */
+async function resolveBranchId(
+  client: PoolClient,
+  raw: string | null | undefined
+): Promise<string | null> {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const r = await client.query<{ id: string }>(
+    `SELECT id FROM users
+      WHERE role = 'branch'
+        AND (id::text = $1 OR metadata->>'branch_id' = $1)
+      LIMIT 1`,
+    [trimmed]
+  );
+  return r.rows[0]?.id ?? null;
 }
 
 /**
@@ -784,6 +881,10 @@ router.post(
               });
             }
 
+            // Branch guard — cashiers may only pay out tickets sold in
+            // their own branch. Throws ForbiddenError on mismatch.
+            await assertTicketBranchAccess(client, scope.cashierId, bet);
+
             // Resolve the cashier's branch_id from users.metadata.
             const meta = await client.query<{
               metadata: Record<string, unknown>;
@@ -1203,6 +1304,10 @@ router.post(
                 );
               }
             }
+
+            // Branch guard — cashiers may only cancel tickets sold in
+            // their own branch. Throws ForbiddenError on mismatch.
+            await assertTicketBranchAccess(client, scope.cashierId, bet);
 
             // Section 19 — Cashier Config enforcement (cancel window,
             // stake cap, daily count, daily volume).

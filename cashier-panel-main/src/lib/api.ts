@@ -223,12 +223,15 @@ export async function apiRequest<T>(
     throw new ApiError(401, "Session expired", body);
   }
   if (!res.ok) {
-    // Backend permission failures (requirePermission gate) surface as 403
-    // with an "Insufficient permissions" error. Mirror these to the global
-    // popup so a denied action always shows the spec-mandated message, even
-    // if the client-side gate was somehow bypassed.
+    // Backend permission failures (requirePermission gate) and cross-
+    // branch ticket-access denials both surface as 403. Mirror them to
+    // the global popup so a denied action always shows the spec-mandated
+    // message, even if the client-side gate was somehow bypassed. We
+    // pass the backend's specific message (e.g. "This ticket belongs to
+    // another branch…") so the popup is actionable rather than generic.
     if (res.status === 403) {
-      triggerPermissionDenied();
+      const backendMessage = messageFromBody(body, "");
+      triggerPermissionDenied(backendMessage || PERMISSION_DENIED_MESSAGE);
     }
     throw new ApiError(res.status, messageFromBody(body, `Request failed (${res.status})`), body);
   }

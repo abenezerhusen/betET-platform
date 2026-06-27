@@ -122,6 +122,7 @@ export async function getDashboardStats(
        WHERE b.placed_at >= $2 AND b.placed_at <= $3
          AND ${tenantClause('b')}
          AND ${sportsbookTabFilter(filters.tab)}
+         AND (b.channel <> 'offline' OR b.sold_at IS NOT NULL)
     ),
     bets_combined AS (
       SELECT * FROM bets_unified
@@ -300,6 +301,7 @@ export async function getDashboardByBranch(
        WHERE b.placed_at >= $2 AND b.placed_at <= $3
          AND ${tenantClause('b')}
          AND ${sportsbookTabFilter(filters.tab)}
+         AND (b.channel <> 'offline' OR b.sold_at IS NOT NULL)
     ),
     branch_bet_stats AS (
       SELECT branch_id,
