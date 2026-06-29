@@ -34,3 +34,124 @@
   digest: '4238830736'
 }
  ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ⚠ Fast Refresh had to perform a full reload when ./src/lib/api/index.ts [app-client] (ecmascript) <locals> changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\games\page\app-build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\games\\page\\app-build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.l70tq717e3'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.l70tq717e3'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\games\page\app-build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\games\\page\\app-build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.m8di59zseze'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.m8di59zseze'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.usu6uedl39'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.usu6uedl39'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\live-games\page\build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\live-games\\page\\build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.axa9o18709w'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.axa9o18709w'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\live-games\page\build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\live-games\\page\\build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.z68v9d4umsn'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.z68v9d4umsn'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.fo1t75u5v9g'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.fo1t75u5v9g'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.8xswynw8bxp'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.8xswynw8bxp'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.xxfwdpdrxc8'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.xxfwdpdrxc8'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.8xswynw8bxp'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.8xswynw8bxp'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.tqy4fnil78n'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.tqy4fnil78n'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.40loq3y2nxf'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.40loq3y2nxf'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\games\page\app-build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\games\\page\\app-build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.ofydmpvmpa'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.ofydmpvmpa'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\server\app\games\page\app-build-manifest.json'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\server\\app\\games\\page\\app-build-manifest.json'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.sp4r823hjb'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.sp4r823hjb'
+}
+[Error: ENOENT: no such file or directory, open 'E:\betET-platform\user-panel-main\.next\static\development\_buildManifest.js.tmp.8a2b4fft91x'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: 'E:\\betET-platform\\user-panel-main\\.next\\static\\development\\_buildManifest.js.tmp.8a2b4fft91x'
+}

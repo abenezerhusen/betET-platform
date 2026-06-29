@@ -8,6 +8,13 @@
 
 import { apiRequest } from './client';
 
+// Branding / config / navigation rarely changes within a session, so it is
+// safe to cache for a few minutes. Curated lists (top bets/matches, banners)
+// use a shorter window. Real-time-sensitive endpoints (maintenance,
+// operation hours) are deliberately left uncached so they always re-fetch.
+const CONFIG_TTL = 5 * 60 * 1000;
+const LIST_TTL = 60 * 1000;
+
 export interface PublicGeneral {
   platform_name: string;
   logo_url: string;
@@ -100,19 +107,19 @@ export interface OperationHoursPayload {
 }
 
 export function getPublicGeneral(): Promise<PublicGeneral> {
-  return apiRequest<PublicGeneral>('/api/public/general');
+  return apiRequest<PublicGeneral>('/api/public/general', { cacheTtl: CONFIG_TTL });
 }
 
 export function listTopBets(): Promise<{ items: TopBetEntry[] }> {
-  return apiRequest<{ items: TopBetEntry[] }>('/api/public/top-bets');
+  return apiRequest<{ items: TopBetEntry[] }>('/api/public/top-bets', { cacheTtl: LIST_TTL });
 }
 
 export function listTopMatches(): Promise<{ items: TopMatchEntry[] }> {
-  return apiRequest<{ items: TopMatchEntry[] }>('/api/public/top-matches');
+  return apiRequest<{ items: TopMatchEntry[] }>('/api/public/top-matches', { cacheTtl: LIST_TTL });
 }
 
 export function listPromotionBanners(): Promise<{ items: PromotionBanner[] }> {
-  return apiRequest<{ items: PromotionBanner[] }>('/api/public/promotions');
+  return apiRequest<{ items: PromotionBanner[] }>('/api/public/promotions', { cacheTtl: LIST_TTL });
 }
 
 export function getOperationHours(): Promise<OperationHoursPayload> {
@@ -143,7 +150,7 @@ export interface FooterLinks {
 }
 
 export function getFooterLinks(): Promise<FooterLinks> {
-  return apiRequest<FooterLinks>('/api/public/footer-links');
+  return apiRequest<FooterLinks>('/api/public/footer-links', { cacheTtl: CONFIG_TTL });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -159,7 +166,9 @@ export interface GameThumbnailOverride {
 }
 
 export function listGameThumbnails(): Promise<{ items: GameThumbnailOverride[] }> {
-  return apiRequest<{ items: GameThumbnailOverride[] }>('/api/public/game-thumbnails');
+  return apiRequest<{ items: GameThumbnailOverride[] }>('/api/public/game-thumbnails', {
+    cacheTtl: CONFIG_TTL,
+  });
 }
 
 export interface NavbarItem {
@@ -172,7 +181,7 @@ export interface NavbarItem {
 }
 
 export function listNavbarItems(): Promise<{ items: NavbarItem[] }> {
-  return apiRequest<{ items: NavbarItem[] }>('/api/public/navbar');
+  return apiRequest<{ items: NavbarItem[] }>('/api/public/navbar', { cacheTtl: CONFIG_TTL });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -190,5 +199,15 @@ export interface PublicFeatures {
 }
 
 export function getPublicFeatures(): Promise<PublicFeatures> {
-  return apiRequest<PublicFeatures>('/api/public/features');
+  return apiRequest<PublicFeatures>('/api/public/features', { cacheTtl: CONFIG_TTL });
+}
+
+export interface PublicMaintenance {
+  active: boolean;
+  enabled: boolean;
+  message: string;
+}
+
+export function getPublicMaintenance(): Promise<PublicMaintenance> {
+  return apiRequest<PublicMaintenance>('/api/public/maintenance');
 }

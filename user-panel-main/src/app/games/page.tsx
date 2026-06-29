@@ -64,7 +64,31 @@ function handleThumbError(e: React.SyntheticEvent<HTMLImageElement>): void {
 
 export default function GamesPage() {
   const router = useRouter();
-  const { ready: authReady, isAuthenticated } = useAuth();
+  const { ready: authReady, isAuthenticated, refreshWallet, wallet } = useAuth();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const defaultCurrency =
+    process.env.NEXT_PUBLIC_DEFAULT_CURRENCY?.trim().toUpperCase() || "ETB";
+  const walletLine =
+    wallet?.summary?.find((s) => s.currency.toUpperCase() === defaultCurrency) ??
+    wallet?.summary?.[0];
+  const userBalance = walletLine ? Number(walletLine.balance) : 0;
+
+  const postWalletToIframe = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+    const token = getAccessToken() ?? localStorage.getItem("1birr_access_token") ?? "";
+    let engineOrigin = "*";
+    try {
+      engineOrigin = new URL(GAME_ENGINE_URL).origin;
+    } catch {
+      /* ignore */
+    }
+    iframe.contentWindow.postMessage(
+      { type: "WALLET_INIT", balance: userBalance, token: token.trim() || undefined },
+      engineOrigin
+    );
+  }, [userBalance]);
   const [cards, setCards] = useState<LobbyCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [thumbOverrides, setThumbOverrides] = useState<Map<string, GameThumbnailOverride>>(new Map());
@@ -245,9 +269,14 @@ export default function GamesPage() {
       // Internal engine — embed the game engine iframe directly. The game
       // engine reads the user JWT from URL and resolves the wallet itself.
       const slug = game.internalSlug ?? game.id;
-      const token = typeof window !== "undefined"
-        ? getAccessToken() ?? localStorage.getItem("1birr_access_token") ?? ""
-        : "";
+      const token =
+        typeof window !== "undefined"
+          ? getAccessToken() ?? localStorage.getItem("1birr_access_token") ?? ""
+          : "";
+      if (!token.trim()) {
+        window.dispatchEvent(new Event("1birr:open-login"));
+        return;
+      }
       const url = `${GAME_ENGINE_URL.replace(/\/$/, "")}/games/${slug}?token=${encodeURIComponent(token)}`;
       setExternalLaunch({
         sessionId: "",
@@ -303,6 +332,7 @@ export default function GamesPage() {
       }
     }
     setExternalLaunch(null);
+    void refreshWallet();
   };
 
   // Navbar shortcuts (Aviator / JetX / Fast Keno) and the dedicated game
@@ -354,11 +384,16 @@ export default function GamesPage() {
       if (!data || typeof data !== "object") return;
       if (data.type === "GAME_BACK" || data.type === "SESSION_END") {
         setExternalLaunch(null);
+        void refreshWallet();
       }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [refreshWallet]);
+
+  useEffect(() => {
+    if (externalLaunch) postWalletToIframe();
+  }, [externalLaunch, userBalance, postWalletToIframe]);
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-120px)] md:min-h-[calc(100vh-180px)]">
@@ -559,11 +594,13 @@ export default function GamesPage() {
             <span className="font-semibold truncate">{externalLaunch.name}</span>
           </div>
           <iframe
+            ref={iframeRef}
             src={externalLaunch.launchUrl}
             className="flex-1 w-full border-0"
             allow="fullscreen autoplay payment"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals"
             title={externalLaunch.name}
+            onLoad={() => postWalletToIframe()}
           />
         </div>
       )}

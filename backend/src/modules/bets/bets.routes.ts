@@ -26,6 +26,7 @@ import {
 import { z } from 'zod';
 
 import { authenticateToken } from '../../middleware/authenticate';
+import { assertSiteAvailable } from '../../middleware/maintenance-mode';
 import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import {
   BadRequestError,
@@ -176,6 +177,7 @@ async function placeSlip(
   req: Request,
   body: z.infer<typeof placeSlipSchema>
 ): Promise<PlaceOutcome> {
+  await assertSiteAvailable(req);
   const scope = getUserScope(req);
   const idem = getIdempotencyKey(req, body.idempotency_key);
 

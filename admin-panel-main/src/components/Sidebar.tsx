@@ -115,6 +115,7 @@ const menuItems: MenuItem[] = [
     title: 'Games',
     icon: <Gamepad2 size={20} />,
     children: [
+      { title: 'Game List', path: '/games/list', perm: 'games.view', icon: <Gamepad2 size={16} /> },
       { title: 'RTP Management', path: '/games/rtp', perm: 'games.rtp.view', icon: <Percent size={16} /> },
       { title: 'Game Activity', path: '/games/activity', perm: 'games.activity.view', icon: <ChevronRight size={16} /> },
     ],
@@ -194,9 +195,10 @@ function filterMenu(
 interface MenuItemProps {
   item: MenuItem;
   isCollapsed: boolean;
+  onNavigate?: () => void;
 }
 
-function MenuItem({ item, isCollapsed }: MenuItemProps) {
+function MenuItem({ item, isCollapsed, onNavigate }: MenuItemProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   if (item.children) {
@@ -221,6 +223,7 @@ function MenuItem({ item, isCollapsed }: MenuItemProps) {
               <NavLink
                 key={child.path}
                 to={child.path || '#'}
+                onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
                   cn(
                     'flex items-center space-x-3 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg',
@@ -241,6 +244,7 @@ function MenuItem({ item, isCollapsed }: MenuItemProps) {
   return (
     <NavLink
       to={item.path || '#'}
+      onClick={() => onNavigate?.()}
       className={({ isActive }) =>
         cn(
           'flex items-center space-x-3 px-3 py-2 text-gray-600 hover:bg-gray-100 rounded-lg',
@@ -255,7 +259,13 @@ function MenuItem({ item, isCollapsed }: MenuItemProps) {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({
+  mobileOpen = false,
+  onMobileClose,
+}: {
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const user = useAuthStore((s) => s.user);
@@ -269,26 +279,46 @@ export function Sidebar() {
     [user?.role, user?.permissions?.join('|')]
   );
 
+  const handleNavigate = () => {
+    onMobileClose?.();
+  };
+
   return (
-    <aside
-      className={cn(
-        'bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300',
-        isCollapsed ? 'w-20' : 'w-64'
+    <>
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={onMobileClose}
+          aria-hidden
+        />
       )}
-    >
-      <div className="p-4 flex-shrink-0 border-b border-gray-100">
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="w-full bg-gray-100 p-2 rounded-lg text-gray-600 hover:bg-gray-200"
-        >
-          {isCollapsed ? '→' : '←'}
-        </button>
-      </div>
-      <nav className="flex-1 overflow-y-auto space-y-2 p-4 scrollbar-thin">
-        {visible.map((item) => (
-          <MenuItem key={item.title} item={item} isCollapsed={isCollapsed} />
-        ))}
-      </nav>
-    </aside>
+      <aside
+        className={cn(
+          'bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300 z-50',
+          'fixed lg:static inset-y-0 left-0 w-64',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+          isCollapsed && 'lg:w-20'
+        )}
+      >
+        <div className="p-4 flex-shrink-0 border-b border-gray-100 hidden lg:block">
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="w-full bg-gray-100 p-2 rounded-lg text-gray-600 hover:bg-gray-200"
+          >
+            {isCollapsed ? '→' : '←'}
+          </button>
+        </div>
+        <nav className="flex-1 overflow-y-auto space-y-2 p-4 scrollbar-thin">
+          {visible.map((item) => (
+            <MenuItem
+              key={item.title}
+              item={item}
+              isCollapsed={isCollapsed && !mobileOpen}
+              onNavigate={handleNavigate}
+            />
+          ))}
+        </nav>
+      </aside>
+    </>
   );
 }

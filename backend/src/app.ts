@@ -32,6 +32,8 @@ import publicGamesRoutes from './modules/public/public-games.routes';
 import publicGeneralRoutes from './modules/public/public-general.routes';
 // Section 16 Flow B — walk-in sportsbook reservation (no auth required)
 import publicBetsRoutes from './modules/public/public-bets.routes';
+// Jackpot public listing + authenticated entry
+import publicJackpotsRoutes from './modules/public/public-jackpots.routes';
 import liveCasinoRoutes from './modules/games/live-casino.routes';
 // Section 18 — sportsbook bet placement, cashout, history.
 import sportsbookBetsRoutes from './modules/bets/bets.routes';
@@ -177,6 +179,8 @@ export function createApp(): Express {
   app.use('/api/sports', publicSportsRoutes);
   // Section 18 — POST /api/bets/place, /:id/cashout, GET /api/bets/:id
   app.use('/api/bets', sportsbookBetsRoutes);
+  // Jackpot listing (public) + entry (requires user auth)
+  app.use('/api/jackpots', publicJackpotsRoutes);
   app.use('/api/promotions', publicPromotionsRoutes);
   app.use('/api/public/games', publicGamesRoutes);
   // Section 16 Flow B — walk-in sportsbook reservation (no auth)

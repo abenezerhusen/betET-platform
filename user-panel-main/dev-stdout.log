@@ -1,0 +1,102 @@
+
+> nextjs-shadcn@0.1.0 dev
+> next dev -H 0.0.0.0 -p 3001 --turbopack
+
+   ▲ Next.js 15.3.7 (Turbopack)
+   - Local:        http://localhost:3001
+   - Network:      http://0.0.0.0:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 2.2s
+ ○ Compiling /games ...
+ ✓ Compiled /games in 4.5s
+ GET /games 200 in 5553ms
+ ○ Compiling /live-games ...
+ ✓ Compiled /live-games in 1291ms
+ GET /live-games 200 in 2177ms
+ ○ Compiling /promotions ...
+ ✓ Compiled /promotions in 1747ms
+ GET /promotions 200 in 3033ms
+ ○ Compiling /games/play ...
+ ✓ Compiled /games/play in 2.2s
+ GET /games/play?gameId=test 200 in 4109ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1956ms
+ GET / 200 in 4784ms
+ ○ Compiling /sport ...
+ ✓ Compiled /sport in 5.1s
+ GET /games 200 in 340ms
+ GET /sport 200 in 12290ms
+ GET /live 200 in 12312ms
+ GET /deposit 200 in 12309ms
+ GET /games 200 in 1461ms
+ GET /games 200 in 3372ms
+ GET / 200 in 110ms
+ GET /sport 200 in 5505ms
+ GET /deposit 200 in 5506ms
+ GET /live 200 in 5510ms
+ ✓ Compiled in 361ms
+ ✓ Compiled in 289ms
+ ✓ Compiled in 492ms
+ ✓ Compiled in 330ms
+ GET / 200 in 3249ms
+ GET /sport 200 in 5234ms
+ GET /deposit 200 in 14059ms
+ GET /live 200 in 14066ms
+ GET /games 200 in 9709ms
+ GET / 200 in 10504ms
+ GET /sport 200 in 8077ms
+ GET /deposit 200 in 8099ms
+ GET /live 200 in 8102ms
+ GET /games 200 in 5219ms
+ GET /games?play=fast-keno 200 in 73ms
+ GET /games?play=fast-keno 200 in 74ms
+ GET /games?play=fast-keno 200 in 786ms
+ GET / 200 in 73ms
+ GET /sport 200 in 5301ms
+ GET /deposit 200 in 5302ms
+ GET /live 200 in 5304ms
+ ✓ Compiled in 169ms
+ ✓ Compiled in 186ms
+ ✓ Compiled in 207ms
+ GET / 200 in 3490ms
+ GET / 200 in 4805ms
+ GET /live 200 in 5713ms
+ GET /deposit 200 in 5736ms
+ GET /sport 200 in 5739ms
+ GET / 200 in 11916ms
+ GET /sport 200 in 5198ms
+ GET /live 200 in 5199ms
+ GET /deposit 200 in 6667ms
+ GET /games 200 in 4205ms
+ GET / 200 in 71ms
+ GET /sport 200 in 2205ms
+ GET /live 200 in 4144ms
+ GET /deposit 200 in 3079ms
+ GET /promotions 200 in 90ms
+ GET / 200 in 415ms
+ GET /live 200 in 5577ms
+ GET /deposit 200 in 5580ms
+ GET /sport 200 in 5583ms
+ ✓ Compiled in 201ms
+ GET / 200 in 2177ms
+ ✓ Compiled in 0ms
+ ✓ Compiled in 0ms
+ GET / 200 in 2452ms
+ ✓ Compiled / in 81ms
+ ✓ Compiled in 2.7s
+ ○ Compiling / ...
+ ✓ Compiled / in 694ms
+ GET / 200 in 702ms
+ GET /sport 200 in 6800ms
+ GET /deposit 200 in 6792ms
+ GET /live 200 in 6872ms
+ GET / 200 in 6355ms
+ GET / 200 in 131ms
+ GET / 200 in 145ms
+ GET / 200 in 135ms
+ GET / 200 in 116ms
+ GET / 200 in 116ms
+ GET / 200 in 152ms
+[?25h

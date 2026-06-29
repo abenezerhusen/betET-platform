@@ -11,6 +11,8 @@ import {
   getKenoRound,
   placeKenoBet,
   readBalance,
+  onWalletUpdated,
+  listenEmbeddedWalletInit,
   type KenoNumberDrawnEvent,
   type KenoRoundCompleteEvent,
   type KenoRoundStartEvent,
@@ -282,6 +284,20 @@ export default function FastKenoPage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    return listenEmbeddedWalletInit(({ balance }) => {
+      if (Number.isFinite(balance)) setBalance(balance);
+    });
+  }, []);
+
+  useEffect(() => {
+    return onWalletUpdated(() => {
+      fetchPlayerMe()
+        .then((me) => setBalance(readBalance(me)))
+        .catch(() => { /* ignore */ })
+    })
   }, [])
 
   // Cosmetic countdown in the betting phase — authoritative timing comes

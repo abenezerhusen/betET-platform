@@ -771,7 +771,7 @@ export function Header() {
 
             {/* Main Nav Items */}
             {mainNavItems.map((item) => {
-              const Icon = item.icon;
+              const Icon = iconForNavLabel(item.name);
               const isActive = pathname === item.href;
 
               return (

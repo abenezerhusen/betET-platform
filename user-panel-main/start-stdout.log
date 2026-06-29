@@ -1,0 +1,10 @@
+
+> nextjs-shadcn@0.1.0 start
+> next start -p 3001 -H 0.0.0.0
+
+   ▲ Next.js 15.3.7
+   - Local:        http://localhost:3001
+   - Network:      http://0.0.0.0:3001
+
+ ✓ Starting...
+ ✓ Ready in 696ms

@@ -48,7 +48,7 @@ export function readGameToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
     const url = new URL(window.location.href);
-    const fromUrl = url.searchParams.get("token");
+    const fromUrl = url.searchParams.get("token")?.trim();
     if (fromUrl) {
       try {
         window.sessionStorage.setItem(TOKEN_KEY, fromUrl);
@@ -142,8 +142,67 @@ async function fetchDevGameToken(): Promise<string | null> {
 export async function ensureGameToken(): Promise<string | null> {
   const existing = readGameToken();
   if (existing) return existing;
+  // Embedded from the user panel — must receive ?token= from the parent.
+  // Never mint a dev token here; that would show the wrong player's wallet.
+  if (typeof window !== "undefined" && window.self !== window.top) {
+    return null;
+  }
   if (!isLocalHost()) return null;
   return fetchDevGameToken();
+}
+
+/** Re-fetch balance when the backend pushes WALLET_UPDATED (sportsbook bets,
+ *  admin credits, other tabs, etc.). */
+export function onWalletUpdated(cb: () => void): () => void {
+  const socket = connectGameSocket();
+  if (!socket) return () => {};
+  const handler = () => {
+    try {
+      cb();
+    } catch {
+      /* ignore */
+    }
+  };
+  socket.on("WALLET_UPDATED", handler);
+  return () => {
+    socket.off("WALLET_UPDATED", handler);
+  };
+}
+
+/**
+ * When the game engine runs inside the user-panel iframe, the parent can
+ * push the logged-in player's token + wallet balance via postMessage
+ * (see user-panel games page). This gives an immediate balance while the
+ * REST `/api/users/me` call completes and covers edge cases where the
+ * iframe cannot reach the API on first paint.
+ */
+export function listenEmbeddedWalletInit(
+  onInit: (data: { balance: number; token?: string }) => void
+): () => void {
+  if (typeof window === "undefined" || window.self === window.top) {
+    return () => {};
+  }
+  const handler = (ev: MessageEvent) => {
+    const d = ev.data as { type?: string; balance?: unknown; token?: unknown } | null;
+    if (!d || typeof d !== "object" || d.type !== "WALLET_INIT") return;
+    const parentOrigin = process.env.NEXT_PUBLIC_PARENT_ORIGIN?.trim();
+    if (parentOrigin && parentOrigin !== "*" && ev.origin !== parentOrigin) {
+      return;
+    }
+    const balance = Number(d.balance);
+    if (Number.isFinite(balance)) {
+      onInit({ balance, token: typeof d.token === "string" ? d.token : undefined });
+    }
+    if (typeof d.token === "string" && d.token.trim()) {
+      try {
+        window.sessionStorage.setItem(TOKEN_KEY, d.token.trim());
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  window.addEventListener("message", handler);
+  return () => window.removeEventListener("message", handler);
 }
 
 /* ------------------------------------------------------------------------ */

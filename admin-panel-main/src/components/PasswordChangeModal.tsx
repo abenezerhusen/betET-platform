@@ -65,7 +65,7 @@ export function PasswordChangeModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div className="bg-white rounded-lg p-6 w-[400px]">
+      <div className="bg-white rounded-lg p-6 w-full max-w-full max-w-[400px] mx-4 mx-4">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center space-x-2">
             <Key className="h-5 w-5 text-blue-600" />

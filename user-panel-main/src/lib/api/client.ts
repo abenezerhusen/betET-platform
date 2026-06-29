@@ -47,6 +47,15 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'headers'> {
   tenantId?: string;
   /** Optional query params helper. */
   query?: Record<string, string | number | boolean | undefined | null>;
+  /**
+   * In-memory response cache TTL (ms) for GET requests. Use ONLY for static
+   * or slow-changing data (config, catalogs, country/league lists). NEVER set
+   * this on real-time betting data (odds, live matches, wallet, open bets).
+   * Any successful mutating request (POST/PUT/PATCH/DELETE) clears the cache.
+   */
+  cacheTtl?: number;
+  /** Disable in-flight de-duplication of identical concurrent GETs. */
+  noDedupe?: boolean;
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
@@ -125,6 +134,27 @@ function redirectToSessionExpired(): void {
   window.location.href = '/?session_expired=true';
 }
 
+/**
+ * In-flight de-duplication + opt-in response cache.
+ *
+ * - `inFlight` coalesces identical concurrent GETs into a single network
+ *   request, so a page that mounts several components all asking for the same
+ *   catalog only hits the backend once.
+ * - `memo` is a tiny TTL cache used only when a caller passes `cacheTtl`.
+ *   It is wiped on any successful mutation to avoid serving stale data.
+ */
+const inFlight = new Map<string, Promise<unknown>>();
+const memo = new Map<string, { expires: number; value: unknown }>();
+
+function cacheKeyFor(method: string, url: string, tenant: string): string {
+  return `${method} ${url} ${tenant}`;
+}
+
+/** Clear the opt-in GET cache (called automatically after mutations). */
+export function clearApiCache(): void {
+  memo.clear();
+}
+
 async function parseError(res: Response): Promise<never> {
   let message = `Request failed: ${res.status}`;
   let code: string | undefined;
@@ -153,9 +183,11 @@ async function parseError(res: Response): Promise<never> {
   throw new ApiError(message, res.status, code, details);
 }
 
-export async function apiRequest<T = unknown>(
+/** Performs the actual network round-trip (with 401 refresh + parsing). */
+async function performRequest<T>(
   path: string,
-  opts: RequestOptions = {}
+  opts: RequestOptions,
+  finalUrl: string
 ): Promise<T> {
   const {
     body,
@@ -163,7 +195,11 @@ export async function apiRequest<T = unknown>(
     skipAuth = false,
     skipRefresh = false,
     tenantId,
-    query,
+    // `query` is already baked into `finalUrl`; pull it out so it never lands
+    // in `rest` (which is spread into fetch's RequestInit).
+    query: _query,
+    cacheTtl: _cacheTtl,
+    noDedupe: _noDedupe,
     method = body !== undefined ? 'POST' : 'GET',
     ...rest
   } = opts;
@@ -189,7 +225,7 @@ export async function apiRequest<T = unknown>(
     if (token) finalHeaders.authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(buildUrl(path, query), {
+  const res = await fetch(finalUrl, {
     method,
     headers: finalHeaders,
     body: serializedBody,
@@ -200,12 +236,16 @@ export async function apiRequest<T = unknown>(
   if (res.status === 401 && !skipAuth && !skipRefresh) {
     const refreshed = await refreshOnce();
     if (refreshed) {
-      return apiRequest<T>(path, { ...opts, skipRefresh: true });
+      return performRequest<T>(path, { ...opts, skipRefresh: true }, finalUrl);
     }
     redirectToSessionExpired();
   }
 
   if (!res.ok) await parseError(res);
+
+  // A successful mutation can change server state any cached GET depends on,
+  // so invalidate the opt-in cache to keep subsequent reads correct.
+  if (method !== 'GET' && method !== 'HEAD') clearApiCache();
 
   if (res.status === 204) return undefined as unknown as T;
   const ct = res.headers.get('content-type') || '';
@@ -215,6 +255,45 @@ export async function apiRequest<T = unknown>(
     return (data as { data: T }).data;
   }
   return data as T;
+}
+
+export async function apiRequest<T = unknown>(
+  path: string,
+  opts: RequestOptions = {}
+): Promise<T> {
+  const method = opts.method ?? (opts.body !== undefined ? 'POST' : 'GET');
+  const finalUrl = buildUrl(path, opts.query);
+  const isGet = method === 'GET';
+  // Caller-supplied AbortSignals make a shared promise unsafe to reuse, so we
+  // never dedupe/cache those requests.
+  const cacheable = isGet && !opts.signal;
+  const key = cacheKeyFor(method, finalUrl, opts.tenantId || TENANT_ID);
+
+  if (cacheable && opts.cacheTtl) {
+    const hit = memo.get(key);
+    if (hit && hit.expires > Date.now()) return hit.value as T;
+  }
+
+  if (cacheable && !opts.noDedupe) {
+    const pending = inFlight.get(key);
+    if (pending) return pending as Promise<T>;
+  }
+
+  const exec = performRequest<T>(path, opts, finalUrl).then((value) => {
+    if (cacheable && opts.cacheTtl) {
+      memo.set(key, { value, expires: Date.now() + opts.cacheTtl });
+    }
+    return value;
+  });
+
+  if (cacheable && !opts.noDedupe) {
+    inFlight.set(key, exec as Promise<unknown>);
+    void exec.finally(() => {
+      if (inFlight.get(key) === (exec as Promise<unknown>)) inFlight.delete(key);
+    });
+  }
+
+  return exec;
 }
 
 export const apiConfig = {

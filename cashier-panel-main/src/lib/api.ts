@@ -816,3 +816,17 @@ export async function getCashierDashboardStats(query: {
     query: query as Record<string, string | number | boolean | undefined>,
   });
 }
+
+/* ===================================================================== */
+/* Public maintenance mode (admin Settings → Maintenance Tools)          */
+/* ===================================================================== */
+
+export interface PublicMaintenance {
+  active: boolean;
+  enabled: boolean;
+  message: string;
+}
+
+export async function getPublicMaintenance(): Promise<PublicMaintenance> {
+  return apiRequest("/api/public/maintenance", { auth: false });
+}

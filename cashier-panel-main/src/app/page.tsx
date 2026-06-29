@@ -23,6 +23,7 @@ import {
   LogOut,
   Download,
   Search,
+  Menu,
   User,
   Mail,
   FolderOpen,
@@ -96,6 +97,7 @@ export default function CashierPanel() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState<PageType>("tickets");
   const [permissionDeniedMsg, setPermissionDeniedMsg] = useState<string | null>(null);
 
@@ -166,24 +168,32 @@ export default function CashierPanel() {
       </Dialog>
 
       {/* Header */}
-      <header className="bg-[#2d2d2d] text-white h-16 flex items-center justify-between px-6 shadow-md">
-        <div className="flex items-center gap-3">
-          <div className="bg-white text-[#2d2d2d] px-4 py-2 rounded-md font-bold text-base tracking-tight">
+      <header className="bg-[#2d2d2d] text-white h-14 lg:h-16 flex items-center justify-between px-3 sm:px-6 shadow-md shrink-0 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="lg:hidden p-2 -ml-1 rounded-md text-white/90 hover:bg-white/10"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="bg-white text-[#2d2d2d] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-bold text-sm sm:text-base tracking-tight shrink-0">
             1BIRR<span className="text-green-600">.BET</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <User className="w-4 h-4" />
-          <span>{username}</span>
+        <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm min-w-0">
+          <User className="w-4 h-4 shrink-0 hidden sm:block" />
+          <span className="truncate max-w-[7rem] sm:max-w-none">{username}</span>
           {session?.tenant_id && (
             <>
-              <span className="text-gray-400">|</span>
-              <span className="text-gray-300">{session.tenant_id}</span>
+              <span className="text-gray-400 hidden md:inline">|</span>
+              <span className="text-gray-300 hidden md:inline truncate">{session.tenant_id}</span>
             </>
           )}
-          <span className="text-gray-400">|</span>
+          <span className="text-gray-400 hidden sm:inline">|</span>
           <span
-            className={`text-xs px-2 py-0.5 rounded ${
+            className={`text-xs px-1.5 sm:px-2 py-0.5 rounded shrink-0 ${
               hasNoPerms
                 ? "bg-red-700 text-white"
                 : isWildcard
@@ -198,13 +208,14 @@ export default function CashierPanel() {
                 : perms.join(", ")
             }
           >
-            Permissions: {grantedPermsLabel}
+            <span className="hidden sm:inline">Permissions: </span>
+            {grantedPermsLabel}
           </span>
         </div>
       </header>
 
       {hasNoPerms ? (
-        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-sm px-6 py-3">
+        <div className="bg-amber-100 border-b border-amber-300 text-amber-900 text-xs sm:text-sm px-3 sm:px-6 py-3">
           <strong>No permissions granted yet.</strong> Each action will show a
           permission popup until an admin opens <em>Admin Panel → Users → Sales
           Staff → Role Settings</em> for this account and saves the required
@@ -215,9 +226,22 @@ export default function CashierPanel() {
         </div>
       ) : null}
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar */}
-        <aside className="w-52 bg-white border-r border-gray-200 flex flex-col shadow-sm">
+      <div className="flex flex-1 flex-col lg:flex-row overflow-hidden min-h-0">
+        {mobileNavOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-40 lg:hidden top-14"
+            onClick={() => setMobileNavOpen(false)}
+            aria-hidden
+          />
+        )}
+
+        {/* Left Sidebar — drawer on mobile, fixed column on desktop */}
+        <aside
+          className={`w-52 bg-white border-r border-gray-200 flex flex-col shadow-sm shrink-0 z-50
+            fixed lg:static inset-y-0 left-0 top-14 lg:top-auto h-[calc(100vh-3.5rem)] lg:h-auto
+            transition-transform duration-300 lg:translate-x-0
+            ${mobileNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
+        >
           <div
             className="flex items-center justify-between p-4 border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
             onClick={() => setSidebarExpanded(!sidebarExpanded)}
@@ -234,39 +258,54 @@ export default function CashierPanel() {
           </div>
 
           {sidebarExpanded && (
-            <nav className="flex-1 py-1">
+            <nav className="flex-1 py-1 overflow-y-auto">
               <NavItem
                 icon={<Ticket className="w-5 h-5" />}
                 label="Tickets"
                 active={currentPage === "tickets"}
-                onClick={() => setCurrentPage("tickets")}
+                onClick={() => {
+                  setCurrentPage("tickets");
+                  setMobileNavOpen(false);
+                }}
               />
               <NavItem
                 icon={<Trophy className="w-5 h-5" />}
                 label="Super Jackpots"
                 active={currentPage === "super-jackpots"}
-                onClick={() => setCurrentPage("super-jackpots")}
+                onClick={() => {
+                  setCurrentPage("super-jackpots");
+                  setMobileNavOpen(false);
+                }}
                 highlight
               />
               <NavItem
                 icon={<ArrowLeftRight className="w-5 h-5" />}
                 label="Withdraw/Deposit"
                 active={currentPage === "withdraw-deposit"}
-                onClick={() => setCurrentPage("withdraw-deposit")}
+                onClick={() => {
+                  setCurrentPage("withdraw-deposit");
+                  setMobileNavOpen(false);
+                }}
                 highlight
               />
               <NavItem
                 icon={<LayoutDashboard className="w-5 h-5" />}
                 label="Dashboard"
                 active={currentPage === "dashboard"}
-                onClick={() => setCurrentPage("dashboard")}
+                onClick={() => {
+                  setCurrentPage("dashboard");
+                  setMobileNavOpen(false);
+                }}
                 highlight
               />
               <NavItem
                 icon={<Settings className="w-5 h-5" />}
                 label="Setting"
                 active={currentPage === "settings"}
-                onClick={() => setCurrentPage("settings")}
+                onClick={() => {
+                  setCurrentPage("settings");
+                  setMobileNavOpen(false);
+                }}
                 highlight
               />
               <NavItem
@@ -279,6 +318,7 @@ export default function CashierPanel() {
                   setIsLoggedIn(false);
                   setUsername("");
                   setCurrentPage("tickets");
+                  setMobileNavOpen(false);
                 }}
               />
               <NavItem icon={<Download className="w-5 h-5" />} label="Download Fixture" />
@@ -291,7 +331,7 @@ export default function CashierPanel() {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-8 overflow-auto bg-gray-50">
+        <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 overflow-auto bg-gray-50 order-1">
           {currentPage === "tickets" && <TicketsPage />}
           {currentPage === "super-jackpots" && <SuperJackpotsPage />}
           {currentPage === "withdraw-deposit" && <WithdrawDepositPage />}
@@ -299,9 +339,9 @@ export default function CashierPanel() {
           {currentPage === "settings" && <SettingsPage />}
         </main>
 
-        {/* Right Sidebar - Hide on Dashboard and Settings */}
+        {/* Right Sidebar — stacks below main on mobile */}
         {currentPage !== "dashboard" && currentPage !== "settings" && (
-          <aside className="w-96 bg-white border-l border-gray-200 flex flex-col shadow-sm">
+          <aside className="w-full lg:w-96 bg-white border-t lg:border-t-0 lg:border-l border-gray-200 flex flex-col shadow-sm shrink-0 order-2 max-h-[45vh] lg:max-h-none overflow-hidden">
             {currentPage === "tickets" && <TicketsRightSidebar />}
             {currentPage === "super-jackpots" && <JackpotsRightSidebar />}
             {currentPage === "withdraw-deposit" && <RecentTransactionsRightSidebar />}
@@ -1660,12 +1700,12 @@ function RecentTransactionsRightSidebar() {
   }, []);
 
   return (
-    <div className="p-6 flex-1 flex flex-col">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">Recent Transactions</h2>
+    <div className="p-4 sm:p-6 flex-1 flex flex-col min-h-0">
+      <h2 className="text-lg sm:text-xl font-semibold text-gray-800 mb-4">Recent Transactions</h2>
 
-      <div className="border border-gray-200 rounded-lg overflow-hidden flex-1 flex flex-col">
+      <div className="border border-gray-200 rounded-lg overflow-hidden flex-1 flex flex-col overflow-x-auto">
         {/* Table Header */}
-        <div className="grid grid-cols-5 bg-gray-50 border-b border-gray-200">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 min-w-[320px] sm:min-w-0 bg-gray-50 border-b border-gray-200">
           <div className="px-3 py-3 text-sm font-medium text-gray-700">ID</div>
           <div className="px-3 py-3 text-sm font-medium text-gray-700">Time</div>
           <div className="px-3 py-3 text-sm font-medium text-gray-700">Phone</div>
@@ -1685,7 +1725,7 @@ function RecentTransactionsRightSidebar() {
           {!loading &&
             !error &&
             rows.map((row) => (
-              <div key={row.id} className="grid grid-cols-5 border-b border-gray-100 text-xs">
+              <div key={row.id} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 min-w-[320px] sm:min-w-0 border-b border-gray-100 text-xs">
                 <div className="px-3 py-2 font-mono truncate" title={row.id}>
                   {row.id.slice(0, 8)}
                 </div>
@@ -1801,8 +1841,8 @@ function DashboardPage({ username }: { username: string }) {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-center min-h-[600px]">
-        <div className="bg-white rounded-lg border-2 border-gray-300 p-12 max-w-xl w-full">
+      <div className="flex items-center justify-center min-h-[400px] sm:min-h-[600px] p-4">
+        <div className="bg-white rounded-lg border-2 border-gray-300 p-6 sm:p-12 max-w-xl w-full">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-24 h-24 mb-6">
               <Lock className="w-20 h-20 text-gray-600" strokeWidth={2} />
@@ -1869,7 +1909,7 @@ function DashboardPage({ username }: { username: string }) {
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
             placeholder="Select date"
-            className="h-10 pr-10 bg-white border-gray-300 w-48"
+            className="h-10 pr-10 bg-white border-gray-300 w-full sm:w-48"
           />
           <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         </div>
@@ -1880,7 +1920,7 @@ function DashboardPage({ username }: { username: string }) {
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
             placeholder="Select date"
-            className="h-10 pr-10 bg-white border-gray-300 w-48"
+            className="h-10 pr-10 bg-white border-gray-300 w-full sm:w-48"
           />
           <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         </div>
@@ -1912,7 +1952,7 @@ function DashboardPage({ username }: { username: string }) {
       </div>
 
       {/* Statistics Grid */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
         <StatCard
           title="Total Sold"
           value={`${stats?.totals.total_sold_count ?? 0} tickets`}
@@ -1963,7 +2003,7 @@ function DashboardPage({ username }: { username: string }) {
           value={`${(stats?.totals.total_paid_jackpots_amount ?? 0).toFixed(2)} ETB`}
           icon="currency"
         />
-        <div className="col-span-2">
+        <div className="col-span-1 sm:col-span-2">
           <StatCard
             title="Grand Net"
             value={`${(stats?.totals.grand_net ?? 0).toFixed(2)} ETB`}
@@ -1977,7 +2017,7 @@ function DashboardPage({ username }: { username: string }) {
         <h2 className="text-2xl font-semibold text-gray-700 mb-6">
           Two-Day Payable Report
         </h2>
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
           <StatCard
             title="Bets"
             value={`${stats?.two_day_payable.bets_count ?? 0} tickets`}

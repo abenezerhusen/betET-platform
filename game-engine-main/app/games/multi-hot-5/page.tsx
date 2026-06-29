@@ -5,6 +5,8 @@ import {
   ensureGameToken,
   fetchPlayerMe,
   readBalance,
+  onWalletUpdated,
+  listenEmbeddedWalletInit,
   spinSlots,
   type SlotsSpinResponse,
 } from "@/lib/game-engine"
@@ -199,6 +201,21 @@ export default function MultiHot5Page() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    return listenEmbeddedWalletInit(({ balance }) => {
+      if (Number.isFinite(balance)) setBalance(balance);
+    });
+  }, []);
+
+  useEffect(() => {
+    return onWalletUpdated(() => {
+      fetchPlayerMe()
+        .then((me) => setBalance(readBalance(me)))
+        .catch(() => { /* ignore */ })
+    })
+  }, [])
+
   const [betAmount, setBetAmount] = useState(0.25)
   const [betPerLine, setBetPerLine] = useState(0.05)
   const [showBetScroll, setShowBetScroll] = useState(false)

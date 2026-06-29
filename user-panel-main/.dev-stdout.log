@@ -127,3 +127,83 @@
  GET /sport 200 in 3884ms
  GET /live 200 in 3886ms
  GET /deposit 200 in 3010ms
+ GET /deposit 200 in 428ms
+ ○ Compiling /withdraw ...
+ GET /sport 200 in 8137ms
+ ✓ Compiled /withdraw in 8.2s
+ GET /withdraw 200 in 11596ms
+ GET /withdraw 200 in 399ms
+ GET /withdraw 200 in 149ms
+ ○ Compiling /transaction-history ...
+ GET /deposit 200 in 4365ms
+ ✓ Compiled /transaction-history in 4.4s
+ GET /transaction-history 200 in 7459ms
+ GET /deposit 200 in 306ms
+ GET /withdraw 200 in 3443ms
+ GET /sport 200 in 5829ms
+ GET / 200 in 330ms
+ GET /sport 200 in 5809ms
+ GET /live 200 in 11558ms
+ GET /deposit 200 in 9099ms
+ GET / 200 in 1838ms
+ GET / 200 in 2121ms
+ GET / 200 in 4049ms
+ GET / 200 in 3419ms
+ GET / 200 in 2416ms
+ GET / 200 in 2604ms
+ GET / 200 in 3308ms
+ GET /sport 200 in 6112ms
+ GET /deposit 200 in 6114ms
+ GET /live 200 in 6116ms
+ GET / 200 in 2570ms
+ GET /deposit 200 in 10247ms
+ GET /live 200 in 10253ms
+ GET /sport 200 in 10270ms
+ GET /games 200 in 10218ms
+ GET /games 200 in 169ms
+ GET /games 200 in 254ms
+ ✓ Compiled in 1524ms
+ GET /games 200 in 2280ms
+ GET /promotions 200 in 312ms
+ GET / 200 in 278ms
+ GET /live 200 in 7595ms
+ GET /deposit 200 in 7630ms
+ GET /sport 200 in 7636ms
+ ✓ Compiled in 498ms
+ ✓ Compiled in 243ms
+ ✓ Compiled in 179ms
+ ✓ Compiled in 232ms
+ GET /games 200 in 124ms
+ GET / 200 in 108ms
+ GET /sport 200 in 5878ms
+ GET /live 200 in 5877ms
+ GET /deposit 200 in 4089ms
+ GET / 200 in 1524ms
+ GET /sport 200 in 4299ms
+ GET /live 200 in 4300ms
+ GET /deposit 200 in 5582ms
+ GET /promotions 200 in 3522ms
+ GET / 200 in 132ms
+ GET /sport 200 in 4780ms
+ GET /live 200 in 4783ms
+ GET /games 200 in 3705ms
+ GET /deposit 200 in 3711ms
+ GET / 200 in 99ms
+ GET /sport 200 in 4250ms
+ GET /live 200 in 4275ms
+ GET /deposit 200 in 3194ms
+ GET /games 200 in 1193ms
+ ○ Compiling /live-games ...
+ ✓ Compiled /live-games in 1700ms
+ GET /live-games 200 in 2475ms
+ GET /promotions 200 in 882ms
+ ✓ Compiled in 206ms
+ ✓ Compiled in 339ms
+ ✓ Compiled in 177ms
+ ✓ Compiled in 198ms
+ ✓ Compiled in 174ms
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 1566ms
+ ○ Compiling /games/play ...
+ ✓ Compiled /games/play in 1738ms
+[?25h

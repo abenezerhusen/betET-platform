@@ -17,7 +17,7 @@ export function DateRangePicker({
   onEndDateChange,
 }: DateRangePickerProps) {
   return (
-    <div className="flex items-center space-x-4">
+    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-4">
       <div className="relative">
         <DatePicker
           selected={startDate}
@@ -25,7 +25,7 @@ export function DateRangePicker({
           selectsStart
           startDate={startDate}
           endDate={endDate}
-          className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+          className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
         />
         <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
       </div>
@@ -38,7 +38,7 @@ export function DateRangePicker({
           startDate={startDate}
           endDate={endDate}
           minDate={startDate}
-          className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+          className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
         />
         <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
       </div>

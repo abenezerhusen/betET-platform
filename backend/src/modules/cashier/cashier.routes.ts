@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticateToken } from '../../middleware/authenticate';
+import { requireSiteAvailable } from '../../middleware/require-site-available';
 import { requireRole } from '../../middleware/require-role';
 import operationsRouter from './operations.routes';
 import usersRouter from './users.routes';
@@ -27,6 +28,7 @@ swagger.registerPath({
 // Cashier panel supports both cashier and sales roles.
 router.use(authenticateToken());
 router.use(requireRole('cashier', 'sales'));
+router.use(requireSiteAvailable);
 
 // Top-level cash operations.
 router.use('/', operationsRouter);

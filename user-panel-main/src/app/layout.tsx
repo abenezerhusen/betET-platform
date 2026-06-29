@@ -8,6 +8,7 @@ import { BetProvider } from "@/context/BetContext";
 import { FavoritesProvider } from "@/context/FavoritesContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { PerformanceOptimizer } from "@/components/PerformanceOptimizer";
+import { MaintenanceOverlay } from "@/components/MaintenanceOverlay";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://1birr.bet"),
@@ -62,6 +63,7 @@ export default function RootLayout({
           <BetProvider>
             <FavoritesProvider>
               <PerformanceOptimizer />
+              <MaintenanceOverlay />
               <Header />
               <main className="flex-1">{children}</main>
               <Footer />

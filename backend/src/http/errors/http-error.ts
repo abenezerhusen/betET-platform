@@ -53,3 +53,9 @@ export class TooManyRequestsError extends HttpError {
     super(429, message, 'too_many_requests', details);
   }
 }
+
+export class ServiceUnavailableError extends HttpError {
+  constructor(message = 'Service unavailable', details?: unknown) {
+    super(503, message, 'service_unavailable', details);
+  }
+}

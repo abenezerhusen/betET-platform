@@ -38,7 +38,7 @@ export function FilterBar({
   return (
     <div className="bg-white p-4 rounded-lg shadow space-y-4">
       <div className="flex flex-wrap items-center gap-4">
-        <div className="flex-1">
+        <div className="w-full sm:flex-1 min-w-0">
           <DateRangePicker
             startDate={startDate}
             endDate={endDate}
@@ -47,7 +47,7 @@ export function FilterBar({
           />
         </div>
         {filters?.map((filter) => (
-          <div key={filter.label} className="flex-1 min-w-[200px]">
+          <div key={filter.label} className="w-full sm:flex-1 min-w-0 sm:min-w-[200px]">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               {filter.label}
             </label>

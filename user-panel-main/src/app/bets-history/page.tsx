@@ -553,7 +553,7 @@ export default function BetsHistoryPage() {
       .then((res) => {
         const amount = Number(res.cashout_amount ?? 0);
         setCashoutSuccess(
-          `Cash out successful! ${amount.toFixed(2)} ${res.currency ?? ""} has been credited to your wallet.`
+          `Cash out successful! ${amount.toFixed(2)} ${res.wallet?.currency ?? ""} has been credited to your wallet.`
         );
         setSportsRows((prev) =>
           prev.map((r) =>

@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { withTenantClient } from '../../infrastructure/db/tenant-client';
+import { assertSiteAvailable } from '../../middleware/maintenance-mode';
 import {
   BadRequestError,
   ForbiddenError,
@@ -34,6 +35,7 @@ export async function placeBet(
   req: Request,
   body: PlaceBetInput
 ): Promise<PlaceBetResult> {
+  await assertSiteAvailable(req);
   const scope = getUserScope(req);
   const idempotencyKey = getIdempotencyKey(req, body.idempotency_key);
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/auth';
 import { Login } from './pages/Login';
@@ -64,6 +64,7 @@ import { LimitsRules } from './pages/p2p/LimitsRules';
 import { Commissions } from './pages/p2p/Commissions';
 import { Logs as P2PLogs } from './pages/p2p/Logs';
 import { RtpManagement } from './pages/games/RtpManagement';
+import { GameList } from './pages/games/GameList';
 import { GameActivity } from './pages/games/GameActivity';
 import { IframeIntegration } from './pages/iframe/IframeIntegration';
 import { Packages } from './pages/packages/Packages';
@@ -71,6 +72,7 @@ import { ApisIntegrations } from './pages/apis/ApisIntegrations';
 
 function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   if (!isAuthenticated) {
     return <Navigate to="/login" />;
@@ -78,10 +80,13 @@ function ProtectedLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-gray-100">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 p-6 scrollbar-thin">
+      <Sidebar
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <Header onMenuClick={() => setMobileNavOpen(true)} />
+        <main className="flex-1 overflow-x-auto overflow-y-auto bg-gray-100 p-4 md:p-6 scrollbar-thin">
           {children}
         </main>
       </div>
@@ -175,6 +180,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/p2p/logs', perm: 'p2p.logs', element: <P2PLogs /> },
 
   /* Games / Iframe / Packages / APIs */
+  { path: '/games/list', perm: 'games.view', element: <GameList /> },
   { path: '/games/rtp', perm: 'games.rtp.view', element: <RtpManagement /> },
   { path: '/games/activity', perm: 'games.activity.view', element: <GameActivity /> },
   { path: '/iframe', perm: 'iframe.outbound.view', element: <IframeIntegration /> },

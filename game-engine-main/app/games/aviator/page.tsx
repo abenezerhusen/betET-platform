@@ -12,6 +12,8 @@ import {
   cashoutAviator,
   getAviatorRound,
   readBalance,
+  onWalletUpdated,
+  listenEmbeddedWalletInit,
   type AviatorRoundCrashedEvent,
   type AviatorRoundFlyingEvent,
   type AviatorRoundStartEvent,
@@ -523,6 +525,21 @@ export default function AviatorPage() {
     }
     // Mount-only — listeners use refs/setters which are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    return listenEmbeddedWalletInit(({ balance }) => {
+      if (Number.isFinite(balance)) setBalance(balance);
+    });
+  }, []);
+
+  // Keep in-game balance in sync with the user-panel header wallet.
+  useEffect(() => {
+    return onWalletUpdated(() => {
+      fetchPlayerMe()
+        .then((me) => setBalance(readBalance(me)))
+        .catch(() => { /* ignore */ })
+    })
   }, [])
 
   // Visual waiting-timer countdown — purely cosmetic; the authoritative

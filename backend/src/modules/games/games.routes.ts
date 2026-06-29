@@ -3,11 +3,12 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 
 import { authenticateGameLaunchToken, authenticateToken } from '../../middleware/authenticate';
+import { assertSiteAvailable } from '../../middleware/maintenance-mode';
 import { requireRole } from '../../middleware/require-role';
 import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { BadRequestError, NotFoundError } from '../../http/errors/http-error';
 import { gameRngService } from '../../services/game-rng.service';
-import { emitToUser } from '../../realtime/socket';
+import { emitToUser, emitWalletUpdated } from '../../realtime/socket';
 import { sendSmsBestEffort } from '../notifications/notifications.service';
 import * as swagger from '../../swagger/registry';
 
@@ -253,6 +254,10 @@ async function createLedgerTx(args: {
       ]
     );
   });
+  emitWalletUpdated(user.tenantId, user.id, {
+    reason: type,
+    wallet: { balance: after.toFixed(2), currency: 'ETB' },
+  });
   return after;
 }
 
@@ -316,6 +321,7 @@ router.get('/aviator/round/current', async (req, res, next) => {
 
 router.post('/aviator/bet', async (req, res, next) => {
   try {
+    await assertSiteAvailable(req);
     const body = aviatorBetSchema.parse(req.body);
     const user = ensureUser(req);
     const gameInfo = await readInternalGameRtp(user.tenantId, 'aviator');
@@ -478,6 +484,7 @@ router.get('/jetx/round/current', async (req, res, next) => {
 
 router.post('/jetx/bet', async (req, res, next) => {
   try {
+    await assertSiteAvailable(req);
     const body = aviatorBetSchema.parse(req.body);
     const user = ensureUser(req);
     const gameInfo = await readInternalGameRtp(user.tenantId, 'jetx');
@@ -637,6 +644,7 @@ router.get('/keno/round/current', async (req, res, next) => {
 
 router.post('/keno/bet', async (req, res, next) => {
   try {
+    await assertSiteAvailable(req);
     const body = kenoBetSchema.parse(req.body);
     const user = ensureUser(req);
     if (body.selected_numbers.length !== body.spots) {
@@ -748,6 +756,7 @@ async function readInternalGameRtp(
 
 router.post('/slots/spin', async (req, res, next) => {
   try {
+    await assertSiteAvailable(req);
     const body = slotsSpinSchema.parse(req.body);
     const user = ensureUser(req);
     const totalStake = Number((body.bet_per_line * body.lines).toFixed(2));

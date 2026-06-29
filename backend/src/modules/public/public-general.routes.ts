@@ -25,6 +25,10 @@ import {
   isWithinOperationHours,
   loadGeneralConfig,
 } from '../admin/settings/general-config';
+import {
+  isMaintenanceActive,
+  loadMaintenanceConfig,
+} from '../admin/settings/maintenance-config';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -266,6 +270,28 @@ router.get('/navbar', async (req, res, next) => {
  *     from settlement.config, exposed for client-side display only. The
  *     backend always re-validates on the actual cancel request.
  */
+/**
+ * GET /api/public/maintenance
+ * Returns whether the user-facing site is in maintenance mode and the
+ * message to display. Used by the user panel to block betting / games.
+ */
+router.get('/maintenance', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const cfg = await withTenantClient({ tenantId }, (client) =>
+      loadMaintenanceConfig(client, tenantId)
+    );
+    res.json({
+      active: isMaintenanceActive(cfg),
+      enabled: cfg.enabled,
+      message: cfg.message,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/features', async (req, res, next) => {
   try {
     res.setHeader('Cache-Control', 'no-store');

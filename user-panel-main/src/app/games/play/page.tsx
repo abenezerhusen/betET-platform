@@ -4,12 +4,13 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import * as gamesApi from "@/lib/api/games";
+import { ArrowLeft } from "lucide-react";
 
 function GamePlayInner() {
   const params = useSearchParams();
   const router = useRouter();
   const gameId = params.get("gameId");
-  const { isAuthenticated } = useAuth();
+  const { ready: authReady, isAuthenticated } = useAuth();
 
   const [launchUrl, setLaunchUrl] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -90,10 +91,35 @@ function GamePlayInner() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (authReady && !isAuthenticated) {
+    // Fire the login dialog and send the user back to the lobby while they log in.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("1birr:open-login"));
+    }
     return (
-      <div className="p-6 text-gray-300" style={{ background: "var(--mezzo-bg-primary)" }}>
-        Please log in using the header, then open the game again from the lobby.
+      <div
+        className="flex flex-col items-center justify-center min-h-[50vh] gap-4 p-6"
+        style={{ background: "var(--mezzo-bg-primary)" }}
+      >
+        <p className="text-gray-300 text-sm">Please log in to play this game.</p>
+        <button
+          type="button"
+          onClick={() => {
+            window.dispatchEvent(new Event("1birr:open-login"));
+          }}
+          className="px-6 py-2 rounded font-semibold text-black"
+          style={{ background: "var(--mezzo-accent-green)" }}
+        >
+          Login
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/games")}
+          className="flex items-center gap-1 text-sm text-gray-400 hover:text-white"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to lobby
+        </button>
       </div>
     );
   }

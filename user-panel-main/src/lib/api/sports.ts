@@ -96,6 +96,9 @@ export function getSportsCatalog() {
     method: 'GET',
     skipAuth: true,
     skipRefresh: true,
+    // Sidebar catalog (sport/league tree + counts) is slow-changing; a short
+    // cache removes the repeated fetch as the user moves between pages.
+    cacheTtl: 60 * 1000,
   });
 }
 
