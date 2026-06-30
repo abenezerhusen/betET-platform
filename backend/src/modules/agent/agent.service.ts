@@ -677,6 +677,18 @@ export interface AgentStatus {
     device_name: string | null;
     app_version: string | null;
   };
+  /**
+   * Wallet snapshot mirroring the Admin Panel "Wallet Devices" card so the
+   * agent app and admin display identical figures. All values are decimal
+   * strings; `commission_rate` is a percentage (e.g. "2.5").
+   */
+  wallet: {
+    balance: string;
+    commission_rate: string;
+    pre_deposit: string;
+    total_capacity: string;
+    available_capacity: string;
+  };
   today: {
     transaction_count: number;
     total_amount_credited: string;
@@ -696,6 +708,71 @@ export async function getStatus(
     if (!agent) throw new NotFoundError('Agent not found');
     const today = await repo.aggregateAgentToday(client, tenantId, agentId);
     const pending = await repo.countTenantPendingTelebirr(client, tenantId);
+
+    // Wallet figures identical to the admin "Wallet Devices" card:
+    //   pre_deposit      = net of confirmed swaps (fallback to stored balance)
+    //   total_capacity   = pre_deposit * (1 + commission%)
+    //   available_capacity = total_capacity (matches the admin card)
+    // Read-only; any failure degrades to balance-based values so the status
+    // poll the app relies on is never broken.
+    const balanceNum = Number(agent.balance) || 0;
+    let wallet = {
+      balance: agent.balance,
+      commission_rate: '2.5',
+      pre_deposit: String(Math.round(balanceNum)),
+      total_capacity: '0',
+      available_capacity: '0',
+    };
+    try {
+      const swapRes = await client.query<{ pre_deposit: string | null }>(
+        `SELECT SUM(CASE WHEN source = 'manual'     AND status = 'added' THEN amount
+                         WHEN source = 'withdrawal' AND status = 'added' THEN -amount
+                         ELSE 0 END)::text AS pre_deposit
+           FROM p2p_swaps
+          WHERE agent_id = $1 AND tenant_id = $2`,
+        [agentId, tenantId]
+      );
+      const preDeposit =
+        swapRes.rows[0]?.pre_deposit != null
+          ? Number(swapRes.rows[0].pre_deposit)
+          : balanceNum;
+
+      const commRes = await client.query<{ deposit_pct: string | null }>(
+        `SELECT deposit_pct::text AS deposit_pct
+           FROM p2p_commissions
+          WHERE agent_id = $1 AND tenant_id = $2
+          LIMIT 1`,
+        [agentId, tenantId]
+      );
+      let commission =
+        commRes.rows[0]?.deposit_pct != null
+          ? Number(commRes.rows[0].deposit_pct)
+          : NaN;
+      if (!Number.isFinite(commission)) {
+        const setRes = await client.query<{ default_pct: string | null }>(
+          `SELECT default_deposit_commission_pct::text AS default_pct
+             FROM p2p_settings WHERE tenant_id = $1 LIMIT 1`,
+          [tenantId]
+        );
+        commission =
+          setRes.rows[0]?.default_pct != null
+            ? Number(setRes.rows[0].default_pct)
+            : 2.5;
+      }
+      if (!Number.isFinite(commission)) commission = 2.5;
+
+      const totalCapacity = Math.round(preDeposit * (1 + commission / 100));
+      wallet = {
+        balance: agent.balance,
+        commission_rate: String(commission),
+        pre_deposit: String(Math.round(preDeposit)),
+        total_capacity: String(totalCapacity),
+        available_capacity: String(totalCapacity),
+      };
+    } catch {
+      /* keep balance-based fallback */
+    }
+
     return {
       agent: {
         id: agent.id,
@@ -707,6 +784,7 @@ export async function getStatus(
         device_name: agent.device_name,
         app_version: agent.app_version,
       },
+      wallet,
       today,
       pending_total: pending,
       server_time: new Date().toISOString(),

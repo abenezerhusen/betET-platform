@@ -118,16 +118,22 @@ const todaysSwapTotals = (swaps: SwapEntry[]) => {
 
 function agentToDevice(agent: WalletAgentRow, depositPct: number): Device {
   const bal = parseFloat(String(agent.balance ?? '0')) || 0;
+  // Pre-deposit (agent float/collateral) is the net sum of confirmed swaps,
+  // surfaced by the wallets list. Top-ups are booked as swaps, so this — not
+  // `balance` — is what reflects them. Fall back to balance for older payloads.
+  const preDeposit = Math.round(
+    parseFloat(String(agent.pre_deposit ?? agent.balance ?? '0')) || 0
+  );
   const online = agent.status === 'online' || agent.status === 'active';
   const pct = Number.isFinite(depositPct) ? depositPct : 2.5;
-  const totalCap = calcTotalCapacity(Math.round(bal), pct);
+  const totalCap = calcTotalCapacity(preDeposit, pct);
   return {
     id: agent.id,
     name: agent.agent_name || agent.device_name || agent.device_id || agent.id.slice(0, 8),
     phone: agent.telebirr_number || '—',
     status: online ? 'Online' : 'Offline',
     balance: formatETB(bal),
-    preDeposit: Math.round(bal),
+    preDeposit,
     availableCapacity: totalCap,
     dailyLimit: '—',
     usedToday: '—',
@@ -1179,8 +1185,8 @@ export function WalletDevices() {
 
       {topUpDevice && (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
               <div className="flex items-center space-x-2">
                 <Wallet className="h-5 w-5 text-orange-600" />
                 <h3 className="text-lg font-medium text-gray-900">
@@ -1195,7 +1201,7 @@ export function WalletDevices() {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               {isExhausted(topUpDevice) && (
                 <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 flex items-start space-x-2">
                   <AlertTriangle size={16} className="text-orange-600 mt-0.5 flex-shrink-0" />
@@ -1319,7 +1325,7 @@ export function WalletDevices() {
               </label>
             </div>
 
-            <div className="flex justify-end space-x-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+            <div className="flex justify-end space-x-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg flex-shrink-0">
               <button
                 onClick={() => setTopUpDevice(null)}
                 className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"

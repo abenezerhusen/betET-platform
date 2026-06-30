@@ -15,6 +15,12 @@ export interface AgentRow {
   last_seen_at: Date | null;
   status: string;
   balance: string;
+  /**
+   * Net agent pre-deposit (float/collateral) = SUM of confirmed manual swaps
+   * minus confirmed withdrawal swaps. Surfaced by listAgents so the wallet
+   * list reflects top-ups (which are booked as swaps, not balance changes).
+   */
+  pre_deposit?: string;
   assigned_cashier_id: string | null;
   last_assigned_at: Date | null;
   created_at: Date;
@@ -192,12 +198,21 @@ export async function listAgents(
     values
   );
   const rowsRes = await client.query<AgentRow>(
-    `SELECT id, tenant_id, agent_name, telebirr_number, device_id, device_name,
-            app_version, last_seen_at, status, balance, assigned_cashier_id,
-            last_assigned_at, created_at
-       FROM telebirr_agents
+    `SELECT a.id, a.tenant_id, a.agent_name, a.telebirr_number, a.device_id, a.device_name,
+            a.app_version, a.last_seen_at, a.status, a.balance, a.assigned_cashier_id,
+            a.last_assigned_at, a.created_at,
+            COALESCE(sw.pre_deposit, a.balance, 0)::text AS pre_deposit
+       FROM telebirr_agents a
+       LEFT JOIN (
+         SELECT agent_id,
+                SUM(CASE WHEN source = 'manual'     AND status = 'added' THEN amount
+                         WHEN source = 'withdrawal' AND status = 'added' THEN -amount
+                         ELSE 0 END) AS pre_deposit
+           FROM p2p_swaps
+          GROUP BY agent_id
+       ) sw ON sw.agent_id = a.id
        ${where}
-     ORDER BY created_at DESC
+     ORDER BY a.created_at DESC
      LIMIT $${i++} OFFSET $${i++}`,
     [...values, params.limit, params.offset]
   );

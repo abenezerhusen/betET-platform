@@ -24,6 +24,8 @@ export interface WalletAgentRow {
   last_seen_at: string | null;
   status: string;
   balance: string;
+  /** Net pre-deposit (float) derived from confirmed swaps; reflects top-ups. */
+  pre_deposit?: string;
   assigned_cashier_id?: string | null;
   last_assigned_at?: string | null;
   created_at: string;

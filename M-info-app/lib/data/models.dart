@@ -117,6 +117,33 @@ class AgentTodayStats {
       );
 }
 
+/// Wallet snapshot returned by `/api/agent/status`. Mirrors the Admin Panel
+/// "Wallet Devices" card so the agent app and admin show identical figures.
+/// Money values are decimal strings; [commissionRate] is a percentage.
+class AgentWallet {
+  AgentWallet({
+    required this.balance,
+    required this.commissionRate,
+    required this.preDeposit,
+    required this.totalCapacity,
+    required this.availableCapacity,
+  });
+
+  final String balance;
+  final String commissionRate;
+  final String preDeposit;
+  final String totalCapacity;
+  final String availableCapacity;
+
+  factory AgentWallet.fromJson(Map<String, dynamic> json) => AgentWallet(
+        balance: json['balance']?.toString() ?? '0',
+        commissionRate: json['commission_rate']?.toString() ?? '0',
+        preDeposit: json['pre_deposit']?.toString() ?? '0',
+        totalCapacity: json['total_capacity']?.toString() ?? '0',
+        availableCapacity: json['available_capacity']?.toString() ?? '0',
+      );
+}
+
 class AgentStatus {
   AgentStatus({
     required this.agentId,
@@ -127,6 +154,7 @@ class AgentStatus {
     required this.lastSeenAt,
     required this.deviceName,
     required this.appVersion,
+    required this.wallet,
     required this.today,
     required this.pendingTotal,
     required this.serverTime,
@@ -140,6 +168,9 @@ class AgentStatus {
   final DateTime? lastSeenAt;
   final String? deviceName;
   final String? appVersion;
+
+  /// Null only for older backends that don't yet return a wallet block.
+  final AgentWallet? wallet;
   final AgentTodayStats today;
   final int pendingTotal;
   final DateTime serverTime;
@@ -157,6 +188,9 @@ class AgentStatus {
           : DateTime.parse(agent['last_seen_at'] as String),
       deviceName: agent['device_name'] as String?,
       appVersion: agent['app_version'] as String?,
+      wallet: (json['wallet'] as Map?) == null
+          ? null
+          : AgentWallet.fromJson((json['wallet'] as Map).cast<String, dynamic>()),
       today: AgentTodayStats.fromJson(
         ((json['today'] as Map?) ?? <String, dynamic>{})
             .cast<String, dynamic>(),

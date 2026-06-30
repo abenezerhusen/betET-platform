@@ -156,7 +156,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               telebirrNumber: session.telebirrNumber,
             ),
             const SizedBox(height: 16),
-            _StatsGrid(status: s, error: _statusError),
+            _WalletCard(
+              status: s,
+              error: _statusError,
+              currency: session.currency,
+            ),
             const SizedBox(height: 16),
             FutureBuilder<int>(
               future: _pendingQueueSize(),
@@ -175,8 +179,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 );
               },
             ),
-            const SizedBox(height: 16),
-            const _RecentTxList(),
           ],
         ),
       ),
@@ -260,11 +262,19 @@ class _ServiceCard extends StatelessWidget {
   }
 }
 
-class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.status, required this.error});
+/// Wallet snapshot card. Shows the SAME figures as the Admin Panel
+/// "Wallet Devices" card (Status / Balance / Commission Rate / Pre-Deposit /
+/// Total Capacity / Available Capacity) so the agent and admin views match.
+class _WalletCard extends StatelessWidget {
+  const _WalletCard({
+    required this.status,
+    required this.error,
+    required this.currency,
+  });
 
   final AgentStatus? status;
   final String? error;
+  final String currency;
 
   @override
   Widget build(BuildContext context) {
@@ -278,62 +288,57 @@ class _StatsGrid extends StatelessWidget {
         ),
       );
     }
+
     final s = status!;
     final fmt = NumberFormat('#,##0.##');
-    final total = num.tryParse(s.today.totalAmountCredited) ?? 0;
+    String money(String raw) =>
+        '$currency ${fmt.format(num.tryParse(raw) ?? 0)}';
 
-    return Row(
-      children: [
-        Expanded(
-          child: _StatCard(
-            label: 'SMS today',
-            value: '${s.today.transactionCount}',
-            icon: Icons.message_outlined,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatCard(
-            label: 'Pending match',
-            value: '${s.today.pendingCount}',
-            icon: Icons.schedule,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _StatCard(
-            label: 'ETB credited',
-            value: fmt.format(total),
-            icon: Icons.account_balance_wallet_outlined,
-          ),
-        ),
-      ],
-    );
-  }
-}
+    // Fall back to the agent block for older backends without a wallet block.
+    final w = s.wallet;
+    final balance = w?.balance ?? s.balance;
+    final commission = w?.commissionRate ?? '0';
+    final preDeposit = w?.preDeposit ?? '0';
+    final totalCapacity = w?.totalCapacity ?? '0';
+    final availableCapacity = w?.availableCapacity ?? '0';
 
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value, required this.icon});
+    final online = s.status == 'online' || s.status == 'active';
+    final total = num.tryParse(totalCapacity) ?? 0;
+    final available = num.tryParse(availableCapacity) ?? 0;
+    final exhausted = total <= 0 ? true : (available / total) < 0.05;
 
-  final String label;
-  final String value;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 18, color: Colors.deepPurple),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            _WalletRow(
+              label: 'Status',
+              trailing: _Badge(
+                text: online ? 'Online' : 'Offline',
+                color: online ? Colors.green : Colors.blueGrey,
+              ),
             ),
-            Text(label, style: const TextStyle(color: Colors.black54)),
+            const Divider(height: 1),
+            _WalletRow(label: 'Balance', value: money(balance)),
+            const Divider(height: 1),
+            _WalletRow(
+              label: 'Commission Rate',
+              value: '$commission%',
+              valueColor: Colors.blue,
+            ),
+            const Divider(height: 1),
+            _WalletRow(label: 'Pre-Deposit', value: money(preDeposit)),
+            const Divider(height: 1),
+            _WalletRow(label: 'Total Capacity', value: money(totalCapacity)),
+            const Divider(height: 1),
+            _WalletRow(
+              label: 'Available Capacity',
+              value: money(availableCapacity),
+              labelTrailing: exhausted
+                  ? const _Badge(text: 'Exhausted', color: Colors.red)
+                  : null,
+            ),
           ],
         ),
       ),
@@ -341,91 +346,77 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _RecentTxList extends ConsumerWidget {
-  const _RecentTxList();
+/// A single label/value row in the wallet card.
+class _WalletRow extends StatelessWidget {
+  const _WalletRow({
+    required this.label,
+    this.value,
+    this.valueColor,
+    this.trailing,
+    this.labelTrailing,
+  });
+
+  final String label;
+  final String? value;
+  final Color? valueColor;
+
+  /// Custom trailing widget (e.g. a badge) shown instead of [value].
+  final Widget? trailing;
+
+  /// Small widget shown right after the label (e.g. the "Exhausted" badge).
+  final Widget? labelTrailing;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final apiAsync = ref.watch(agentApiProvider);
-    final api = apiAsync.maybeWhen(data: (a) => a, orElse: () => null);
-    if (api == null) return const SizedBox.shrink();
-    return FutureBuilder<List<TxLogEntry>>(
-      future: api.recentTransactions(limit: 20),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(color: Colors.black54)),
+          if (labelTrailing != null) ...[
+            const SizedBox(width: 8),
+            labelTrailing!,
+          ],
+          const Spacer(),
+          if (trailing != null)
+            trailing!
+          else
+            Text(
+              value ?? '',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: valueColor ?? Colors.black87,
+              ),
             ),
-          );
-        }
-        final items = snap.data ?? const <TxLogEntry>[];
-        if (items.isEmpty) {
-          return const Card(
-            child: ListTile(
-              leading: Icon(Icons.inbox),
-              title: Text('Recent activity'),
-              subtitle: Text('No transactions yet'),
-            ),
-          );
-        }
-        return Card(
-          child: ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final tx = items[i];
-              return ListTile(
-                leading: _StatusDot(status: tx.status),
-                title: Text('ETB ${tx.amount}'),
-                subtitle: Text(tx.senderPhone ?? tx.telebirrRef),
-                trailing: Text(
-                  DateFormat.Hm().format(tx.createdAt.toLocal()),
-                  style: const TextStyle(color: Colors.black54),
-                ),
-              );
-            },
-          ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
 
-class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.status});
+/// Small pill badge used for Status and the Exhausted marker.
+class _Badge extends StatelessWidget {
+  const _Badge({required this.text, required this.color});
 
-  final String status;
-
-  Color _colorFor(String s) {
-    switch (s) {
-      case 'credited':
-      case 'matched':
-        return Colors.green;
-      case 'pending':
-        return Colors.orange;
-      case 'unmatched':
-      case 'disputed':
-        return Colors.red;
-      case 'duplicate':
-        return Colors.grey;
-      default:
-        return Colors.blueGrey;
-    }
-  }
+  final String text;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 10,
-      height: 10,
-      margin: const EdgeInsets.only(top: 4, right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: _colorFor(status),
-        shape: BoxShape.circle,
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

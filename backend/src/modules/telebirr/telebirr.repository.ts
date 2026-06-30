@@ -151,13 +151,18 @@ export async function findAgentById(
  * clock magic numbers — TelebirrP2PProvider passes a 3-minute cutoff).
  *
  * Selection order:
- *   1. lowest pending-request count (LEFT JOIN telebirr_deposit_requests
+ *   1. admin-configured wallet priority (p2p_wallet_priority.priority ASC,
+ *      NULLS LAST) — operators set this on the Limits & Rules page; wallets
+ *      with enabled=false are excluded from rotation entirely. Tenants that
+ *      never configured a priority list fall through to the historic
+ *      round-robin below unchanged.
+ *   2. lowest pending-request count (LEFT JOIN telebirr_deposit_requests
  *      filtered to waiting + unexpired) — keeps load even when traffic
  *      bursts to one tenant.
- *   2. earliest `last_assigned_at` (NULLS FIRST) — round-robin
+ *   3. earliest `last_assigned_at` (NULLS FIRST) — round-robin
  *      tie-break, so newly-onboarded agents get traffic even if the
  *      existing agents recently saw activity.
- *   3. most-recently-active `last_seen_at` — last-resort tiebreak.
+ *   4. most-recently-active `last_seen_at` — last-resort tiebreak.
  *
  * Returns null when no agent is available.
  */
@@ -179,11 +184,21 @@ export async function pickAvailableAgent(
             AND expires_at > now()
           GROUP BY telebirr_number
        ) p ON p.telebirr_number = a.telebirr_number
+       -- Admin-configured routing priority (Limits & Rules page). Absent for
+       -- tenants that never set an order, in which case wp.* is NULL and the
+       -- behaviour falls back to the original round-robin selection.
+       LEFT JOIN p2p_wallet_priority wp
+              ON wp.agent_id = a.id
+             AND wp.tenant_id = $1
       WHERE a.tenant_id = $1
         AND a.status = 'active'
         AND a.last_seen_at IS NOT NULL
         AND a.last_seen_at > $2
-      ORDER BY COALESCE(p.pending_count, 0) ASC,
+        -- A wallet explicitly pulled from rotation (enabled=false) is skipped;
+        -- wallets with no priority row default to in-rotation.
+        AND COALESCE(wp.enabled, true) = true
+      ORDER BY wp.priority ASC NULLS LAST,
+               COALESCE(p.pending_count, 0) ASC,
                a.last_assigned_at ASC NULLS FIRST,
                a.last_seen_at DESC
       LIMIT 1`,
