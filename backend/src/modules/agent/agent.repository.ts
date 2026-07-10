@@ -144,6 +144,27 @@ export async function bumpAgentLastSeen(
   );
 }
 
+/**
+ * Bind an agent to the device that just authenticated ("first-login
+ * pairing"). Only called when the agent's stored `device_id` is still an
+ * unpaired placeholder — never to silently re-pair an agent that is
+ * already bound to a real device (that stays an admin action).
+ */
+export async function adoptAgentDevice(
+  client: PoolClient,
+  id: string,
+  deviceId: string,
+  deviceName: string | null
+): Promise<void> {
+  await client.query(
+    `UPDATE telebirr_agents
+        SET device_id = $2,
+            device_name = COALESCE($3, device_name)
+      WHERE id = $1`,
+    [id, deviceId, deviceName]
+  );
+}
+
 /* ------------------------------------------------------------------------- */
 /* Sessions                                                                  */
 /* ------------------------------------------------------------------------- */

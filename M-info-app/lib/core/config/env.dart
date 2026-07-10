@@ -13,7 +13,7 @@ class Env {
 
   static const String defaultBackendUrl = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'http://10.0.2.2:3000',
+    defaultValue: 'http://10.0.2.2:4000',
   );
 
   /// Heartbeat cadence for `/api/agent/auth/heartbeat`. Backend rate

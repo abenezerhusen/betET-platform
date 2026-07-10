@@ -59,53 +59,49 @@ router.get(
       if (!req.user) throw new BadRequestError('Authentication required');
       const tenantId = req.user.tenantId;
       const data = await withTenantClient({ tenantId }, async (client) => {
+        // Source of truth is `telebirr_agents` — the same table the
+        // mobile agent app logs into and that deposit routing
+        // (pickAvailableAgent) selects from. "Online" is derived from
+        // heartbeat freshness (last_seen_at within the 3-minute window
+        // used by the deposit flow), NOT a stored status column, so the
+        // customer only ever sees numbers that can actually receive a
+        // payment right now.
         const rows = await client.query<{
           device_id: string;
-          account_id: string | null;
           phone: string;
           label: string | null;
-          status: 'online' | 'offline' | 'maintenance';
-          daily_limit: string | null;
-          used_today: string | null;
+          is_online: boolean;
         }>(
-          `SELECT d.id              AS device_id,
-                  la.id             AS account_id,
-                  COALESCE(la.phone, d.telebirr_phone) AS phone,
-                  COALESCE(la.label, d.label) AS label,
-                  d.status,
-                  d.daily_limit::text,
-                  d.used_today::text
-             FROM p2p_devices d
-             LEFT JOIN p2p_linked_accounts la
-               ON la.device_id = d.id AND la.enabled = true
-            WHERE d.tenant_id = $1
-              AND (la.id IS NULL OR la.enabled = true)
-            ORDER BY (d.status = 'online') DESC,
-                     d.last_seen_at DESC NULLS LAST,
-                     d.label`,
+          `SELECT a.id                                   AS device_id,
+                  a.telebirr_number                      AS phone,
+                  a.agent_name                           AS label,
+                  (a.last_seen_at IS NOT NULL
+                     AND a.last_seen_at > now() - interval '3 minutes') AS is_online
+             FROM telebirr_agents a
+            WHERE a.tenant_id = $1
+              AND a.status = 'active'
+            ORDER BY (a.last_seen_at IS NOT NULL
+                       AND a.last_seen_at > now() - interval '3 minutes') DESC,
+                     a.last_seen_at DESC NULLS LAST,
+                     a.agent_name`,
           [tenantId]
         );
 
         // Prefer online accounts. If none exist we still show offline
         // ones so the customer can read the phone number — they just
         // can't currently send to it.
-        const online = rows.rows.filter((r) => r.status === 'online');
-        const offline = rows.rows.filter((r) => r.status !== 'online');
+        const online = rows.rows.filter((r) => r.is_online);
+        const offline = rows.rows.filter((r) => !r.is_online);
         const pool = online.length > 0 ? online : offline;
 
-        const accounts: P2pAccountRow[] = pool.map((r) => {
-          const limit = Number(r.daily_limit ?? 0);
-          const used = Number(r.used_today ?? 0);
-          const remaining = limit > 0 ? Math.max(0, limit - used) : null;
-          return {
-            device_id: r.device_id,
-            account_id: r.account_id,
-            phone: r.phone,
-            label: r.label ?? 'Telebirr Agent',
-            status: r.status,
-            daily_limit_remaining: remaining,
-          };
-        });
+        const accounts: P2pAccountRow[] = pool.map((r) => ({
+          device_id: r.device_id,
+          account_id: null,
+          phone: r.phone,
+          label: r.label ?? 'Telebirr Agent',
+          status: r.is_online ? 'online' : 'offline',
+          daily_limit_remaining: null,
+        }));
 
         return { accounts, has_online: online.length > 0 };
       });

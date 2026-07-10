@@ -41,9 +41,9 @@
     <!-- Cleartext HTTP allowed so you can hit http://YOUR_PC_IP:PORT from a real phone
          on Wi‑Fi during development. Remove or use networkSecurityConfig for production HTTPS. -->
     <application
-        android:label="Telebirr Pay"
+        android:label="BirrPay"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/launcher_icon"
         android:requestLegacyExternalStorage="false"
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="true">

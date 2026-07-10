@@ -108,7 +108,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       autocorrect: false,
                       decoration: const InputDecoration(
                         labelText: 'Backend URL',
-                        hintText: 'https://api.example.com',
+                        hintText: 'http://YOUR_PC_IP:4000',
                         border: OutlineInputBorder(),
                       ),
                       validator: (v) {

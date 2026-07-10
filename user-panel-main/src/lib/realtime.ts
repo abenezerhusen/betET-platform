@@ -12,8 +12,8 @@
 
 import { io, type Socket } from 'socket.io-client';
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:4000';
+import { resolveApiBaseUrl } from './apiHost';
+
 const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID?.trim() || 'default';
 
 // Canonical event names emitted by backend/src/realtime/socket.ts.
@@ -38,7 +38,7 @@ export function connectWalletRealtime(
   // Tear down any previous connection (e.g. token rotated / user switched).
   disconnectWalletRealtime();
 
-  socket = io(API_BASE_URL, {
+  socket = io(resolveApiBaseUrl(), {
     path: '/socket.io',
     transports: ['websocket', 'polling'],
     auth: { token: accessToken },

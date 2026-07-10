@@ -50,7 +50,7 @@ class BackgroundServiceController {
           const AndroidNotificationChannel(
             _notifChannelId,
             _notifChannelName,
-            description: 'Telebirr Pay Service status',
+            description: 'BirrPay Service status',
             importance: Importance.low,
             showBadge: false,
           ),
@@ -62,7 +62,7 @@ class BackgroundServiceController {
         autoStart: false,
         isForegroundMode: true,
         notificationChannelId: _notifChannelId,
-        initialNotificationTitle: 'Telebirr Pay',
+        initialNotificationTitle: 'BirrPay',
         initialNotificationContent: 'Initialising…',
         foregroundServiceNotificationId: _notifId,
       ),
@@ -119,7 +119,7 @@ void _onForegroundStart(ServiceInstance service) async {
   });
 
   service.on('update_notification').listen((event) async {
-    final title = event?['title'] as String? ?? 'Telebirr Pay';
+    final title = event?['title'] as String? ?? 'BirrPay';
     final body = event?['body'] as String? ?? '';
     if (service is AndroidServiceInstance) {
       service.setForegroundNotificationInfo(title: title, content: body);
@@ -133,6 +133,12 @@ void _onForegroundStart(ServiceInstance service) async {
           android: AndroidNotificationDetails(
             BackgroundServiceController._notifChannelId,
             BackgroundServiceController._notifChannelName,
+            // Must set an explicit small icon here: this background isolate
+            // never runs initialize() with a default icon, so a null icon
+            // makes the plugin's setSmallIcon() throw a NullPointerException.
+            // `ic_bg_service_small` is bundled by flutter_background_service,
+            // so it always resolves.
+            icon: 'ic_bg_service_small',
             ongoing: true,
             importance: Importance.low,
             priority: Priority.low,

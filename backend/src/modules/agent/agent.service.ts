@@ -198,36 +198,61 @@ export async function login(
     throw new UnauthorizedError('Invalid credentials');
   }
 
-  // Strict device pairing: refuse to issue a token for a device id that
-  // doesn't match the row in `telebirr_agents`. Rotation is an admin
-  // action (out of scope for the device-driven flow).
+  // Device pairing. The operator-typed password is the pairing secret; the
+  // `device_id` merely *binds* the account to one physical device after the
+  // first successful login. Two cases:
+  //
+  //   1. First-login pairing — the agent was created by an admin (or seed)
+  //      but never bound to a real device, so its stored `device_id` is
+  //      still a placeholder. We adopt the device that just authenticated.
+  //      Without this, an admin-registered agent could NEVER sign in from a
+  //      real phone, because the app generates its own per-install UUID.
+  //   2. Strict re-pairing — the agent is already bound to a real device.
+  //      A different device is refused; moving an agent to a new phone stays
+  //      an explicit admin action.
+  let shouldAdoptDevice = false;
   if (found.device_id !== input.deviceId) {
-    await audit({
-      tenantId: found.tenant_id,
-      actorId: found.id,
-      actorType: 'telebirr_agent',
-      action: 'agent.login',
-      resource: 'telebirr_agent',
-      resourceId: found.id,
-      payload: {
-        reason: 'device_not_paired',
-        agent_device_id: found.device_id,
-        attempted_device_id: input.deviceId,
-      },
-      ip: input.ip,
-      userAgent: input.userAgent,
-      status: 'failure',
-    });
-    throw new UnauthorizedError(
-      'This device is not paired with the agent number',
-      { reason: 'device_not_paired' }
-    );
+    if (isUnpairedPlaceholderDevice(found.device_id)) {
+      shouldAdoptDevice = true;
+    } else {
+      await audit({
+        tenantId: found.tenant_id,
+        actorId: found.id,
+        actorType: 'telebirr_agent',
+        action: 'agent.login',
+        resource: 'telebirr_agent',
+        resourceId: found.id,
+        payload: {
+          reason: 'device_not_paired',
+          agent_device_id: found.device_id,
+          attempted_device_id: input.deviceId,
+        },
+        ip: input.ip,
+        userAgent: input.userAgent,
+        status: 'failure',
+      });
+      throw new UnauthorizedError(
+        'This device is not paired with the agent number',
+        { reason: 'device_not_paired' }
+      );
+    }
   }
 
   // Successful login: open a session, refresh metadata.
   const session = await withTenantClient(
     { tenantId: found.tenant_id },
     async (client) => {
+      // First-login pairing: bind the agent to this device before issuing
+      // the token so the `did` claim matches on subsequent refreshes.
+      if (shouldAdoptDevice) {
+        await repo.adoptAgentDevice(
+          client,
+          found.id,
+          input.deviceId,
+          input.deviceName
+        );
+        found.device_id = input.deviceId;
+      }
       const sess = await repo.insertAgentSession(client, {
         tenantId: found.tenant_id,
         agentId: found.id,
@@ -239,6 +264,27 @@ export async function login(
         appVersion: input.appVersion,
         lastSeenAt: new Date(),
       });
+      // Provision the companion `p2p_devices` row keyed by the agent id.
+      // The SMS/deposit pipeline (`p2p_sms_logs.device_id`,
+      // `p2p_deposits.device_id`) has FKs to `p2p_devices(id)`, but the
+      // mobile app authenticates as a `telebirr_agents` row. Without this
+      // row, `reportSmsBatch` fails the FK and the manual-deposit queue
+      // never receives the SMS. Idempotent: only inserts if missing.
+      await client.query(
+        `INSERT INTO p2p_devices
+           (id, tenant_id, label, telebirr_phone, device_token, status, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5, 'online', now())
+         ON CONFLICT (id) DO UPDATE
+           SET last_seen_at = now(),
+               status = 'online'`,
+        [
+          found.id,
+          found.tenant_id,
+          found.agent_name ?? `Agent ${found.telebirr_number}`,
+          found.telebirr_number,
+          found.device_id ?? found.id,
+        ]
+      );
       return sess;
     }
   );
@@ -921,6 +967,21 @@ interface AuditEvent {
 
 async function audit(event: AuditEvent): Promise<void> {
   await tryAudit(event, { bypassRls: true });
+}
+
+/**
+ * True when an agent's stored `device_id` is a placeholder that was never
+ * bound to a real device — either the admin-registration default
+ * (`dev_<uuid>`, see admin p2p `registerWalletDevice`) or an empty value.
+ * Such agents adopt the first device that authenticates with the correct
+ * password. Anything else is treated as an already-paired device and kept
+ * under strict pairing.
+ */
+function isUnpairedPlaceholderDevice(deviceId: string | null): boolean {
+  if (!deviceId) return true;
+  const v = deviceId.trim();
+  if (v === '') return true;
+  return v.startsWith('dev_');
 }
 
 /* Cached dummy bcrypt hash used to keep response time constant on

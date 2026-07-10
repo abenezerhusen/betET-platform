@@ -30,6 +30,11 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgresql://playcore:playcore_dev_password@postgres:5432/playcore
       JWT_SECRET: dev_jwt_secret_change_in_production_min_32_chars
+      # Stable agent-token secret so agent (mobile app) JWTs survive backend
+      # restarts. Without this, env.agent.jwtSecret falls back to an ephemeral
+      # per-boot value and every restart invalidates all logged-in devices
+      # ("invalid agent token").
+      AGENT_JWT_SECRET: dev_agent_jwt_secret_change_in_production_min_32_chars
       PORT: 4000
       FRONTEND_URL: http://localhost:3000
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}

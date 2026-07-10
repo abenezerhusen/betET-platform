@@ -667,6 +667,30 @@ export async function approveDepositInQueue(
         [p2p.id, targetUserId, scope.actorId]
       );
 
+      // Manual-approval bridge: if this user has an open Telebirr deposit
+      // request (from the user-panel "Initiate deposit" step) for the same
+      // amount, mark it confirmed so the user-panel deposit tracker flips
+      // from "waiting" to "confirmed". `matched_transaction_id` stays NULL
+      // because the manual path credits via the p2p_deposits queue rather
+      // than a telebirr_transactions row.
+      const confirmedRequest = await client.query<{ id: string }>(
+        `UPDATE telebirr_deposit_requests
+            SET status = 'confirmed'
+          WHERE id = (
+            SELECT id
+              FROM telebirr_deposit_requests
+             WHERE tenant_id = $1
+               AND user_id = $2
+               AND status = 'waiting'
+               AND amount = $3::numeric
+             ORDER BY created_at DESC
+             LIMIT 1
+          )
+          RETURNING id`,
+        [resolvedTenantId, targetUserId, p2p.amount]
+      );
+      const confirmedRequestId = confirmedRequest.rows[0]?.id ?? null;
+
       audit({
         tenantId: resolvedTenantId,
         actorId: scope.actorId,
@@ -679,6 +703,7 @@ export async function approveDepositInQueue(
           user_id: targetUserId,
           amount: p2p.amount,
           wallet_tx_id: ledger.id,
+          deposit_request_id: confirmedRequestId,
         },
         status: 'success',
         ip: getIp(req),
@@ -711,7 +736,12 @@ export async function approveDepositInQueue(
         },
       });
 
-      return { ok: true, deposit_id: p2p.id, wallet_transaction_id: ledger.id };
+      return {
+        ok: true,
+        deposit_id: p2p.id,
+        wallet_transaction_id: ledger.id,
+        deposit_request_id: confirmedRequestId,
+      };
     }
   );
 }

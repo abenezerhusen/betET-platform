@@ -18,9 +18,8 @@ import {
   getSnapshot,
   setSession,
 } from '../auth/session';
+import { resolveApiBaseUrl } from '../apiHost';
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || 'http://localhost:4000';
 const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID?.trim() || 'default';
 
 export class ApiError extends Error {
@@ -59,7 +58,7 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'headers'> {
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
-  const base = API_BASE_URL.replace(/\/+$/u, '');
+  const base = resolveApiBaseUrl().replace(/\/+$/u, '');
   const norm = path.startsWith('/') ? path : `/${path}`;
   const url = `${base}${norm}`;
   if (!query) return url;
@@ -297,6 +296,8 @@ export async function apiRequest<T = unknown>(
 }
 
 export const apiConfig = {
-  baseUrl: API_BASE_URL,
+  get baseUrl(): string {
+    return resolveApiBaseUrl();
+  },
   tenantId: TENANT_ID,
 };
