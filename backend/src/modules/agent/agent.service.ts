@@ -677,6 +677,56 @@ export async function reportSmsBatch(
     }
   });
 
+  // ── Telebirr matching pass ───────────────────────────────────────────────
+  // Route every Telebirr-sender SMS through the SAME matcher the single
+  // /sms/report endpoint uses, so reference-based user deposit requests
+  // (telebirr_deposit_requests, Strategy 0) auto-credit from batches too.
+  // Runs in its OWN per-message transaction so a failure here can never
+  // poison the legacy p2p writes above, and is idempotent via the
+  // telebirr_sms_raw dedup index (re-scanning the inbox is cheap).
+  for (const m of messages) {
+    if (!isTelebirrSender(m.senderNumber ?? '')) continue;
+    try {
+      const rawReceivedIso = m.receivedAt
+        ? m.receivedAt.toISOString()
+        : new Date().toISOString();
+      const rawHash =
+        m.dedupHash ??
+        computePromptDedupHash(m.smsBody, rawReceivedIso, m.senderNumber ?? '');
+
+      const scheduled = await withTenantClient(
+        { tenantId, bypassRls: true },
+        async (client) => {
+          const settings = await loadTelebirrSettings(client, tenantId);
+          const insRaw = await repo.insertSmsRaw(client, {
+            tenantId,
+            agentId,
+            smsBody: m.smsBody,
+            senderNumber: m.senderNumber,
+            receivedAt: m.receivedAt,
+            dedupHash: rawHash,
+          });
+          if (!insRaw.created) return null;
+          const guard = preIngestionFraudCheck(m, settings);
+          if (guard.reject) {
+            await telebirrRepo.markSmsProcessed(client, insRaw.row.id);
+            return null;
+          }
+          return insRaw.row.id;
+        }
+      );
+
+      if (scheduled) {
+        scheduleProcessing(agentId, tenantId, scheduled, m.smsBody);
+      }
+    } catch (err) {
+      logger.warn(
+        { err, agentId, tenantId },
+        'telebirr: batch matching pass failed for one message'
+      );
+    }
+  }
+
   return { received, duplicates, deposits_created: depositsCreated };
 }
 

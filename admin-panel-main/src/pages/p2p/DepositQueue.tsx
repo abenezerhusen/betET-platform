@@ -28,11 +28,15 @@ function errMsg(e: unknown): string {
 }
 
 function mapApiRow(row: DepositQueueRow): DepositRow {
-  const raw = String(row.status ?? '');
+  // Backend p2p_deposits statuses are 'pending' | 'approved' | 'rejected'
+  // ('matched'/'pending_review' are older aliases). Auto-matched deposits are
+  // reconciled to 'approved' by the matcher, so they render as success with no
+  // action buttons — only 'pending' (unmatched) deposits need approve/reject.
+  const raw = String(row.status ?? '').toLowerCase();
   let status = 'Pending';
-  if (raw === 'matched') status = 'Approved';
+  if (raw === 'approved' || raw === 'matched') status = 'Approved';
   else if (raw === 'rejected') status = 'Rejected';
-  else if (raw === 'pending_review') status = 'Pending';
+  else status = 'Pending';
 
   const amt = row.amount != null ? Number(row.amount) : NaN;
   const amount =

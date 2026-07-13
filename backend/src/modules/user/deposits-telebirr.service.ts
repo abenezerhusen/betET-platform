@@ -11,6 +11,7 @@ import {
   initiateTelebirrDeposit,
   getTelebirrDepositStatus,
 } from '../telebirr/telebirr.deposit-flow';
+import { confirmManualMatch } from '../telebirr/telebirr.matching.service';
 import * as telebirrRepo from '../telebirr/telebirr.repository';
 
 import { getIp, getUa, getUserScope } from './user-shared';
@@ -32,6 +33,11 @@ export interface InitiateDepositResult {
   currency: 'ETB';
   expires_at: string;
   instructions: string;
+  /**
+   * True when the user supplied a Telebirr reference AND the matching SMS had
+   * already been received, so the deposit was credited immediately.
+   */
+  confirmed: boolean;
 }
 
 export async function initiateDeposit(
@@ -46,9 +52,41 @@ export async function initiateDeposit(
     tenantId: scope.tenantId,
     userId: scope.userId,
     amount: body.amount,
+    claimedTelebirrRef: body.telebirr_reference ?? null,
+    screenshotUrl: body.screenshot_url ?? null,
     ip,
     userAgent: ua,
   });
+
+  // If the user gave a real Telebirr reference, the agent SMS may already
+  // have arrived and been stored uncredited. Reconcile immediately so the
+  // deposit confirms without waiting for the next SMS batch. If the SMS has
+  // NOT arrived yet, this is a no-op and the matcher's Strategy 0 will
+  // confirm the request when the SMS is reported.
+  let confirmed = false;
+  if (body.telebirr_reference) {
+    try {
+      const credit = await confirmManualMatch(
+        scope.tenantId,
+        body.telebirr_reference,
+        scope.userId,
+        { actorType: 'user', actorId: scope.userId, ip, userAgent: ua }
+      );
+      if (credit.outcome === 'credited') {
+        confirmed = true;
+        await withTenantClient({ tenantId: scope.tenantId }, (client) =>
+          telebirrRepo.markDepositRequestConfirmed(
+            client,
+            out.request_id,
+            credit.telebirrTransactionId
+          )
+        );
+      }
+    } catch {
+      // Reconciliation is best-effort; the async matcher remains the
+      // authoritative path if this immediate attempt fails.
+    }
+  }
 
   await tryAudit(
     {
@@ -81,6 +119,7 @@ export async function initiateDeposit(
     currency: out.currency,
     expires_at: out.expires_at,
     instructions: out.instructions,
+    confirmed,
   };
 }
 

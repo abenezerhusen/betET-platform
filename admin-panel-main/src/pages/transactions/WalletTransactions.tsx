@@ -120,14 +120,25 @@ export function WalletTransactions() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Normalise to whole-day boundaries so the selected end-day is inclusive
+  // (the date picker returns clicked days at midnight, which would otherwise
+  // drop the entire end-day and return an empty list).
+  const { fromParam, toParam } = useMemo(() => {
+    const s = new Date(startDate);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(endDate);
+    e.setHours(23, 59, 59, 999);
+    return { fromParam: toIso(s), toParam: toIso(e) };
+  }, [startDate, endDate]);
+
   useEffect(() => {
     if (!isAuth || !canView) return;
     let cancelled = false;
     setLoading(true);
     txApi
       .listTransactions('wallet', {
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: fromParam,
+        to: toParam,
         phone: phoneNumber || undefined,
         reason: REASON_TO_VALUE[selectedReason] ?? undefined,
         direction:
@@ -166,8 +177,8 @@ export function WalletTransactions() {
   }, [
     isAuth,
     canView,
-    startDate,
-    endDate,
+    fromParam,
+    toParam,
     phoneNumber,
     selectedReason,
     direction,

@@ -359,6 +359,8 @@ const TabIcon: React.FC<{ tab: Tab }> = ({ tab }) => {
   return <Icon className="h-5 w-5 text-gray-400" />;
 };
 
+type RangePreset = 'today' | '7d' | '30d' | 'month' | 'all';
+
 export function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('summary');
   // Spec default: today (00:00 → 23:59).
@@ -373,10 +375,41 @@ export function Dashboard() {
     return d;
   });
 
-  const { from, to } = useMemo(
-    () => ({ from: toIso(startDate), to: toIso(endDate) }),
-    [startDate, endDate]
-  );
+  // Quick range presets. The date pickers still allow any custom range; these
+  // just make it obvious how to widen past "today" so recorded data on other
+  // days is easy to surface.
+  const applyPreset = (preset: RangePreset) => {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    if (preset === '7d') start.setDate(start.getDate() - 6);
+    else if (preset === '30d') start.setDate(start.getDate() - 29);
+    else if (preset === 'month') start.setDate(1);
+    else if (preset === 'all') start.setFullYear(start.getFullYear() - 5);
+    setStartDate(start);
+    setEndDate(end);
+  };
+  const presets: { id: RangePreset; label: string }[] = [
+    { id: 'today', label: 'Today' },
+    { id: '7d', label: 'Last 7 Days' },
+    { id: '30d', label: 'Last 30 Days' },
+    { id: 'month', label: 'This Month' },
+    { id: 'all', label: 'All Time' },
+  ];
+
+  // Normalise the picked range to whole days: `from` at 00:00:00.000 and `to`
+  // at 23:59:59.999. react-datepicker returns a clicked day at midnight, so
+  // without this the `to` boundary (t.created_at <= to) drops the entire
+  // selected end-day — the report then shows stale data only up to the day
+  // before. Full-day boundaries keep the range inclusive.
+  const { from, to } = useMemo(() => {
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    return { from: toIso(start), to: toIso(end) };
+  }, [startDate, endDate]);
 
   const { loading, error, data } = useDashboard(activeTab, from, to);
 
@@ -428,9 +461,21 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center">
         <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        <div className="flex items-center space-x-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <div className="flex flex-wrap items-center gap-1">
+            {presets.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => applyPreset(p.id)}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-gray-300 text-gray-700 bg-white hover:bg-gray-50"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <DateRangePicker
             startDate={startDate}
             endDate={endDate}

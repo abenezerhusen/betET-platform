@@ -256,10 +256,15 @@ export async function insertSmsRaw(
 ): Promise<{ row: SmsRawRow; created: boolean }> {
   if (params.dedupHash) {
     const inserted = await client.query<SmsRawRow>(
+      // Target the partial unique index telebirr_sms_raw_dedup_uniq via its
+      // columns + predicate. It is an INDEX (not a named constraint), so
+      // `ON CONFLICT ON CONSTRAINT` would error ("constraint does not exist").
       `INSERT INTO telebirr_sms_raw
          (tenant_id, agent_id, sms_body, sender_number, received_at, dedup_hash)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT ON CONSTRAINT telebirr_sms_raw_dedup_uniq DO NOTHING
+       ON CONFLICT (tenant_id, agent_id, dedup_hash)
+         WHERE dedup_hash IS NOT NULL
+         DO NOTHING
        RETURNING ${SELECT_SMS_RAW}`,
       [
         params.tenantId,

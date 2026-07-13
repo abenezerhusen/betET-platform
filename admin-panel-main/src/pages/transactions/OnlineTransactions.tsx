@@ -104,14 +104,27 @@ export function OnlineTransactions() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Normalise to whole-day boundaries: `from` at 00:00:00.000 and `to` at
+  // 23:59:59.999. The date picker returns a clicked day at midnight, so
+  // without this the `to` boundary drops the entire selected end-day and the
+  // list comes back empty (even though the dashboard, which normalises, shows
+  // the same day's data).
+  const { fromParam, toParam } = useMemo(() => {
+    const s = new Date(startDate);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(endDate);
+    e.setHours(23, 59, 59, 999);
+    return { fromParam: toIso(s), toParam: toIso(e) };
+  }, [startDate, endDate]);
+
   useEffect(() => {
     if (!isAuth || !canView) return;
     let cancelled = false;
     setLoading(true);
     txApi
       .listTransactions('online', {
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: fromParam,
+        to: toParam,
         type: TYPE_TO_VALUE[selectedType] ?? undefined,
         status: STATUS_TO_VALUE[selectedStatus] ?? undefined,
         phone: phoneNumber || undefined,
@@ -146,8 +159,8 @@ export function OnlineTransactions() {
   }, [
     isAuth,
     canView,
-    startDate,
-    endDate,
+    fromParam,
+    toParam,
     selectedBank,
     selectedStatus,
     selectedType,

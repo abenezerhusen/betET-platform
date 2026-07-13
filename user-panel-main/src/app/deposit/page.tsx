@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { z } from "zod";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Betslip } from "@/components/Betslip";
@@ -10,32 +9,17 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   CheckCircle2,
-  AlertCircle,
   RefreshCw,
-  Clock,
+  Copy,
+  Landmark,
+  Upload,
+  X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
-import { bonusesApi, walletApi } from "@/lib/api";
-import { p2pProviders, pickRandomAccount } from "@/data/p2pAccounts";
-import { Copy, Landmark } from "lucide-react";
-
-const depositSchema = z.object({
-  // Zod v4 dropped `invalid_type_error`; use `message` instead.
-  amount: z
-    .number({ message: "Amount is required" })
-    .positive("Amount must be greater than zero")
-    .min(10, "Minimum deposit is 10 ETB")
-    .max(1_000_000, "Maximum deposit is 1,000,000 ETB"),
-});
+import { walletApi } from "@/lib/api";
 
 function OperationSwitcher() {
   const pathname = usePathname();
@@ -65,92 +49,20 @@ function OperationSwitcher() {
 }
 
 export default function DepositPage() {
-  const { user, wallet, refreshWallet } = useAuth();
-  const [activeTab, setActiveTab] = useState("online");
-  const [amount, setAmount] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [successMsg, setSuccessMsg] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
-  const [processing, setProcessing] = useState(false);
-  const [validationError, setValidationError] = useState("");
-
-  const [requestId, setRequestId] = useState<string | null>(null);
-  const [requestStatus, setRequestStatus] = useState<string>("");
-  const [expiresAt, setExpiresAt] = useState<string | null>(null);
-  const [telebirrNumber, setTelebirrNumber] = useState("");
-  const [referenceCode, setReferenceCode] = useState("");
+  const { wallet } = useAuth();
+  const [activeTab, setActiveTab] = useState("p2p");
   const [historyCount, setHistoryCount] = useState(0);
-  // Section 15 spec: surface the list of Telebirr agent phone numbers the
-  // customer can manually send to (sourced from `GET /api/p2p/accounts`)
-  // so the deposit screen doubles as a directory before the user hits
-  // "Initiate Deposit". The Telebirr-initiate flow still works as before.
-  const [agentAccounts, setAgentAccounts] = useState<
-    walletApi.P2pAccountRow[]
-  >([]);
 
   const balanceLine = wallet?.summary?.[0];
   const balance = Number(balanceLine?.balance ?? 0);
   const bonusBalance = Number(balanceLine?.bonus_balance ?? 0);
-  const parsedAmount = useMemo(() => Number(amount || 0), [amount]);
 
   useEffect(() => {
-    bonusesApi
-      .listPaymentMethods({ channel: "deposit" })
-      .catch(() => undefined);
     walletApi
       .telebirrDepositHistory({ page: 1, limit: 5 })
       .then((res) => setHistoryCount(res.total ?? 0))
       .catch(() => setHistoryCount(0));
-    walletApi
-      .listP2pAccounts()
-      .then((res) => setAgentAccounts(res.accounts ?? []))
-      .catch(() => setAgentAccounts([]));
   }, []);
-
-  useEffect(() => {
-    if (!requestId) return;
-    const t = setInterval(() => {
-      walletApi
-        .telebirrDepositStatus(requestId)
-        .then((s) => {
-          setRequestStatus(s.status);
-          if (s.status === "confirmed") {
-            void refreshWallet();
-          }
-        })
-        .catch(() => undefined);
-    }, 5000);
-    return () => clearInterval(t);
-  }, [requestId, refreshWallet]);
-
-  const confirmOnlineDeposit = async () => {
-    const parsed = depositSchema.safeParse({ amount: parsedAmount });
-    if (!parsed.success) {
-      setValidationError(parsed.error.issues[0]?.message ?? "Invalid amount");
-      return;
-    }
-    setValidationError("");
-    setProcessing(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const out = await walletApi.telebirrDepositInitiate({ amount: parsed.data.amount });
-      setRequestId(out.request_id);
-      setRequestStatus(out.status);
-      setExpiresAt(out.expires_at ?? null);
-      setTelebirrNumber(out.payment_url ?? "");
-      setReferenceCode(out.request_id);
-      setSuccessMsg(`Deposit request submitted for ${out.amount} ETB.`);
-      setConfirmOpen(false);
-      setAmount("");
-    } catch (err) {
-      setErrorMsg((err as Error).message || "Deposit initiation failed.");
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const canSubmit = parsedAmount > 0;
 
   return (
     <div className="flex min-h-[calc(100vh-180px)]">
@@ -170,157 +82,15 @@ export default function DepositPage() {
             </div>
           </div>
 
-          {successMsg && (
-            <div className="px-3 py-2 rounded mb-3 text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-          {errorMsg && (
-            <div className="px-3 py-2 rounded mb-3 text-sm bg-red-500/15 border border-red-500/40 text-red-400 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-4 h-9" style={{ background: "var(--mezzo-bg-secondary)" }}>
-              <TabsTrigger value="online" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
-                Telebirr
-              </TabsTrigger>
+            <TabsList className="grid w-full grid-cols-2 mb-4 h-9" style={{ background: "var(--mezzo-bg-secondary)" }}>
               <TabsTrigger value="p2p" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
-                P2P
+                P2P Deposit
               </TabsTrigger>
               <TabsTrigger value="history" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
                 History ({historyCount})
               </TabsTrigger>
             </TabsList>
-
-            <TabsContent value="online" className="space-y-3">
-              {agentAccounts.length > 0 && (
-                <div
-                  className="p-4 rounded-lg space-y-2"
-                  style={{ background: "var(--mezzo-bg-secondary)" }}
-                >
-                  <h3 className="font-semibold text-sm">
-                    Send Telebirr to one of our agents
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    After you send, click "Initiate Deposit" so the system
-                    can match your transfer to your account.
-                  </p>
-                  <ul className="space-y-2 mt-1">
-                    {agentAccounts.map((a) => (
-                      <li
-                        key={`${a.device_id}:${a.account_id ?? a.phone}`}
-                        className="flex items-center justify-between gap-3 px-3 py-2 rounded"
-                        style={{ background: "var(--mezzo-bg-tertiary)" }}
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold truncate">
-                            {a.label}
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {a.phone}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
-                              a.status === "online"
-                                ? "bg-green-500/20 text-green-500"
-                                : a.status === "maintenance"
-                                  ? "bg-yellow-500/20 text-yellow-500"
-                                  : "bg-gray-500/20 text-gray-400"
-                            }`}
-                          >
-                            {a.status}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (typeof navigator !== "undefined") {
-                                void navigator.clipboard
-                                  ?.writeText(a.phone)
-                                  .catch(() => undefined);
-                              }
-                            }}
-                            className="block mt-1 text-[10px] text-[var(--mezzo-accent-yellow)] hover:underline"
-                          >
-                            Copy number
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <div className="p-4 rounded-lg space-y-3" style={{ background: "var(--mezzo-bg-secondary)" }}>
-                <h3 className="font-semibold text-sm">Telebirr Deposit</h3>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Amount (ETB)</label>
-                  <Input
-                    type="number"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
-                  />
-                  {validationError && (
-                    <p className="text-xs text-red-400 mt-1">{validationError}</p>
-                  )}
-                </div>
-                <div className="text-xs text-gray-400">Account: {user?.phone ?? user?.email ?? "N/A"}</div>
-                <Button
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={!canSubmit}
-                  className="w-full h-9 text-black font-semibold disabled:opacity-50"
-                  style={{ background: "var(--mezzo-accent-green)" }}
-                >
-                  Initiate Deposit
-                </Button>
-              </div>
-
-              {requestId && (
-                <div className="p-4 rounded-lg space-y-2" style={{ background: "var(--mezzo-bg-secondary)" }}>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Clock className="w-4 h-4 text-[var(--mezzo-accent-yellow)]" />
-                    Request: {requestId}
-                  </div>
-                  <div className="text-xs text-gray-300">Status: {requestStatus || "pending"}</div>
-                  {expiresAt && <div className="text-xs text-gray-400">Expires: {new Date(expiresAt).toLocaleString()}</div>}
-                  {telebirrNumber && <div className="text-xs text-gray-400">Telebirr: {telebirrNumber}</div>}
-                  {referenceCode && <div className="text-xs text-gray-400">Reference: {referenceCode}</div>}
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      className="h-8 border-gray-700 bg-transparent text-white hover:bg-gray-800 text-xs"
-                      onClick={async () => {
-                        if (!requestId) return;
-                        const s = await walletApi.telebirrDepositStatus(requestId);
-                        setRequestStatus(s.status);
-                        if (s.status === "confirmed") void refreshWallet();
-                      }}
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 mr-1" />
-                      Refresh status
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="h-8 border-gray-700 bg-transparent text-white hover:bg-gray-800 text-xs"
-                      onClick={async () => {
-                        if (!requestId) return;
-                        await walletApi.telebirrDepositCancel(requestId);
-                        setRequestStatus("cancelled");
-                      }}
-                    >
-                      Cancel request
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </TabsContent>
 
             <TabsContent value="p2p" className="space-y-3">
               <P2PDepositPanel />
@@ -333,39 +103,6 @@ export default function DepositPage() {
         </div>
       </div>
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent className="bg-black border-gray-800 text-white max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Confirm Telebirr deposit</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 pt-2 text-sm">
-            <div className="p-3 rounded space-y-1" style={{ background: "var(--mezzo-bg-tertiary)" }}>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Amount</span>
-                <span className="font-semibold text-[var(--mezzo-accent-green)]">{parsedAmount.toFixed(2)} ETB</span>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmOpen(false)}
-                className="flex-1 h-9 border-gray-700 bg-transparent text-white hover:bg-gray-800"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void confirmOnlineDeposit()}
-                disabled={processing}
-                className="flex-1 h-9 text-black font-semibold"
-                style={{ background: "var(--mezzo-accent-green)" }}
-              >
-                {processing ? "Submitting..." : "Confirm"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <Betslip />
     </div>
   );
@@ -373,30 +110,92 @@ export default function DepositPage() {
 
 function P2PDepositPanel() {
   const { refreshWallet } = useAuth();
-  const [providerKey, setProviderKey] = useState(p2pProviders[0]?.key ?? "");
+  const [accounts, setAccounts] = useState<walletApi.P2pAccountRow[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
+  const [reference, setReference] = useState("");
+  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [screenshotName, setScreenshotName] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [okMsg, setOkMsg] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const provider = useMemo(
-    () => p2pProviders.find((p) => p.key === providerKey) ?? p2pProviders[0],
-    [providerKey]
+  // Open deposit request being tracked (after submit or resumed on mount).
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("");
+
+  const loadAccounts = () => {
+    setLoadingAccounts(true);
+    walletApi
+      .listP2pAccounts()
+      .then((res) => {
+        const list = res.accounts ?? [];
+        setAccounts(list);
+        setSelectedDeviceId((prev) =>
+          prev && list.some((a) => a.device_id === prev)
+            ? prev
+            : (list[0]?.device_id ?? null)
+        );
+      })
+      .catch(() => setAccounts([]))
+      .finally(() => setLoadingAccounts(false));
+  };
+
+  // Resume an existing open ("waiting") request so the user sees its status
+  // and doesn't hit "you already have an open request".
+  const loadOpenRequest = async () => {
+    try {
+      const hist = await walletApi.telebirrDepositHistory({ page: 1, limit: 10 });
+      const open = (hist.items ?? []).find((i) => i.status === "waiting");
+      if (!open) return;
+      const s = await walletApi.telebirrDepositStatus(open.id);
+      if (s.status === "waiting") {
+        setRequestId(s.request_id);
+        setStatus(s.status);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    loadAccounts();
+    void loadOpenRequest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isResolved =
+    status === "confirmed" || status === "expired" || status === "cancelled";
+
+  // Poll the request status until the agent SMS is matched.
+  useEffect(() => {
+    if (!requestId || isResolved) return;
+    const t = setInterval(async () => {
+      try {
+        const s = await walletApi.telebirrDepositStatus(requestId);
+        setStatus(s.status);
+        if (s.status === "confirmed") void refreshWallet();
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [requestId, isResolved, refreshWallet]);
+
+  const account = useMemo(
+    () =>
+      accounts.find((a) => a.device_id === selectedDeviceId) ??
+      accounts[0] ??
+      null,
+    [accounts, selectedDeviceId]
   );
 
-  // Pick a destination account once per provider selection so the user keeps
-  // seeing the same account while they complete the transfer.
-  const account = useMemo(() => {
-    try {
-      return provider ? pickRandomAccount(provider) : null;
-    } catch {
-      return null;
-    }
-  }, [provider]);
-
   const parsed = Number(amount || 0);
-  const canSubmit = Number.isFinite(parsed) && parsed >= 10 && !busy;
+  const refOk = reference.trim().length >= 4;
+  const canSubmit =
+    Number.isFinite(parsed) && parsed >= 10 && refOk && !busy && !requestId;
 
   const copy = async (text: string) => {
     try {
@@ -408,27 +207,100 @@ function P2PDepositPanel() {
     }
   };
 
+  const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024; // 8MB
+
+  const onPickScreenshot = (file: File | null | undefined) => {
+    setErr("");
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setErr("The screenshot must be an image file.");
+      return;
+    }
+    if (file.size > MAX_SCREENSHOT_BYTES) {
+      setErr("Screenshot is too large (max 8MB).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setScreenshot(typeof reader.result === "string" ? reader.result : null);
+      setScreenshotName(file.name);
+    };
+    reader.onerror = () => setErr("Could not read the selected image.");
+    reader.readAsDataURL(file);
+  };
+
+  const clearScreenshot = () => {
+    setScreenshot(null);
+    setScreenshotName("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const submit = async () => {
     setErr("");
-    setOkMsg("");
-    if (!canSubmit) {
+    if (!account) {
+      setErr("No P2P agent is available right now. Please try again shortly.");
+      return;
+    }
+    if (!Number.isFinite(parsed) || parsed < 10) {
       setErr("Enter an amount of at least 10 ETB.");
+      return;
+    }
+    if (!refOk) {
+      setErr("Enter the Telebirr reference from your payment SMS.");
       return;
     }
     setBusy(true);
     try {
-      const out = await walletApi.telebirrDepositInitiate({ amount: parsed });
-      setOkMsg(
-        `Deposit request submitted for ${out.amount} ETB. We'll credit your wallet once the transfer to ${provider?.name} is confirmed.`
-      );
-      setAmount("");
-      void refreshWallet();
+      const out = await walletApi.telebirrDepositInitiate({
+        amount: parsed,
+        telebirr_reference: reference.trim(),
+        ...(screenshot ? { screenshot_url: screenshot } : {}),
+      });
+      setRequestId(out.request_id);
+      setStatus(out.confirmed ? "confirmed" : "waiting");
+      if (out.confirmed) void refreshWallet();
     } catch (e) {
-      setErr((e as Error).message || "Failed to submit deposit request.");
+      setErr((e as Error).message || "Failed to submit deposit.");
     } finally {
       setBusy(false);
     }
   };
+
+  const cancel = async () => {
+    if (!requestId) return;
+    setBusy(true);
+    try {
+      await walletApi.telebirrDepositCancel(requestId);
+      setStatus("cancelled");
+    } catch (e) {
+      setErr((e as Error).message || "Failed to cancel request.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = () => {
+    setRequestId(null);
+    setStatus("");
+    setAmount("");
+    setReference("");
+    clearScreenshot();
+    setErr("");
+  };
+
+  const statusBadge = (s: walletApi.P2pAccountRow["status"]) => (
+    <span
+      className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
+        s === "online"
+          ? "bg-green-500/20 text-green-500"
+          : s === "maintenance"
+            ? "bg-yellow-500/20 text-yellow-500"
+            : "bg-gray-500/20 text-gray-400"
+      }`}
+    >
+      {s}
+    </span>
+  );
 
   return (
     <div className="space-y-3">
@@ -436,89 +308,231 @@ function P2PDepositPanel() {
         <div className="flex items-center gap-2">
           <Landmark className="w-4 h-4 text-[var(--mezzo-accent-yellow)]" />
           <h3 className="font-semibold text-sm">P2P Transfer Deposit</h3>
-        </div>
-        <p className="text-xs text-gray-400">
-          Transfer the amount to one of our accounts below, then submit your
-          request. Your wallet is credited once the transfer is confirmed.
-        </p>
-
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">Provider</label>
-          <div className="flex flex-wrap gap-2">
-            {p2pProviders.map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => setProviderKey(p.key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                  p.key === providerKey
-                    ? "bg-[var(--mezzo-accent-green)] text-black"
-                    : "text-gray-300 hover:text-white"
-                }`}
-                style={p.key === providerKey ? undefined : { background: "var(--mezzo-bg-tertiary)" }}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
+          {!requestId && (
+            <button
+              type="button"
+              onClick={loadAccounts}
+              className="ml-auto inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-white"
+              title="Refresh agents"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Refresh
+            </button>
+          )}
         </div>
 
-        {account && (
-          <div className="p-3 rounded space-y-1.5" style={{ background: "var(--mezzo-bg-tertiary)" }}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">Account Holder</span>
-              <span className="text-sm font-semibold">{account.holderName}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400">
-                {provider?.type === "bank" ? "Account Number" : "Phone Number"}
-              </span>
-              <button
-                type="button"
-                onClick={() => void copy(account.accountNumber)}
-                className="inline-flex items-center gap-1 text-sm font-mono text-[var(--mezzo-accent-yellow)] hover:underline"
-                title="Copy"
-              >
-                {account.accountNumber}
-                <Copy className="w-3 h-3" />
-              </button>
-            </div>
-            {account.bankName && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">Bank</span>
-                <span className="text-sm">{account.bankName}</span>
+        {/* ---- Result / tracking view once a request is open ---- */}
+        {requestId ? (
+          <div className="space-y-3">
+            {status === "confirmed" ? (
+              <div className="px-3 py-2 rounded text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>Payment confirmed — your wallet has been credited.</span>
+              </div>
+            ) : status === "expired" ? (
+              <div className="px-3 py-2 rounded text-sm bg-red-500/15 border border-red-500/40 text-red-400">
+                This request expired before a matching payment was found.
+              </div>
+            ) : status === "cancelled" ? (
+              <div className="px-3 py-2 rounded text-sm bg-gray-500/15 border border-gray-500/40 text-gray-300">
+                Request cancelled.
+              </div>
+            ) : (
+              <div className="px-3 py-2 rounded text-xs bg-blue-500/10 border border-blue-500/30 text-blue-300 flex items-start gap-2">
+                <RefreshCw className="w-3.5 h-3.5 mt-0.5 animate-spin flex-shrink-0" />
+                <span>
+                  Waiting for the agent to report your Telebirr payment. We&apos;re
+                  matching your reference automatically — keep this open.
+                </span>
               </div>
             )}
-            {copied && <div className="text-[11px] text-green-400">Copied to clipboard</div>}
+
+            {!isResolved ? (
+              <Button
+                variant="outline"
+                onClick={() => void cancel()}
+                disabled={busy}
+                className="w-full h-9 border-gray-700 bg-transparent text-white hover:bg-gray-800 text-xs"
+              >
+                Cancel request
+              </Button>
+            ) : (
+              <Button
+                onClick={reset}
+                className="w-full h-9 text-black font-semibold"
+                style={{ background: "var(--mezzo-accent-green)" }}
+              >
+                {status === "confirmed" ? "Make another deposit" : "Start over"}
+              </Button>
+            )}
           </div>
+        ) : (
+          /* ---- Entry form ---- */
+          <>
+            <p className="text-xs text-gray-400">
+              Send the amount to the Telebirr agent below, then paste the
+              Telebirr reference from your payment SMS. Your wallet is credited
+              automatically once it matches the agent&apos;s record.
+            </p>
+
+            {loadingAccounts ? (
+              <div className="text-xs text-gray-400">Loading agent…</div>
+            ) : accounts.length === 0 ? (
+              <div className="px-3 py-2 rounded text-xs bg-yellow-500/15 border border-yellow-500/40 text-yellow-400">
+                No P2P agent is currently available. Please try again shortly.
+              </div>
+            ) : (
+              <>
+                {accounts.length > 1 && (
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">
+                      Choose an agent
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {accounts.map((a) => (
+                        <button
+                          key={a.device_id}
+                          type="button"
+                          onClick={() => setSelectedDeviceId(a.device_id)}
+                          className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                            a.device_id === account?.device_id
+                              ? "bg-[var(--mezzo-accent-green)] text-black"
+                              : "text-gray-300 hover:text-white"
+                          }`}
+                          style={
+                            a.device_id === account?.device_id
+                              ? undefined
+                              : { background: "var(--mezzo-bg-tertiary)" }
+                          }
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {account && (
+                  <div className="p-3 rounded space-y-1.5" style={{ background: "var(--mezzo-bg-tertiary)" }}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">Account Holder</span>
+                      <span className="text-sm font-semibold">{account.label}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">Phone Number</span>
+                      <button
+                        type="button"
+                        onClick={() => void copy(account.phone)}
+                        className="inline-flex items-center gap-1 text-sm font-mono text-[var(--mezzo-accent-yellow)] hover:underline"
+                        title="Copy"
+                      >
+                        {account.phone}
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-400">Status</span>
+                      {statusBadge(account.status)}
+                    </div>
+                    {copied && <div className="text-[11px] text-green-400">Copied to clipboard</div>}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Amount Transferred (ETB)</label>
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Telebirr Reference (from your payment SMS)
+              </label>
+              <Input
+                type="text"
+                placeholder="e.g. CH12AB34CD"
+                value={reference}
+                onChange={(e) => setReference(e.target.value.toUpperCase())}
+                className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white font-mono tracking-wide"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Copy the &quot;Ref&quot; value from the Telebirr confirmation SMS you
+                received after sending the money.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Payment Screenshot{" "}
+                <span className="text-gray-500">(optional)</span>
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => onPickScreenshot(e.target.files?.[0])}
+              />
+              {screenshot ? (
+                <div
+                  className="p-2 rounded flex items-center gap-3"
+                  style={{ background: "var(--mezzo-bg-tertiary)" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={screenshot}
+                    alt="Payment screenshot"
+                    className="w-12 h-12 rounded object-cover border border-[var(--mezzo-border)]"
+                  />
+                  <span className="text-xs text-gray-300 truncate flex-1">
+                    {screenshotName || "Screenshot attached"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearScreenshot}
+                    className="p-1 text-gray-400 hover:text-red-400"
+                    title="Remove"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full h-9 rounded flex items-center justify-center gap-2 text-xs text-gray-300 border border-dashed border-[var(--mezzo-border)] hover:text-white hover:border-gray-500 transition-colors"
+                  style={{ background: "var(--mezzo-bg-tertiary)" }}
+                >
+                  <Upload className="w-4 h-4" />
+                  Upload Telebirr payment screenshot
+                </button>
+              )}
+              <p className="text-[11px] text-gray-500 mt-1">
+                Optional: attach the Telebirr confirmation screenshot as extra
+                proof of payment (max 8MB). The reference above is enough to
+                confirm automatically.
+              </p>
+            </div>
+
+            {err && <div className="text-xs text-red-400">{err}</div>}
+
+            <Button
+              onClick={() => void submit()}
+              disabled={!canSubmit || accounts.length === 0}
+              className="w-full h-9 text-black font-semibold disabled:opacity-50"
+              style={{ background: "var(--mezzo-accent-green)" }}
+            >
+              {busy ? "Submitting…" : "I've Sent — Submit Deposit"}
+            </Button>
+          </>
         )}
-
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">Amount Transferred (ETB)</label>
-          <Input
-            type="number"
-            placeholder="0.00"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
-          />
-        </div>
-
-        {err && <div className="text-xs text-red-400">{err}</div>}
-        {okMsg && (
-          <div className="px-3 py-2 rounded text-xs bg-green-500/15 border border-green-500/40 text-green-400">
-            {okMsg}
-          </div>
-        )}
-
-        <Button
-          onClick={() => void submit()}
-          disabled={!canSubmit}
-          className="w-full h-9 text-black font-semibold disabled:opacity-50"
-          style={{ background: "var(--mezzo-accent-green)" }}
-        >
-          {busy ? "Submitting…" : "I've Sent — Submit Deposit"}
-        </Button>
       </div>
     </div>
   );

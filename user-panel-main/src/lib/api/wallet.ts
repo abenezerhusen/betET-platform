@@ -70,15 +70,28 @@ export async function submitWithdrawal(input: WithdrawalRequestInput): Promise<{
 
 export interface TelebirrDepositInitiateInput {
   amount: string | number;
+  /**
+   * Real Telebirr transaction reference the user pasted from their own
+   * Telebirr SMS. The backend confirms the deposit by matching it against
+   * the agent SMS's parsed ref.
+   */
+  telebirr_reference?: string;
+  /** Payment screenshot as a base64 data URL (evidence for verification). */
+  screenshot_url?: string;
 }
 
 export interface TelebirrDepositInitiateResponse {
   request_id: string;
+  reference_code: string;
+  telebirr_number: string;
+  agent_name: string;
   amount: string;
-  status: string;
-  /** USSD code / payment URL or QR data to surface in the UI */
-  payment_url?: string | null;
-  expires_at?: string | null;
+  currency: string;
+  expires_at: string;
+  instructions: string;
+  /** True when the matching SMS had already arrived and the deposit was
+   *  credited immediately. */
+  confirmed: boolean;
 }
 
 export async function telebirrDepositInitiate(
@@ -110,9 +123,15 @@ export async function telebirrDepositHistory(query: {
 
 export async function telebirrDepositStatus(requestId: string): Promise<{
   request_id: string;
-  status: string;
+  status: 'waiting' | 'confirmed' | 'expired' | 'cancelled' | string;
   amount: string;
-  completed_at: string | null;
+  reference_code: string;
+  telebirr_number: string;
+  expires_at: string;
+  credited_amount: string | null;
+  telebirr_ref: string | null;
+  matched_transaction_id: string | null;
+  seconds_until_expiry: number;
 }> {
   return apiRequest(`/api/user/deposits/telebirr/${requestId}/status`);
 }

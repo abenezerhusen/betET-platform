@@ -114,8 +114,12 @@ export function parseAmount(raw: string | null | undefined): number | null {
 
 const AMOUNT_RE =
   /(?:ETB|Birr)[.\s]*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:ETB|Birr)/i;
+// Matches the reference token across Ethio Telecom's wording variants, most
+// importantly the live format "Your transaction number is DGD2T2M9YQ." plus
+// "Transaction Id: X", "Ref No X", "TXN X", etc. Longer alternatives are
+// listed first so "Number" wins over "No"/"Num".
 const REF_RE =
-  /\b(?:Trans(?:action)?\s*Id|Ref(?:erence)?(?:\s*(?:Id|No|Code))?|TXN|TxnId)[:\s#-]*([A-Za-z0-9]{4,})/i;
+  /\b(?:Trans(?:action)?\s*(?:Number|Num|Id|No\.?)|Ref(?:erence)?(?:\s*(?:Number|Num|Id|No\.?|Code))?|TXN|TxnId)\s*(?:is|:|#|-|=)?\s*([A-Za-z0-9]{4,})/i;
 const NEW_BALANCE_RE =
   /(?:new|current|available)\s+balance(?:\s+is)?\s*[:\s]?\s*(?:ETB|Birr)?\s*([\d,]+(?:\.\d+)?)/i;
 const DATE_RE =

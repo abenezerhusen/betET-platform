@@ -13,11 +13,15 @@ const crypto = require('crypto');
  */
 
 function isTelebirrSender(sender) {
+  const s = (sender || '').trim();
   return (
-    /telebirr/i.test(sender || '') ||
-    /ethio.?telecom/i.test(sender || '') ||
-    sender === '6040' ||
-    sender === '8282'
+    /telebirr/i.test(s) ||
+    /ethio.?telecom/i.test(s) ||
+    // Ethio Telecom / Telebirr short codes seen on live payment SMS.
+    s === '127' ||
+    s === '6040' ||
+    s === '8282' ||
+    s === '8978'
   );
 }
 

@@ -108,14 +108,25 @@ export function BranchTransactions() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Normalise to whole-day boundaries so the selected end-day is inclusive
+  // (the date picker returns clicked days at midnight, which would otherwise
+  // drop the entire end-day and return an empty list).
+  const { fromParam, toParam } = useMemo(() => {
+    const s = new Date(startDate);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(endDate);
+    e.setHours(23, 59, 59, 999);
+    return { fromParam: toIso(s), toParam: toIso(e) };
+  }, [startDate, endDate]);
+
   useEffect(() => {
     if (!isAuth || !canView) return;
     let cancelled = false;
     setLoading(true);
     txApi
       .listTransactions('branch', {
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: fromParam,
+        to: toParam,
         type: TYPE_TO_VALUE[selectedType] ?? undefined,
         status: STATUS_TO_VALUE[selectedStatus] ?? undefined,
         phone: phoneNumber || undefined,
@@ -154,8 +165,8 @@ export function BranchTransactions() {
   }, [
     isAuth,
     canView,
-    startDate,
-    endDate,
+    fromParam,
+    toParam,
     selectedBranch,
     selectedCashier,
     selectedType,

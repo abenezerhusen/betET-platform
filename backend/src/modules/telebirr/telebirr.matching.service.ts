@@ -53,7 +53,13 @@ export interface MatchPaymentResult {
   /** Deposit request that resolved the match (if any). */
   depositRequestId: string | null;
   matchedUserId: string | null;
-  strategy: 'reference_code' | 'amount_phone' | 'amount_window' | 'none' | null;
+  strategy:
+    | 'claimed_ref'
+    | 'reference_code'
+    | 'amount_phone'
+    | 'amount_window'
+    | 'none'
+    | null;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -266,7 +272,7 @@ async function applyMatchTimeFraudGuards(
 
 interface MatchedDecision {
   kind: 'matched';
-  strategy: 'reference_code' | 'amount_phone' | 'amount_window';
+  strategy: 'claimed_ref' | 'reference_code' | 'amount_phone' | 'amount_window';
   userId: string;
   depositRequestId: string | null;
 }
@@ -298,6 +304,32 @@ async function runMatchingStrategies(
   ctx: MatchPaymentContext
 ): Promise<MatchDecision> {
   return withTenantClient({ tenantId: ctx.tenantId }, async (client) => {
+    // ─────────────────────────────────────────────────────────────────────
+    // Strategy 0 — USER-CLAIMED TELEBIRR REFERENCE (most reliable of all).
+    //
+    // The player pasted the real Telebirr transaction reference into the
+    // user panel; it is stored on their waiting deposit request. Telebirr
+    // refs are globally unique per payment, so an exact match uniquely and
+    // unambiguously identifies the depositing user. The credited amount is
+    // always the real SMS amount, so an amount typo on the request is
+    // harmless.
+    // ─────────────────────────────────────────────────────────────────────
+    if (parsed.telebirrRef) {
+      const claimed = await repo.findOpenDepositRequestByClaimedRef(
+        client,
+        ctx.tenantId,
+        parsed.telebirrRef
+      );
+      if (claimed) {
+        return {
+          kind: 'matched',
+          strategy: 'claimed_ref',
+          userId: claimed.user_id,
+          depositRequestId: claimed.id,
+        };
+      }
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Strategy 1 — REFERENCE CODE MATCH (most reliable).
     // ─────────────────────────────────────────────────────────────────────
@@ -568,6 +600,35 @@ async function creditMatch(
     },
     { bypassRls: true }
   );
+
+  // Reconcile the legacy p2p_deposits approval-queue row (created by the
+  // agent batch pipeline for the same SMS). An auto-matched, successfully
+  // credited deposit must NOT sit in the manual approval queue — admins
+  // should only action UNMATCHED deposits. Best-effort: never rolls back
+  // the (already committed) credit.
+  if (parsed.telebirrRef) {
+    try {
+      await withTenantClient(
+        { tenantId: ctx.tenantId, bypassRls: true },
+        async (client) =>
+          client.query(
+            `UPDATE p2p_deposits
+                SET status = 'approved',
+                    user_id = COALESCE(user_id, $2),
+                    approved_at = COALESCE(approved_at, now())
+              WHERE tenant_id = $1
+                AND telebirr_ref = $3
+                AND status = 'pending'`,
+            [ctx.tenantId, decision.userId, parsed.telebirrRef]
+          )
+      );
+    } catch (err) {
+      logger.warn(
+        { err, tenantId: ctx.tenantId, telebirr_ref: parsed.telebirrRef },
+        'telebirr: failed to reconcile p2p_deposits queue row after auto-credit'
+      );
+    }
+  }
 
   emitDepositConfirmed(ctx.tenantId, decision.userId, {
     amount: String(parsed.amount),
@@ -932,8 +993,10 @@ function duplicateResult(parsed: ParsedSms): MatchPaymentResult {
  */
 export interface ConfirmManualMatchInput {
   /** Performer of the action. `'cashier'` for /api/cashier flows,
-   *  `'telebirr_agent'` when the device performs a self-confirm. */
-  actorType: 'telebirr_agent' | 'cashier' | 'admin';
+   *  `'telebirr_agent'` when the device performs a self-confirm,
+   *  `'user'` when the depositing player self-confirms via the claimed
+   *  Telebirr reference (the SMS had already arrived at initiate time). */
+  actorType: 'telebirr_agent' | 'cashier' | 'admin' | 'user';
   /** id of the actor (agentId / cashierId / adminId). */
   actorId: string;
   ip: string | null;

@@ -112,7 +112,7 @@ export function RoleSettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg p-6 w-full max-w-[800px] mx-4 max-h-[80vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6 sticky top-0 bg-white z-10 pb-4">
           <div className="flex items-center space-x-2">

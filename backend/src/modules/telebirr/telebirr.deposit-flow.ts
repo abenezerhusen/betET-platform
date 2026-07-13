@@ -44,6 +44,14 @@ export interface InitiateTelebirrDepositInput {
   userId: string;
   /** Decimal string. */
   amount: string;
+  /**
+   * Real Telebirr transaction reference pasted by the user. When provided,
+   * it is stored on the request and used as the primary (Strategy 0) match
+   * key against the agent SMS's parsed ref.
+   */
+  claimedTelebirrRef?: string | null;
+  /** Base64 data URL of the payment screenshot (evidence for verification). */
+  screenshotUrl?: string | null;
   ip: string | null;
   userAgent: string | null;
 }
@@ -117,6 +125,22 @@ export async function initiateTelebirrDeposit(
           expires_at: open.expires_at.toISOString(),
         }
       );
+    }
+
+    // Reject a reference that another open request already claims, so two
+    // users can never race to claim the same Telebirr payment.
+    if (input.claimedTelebirrRef) {
+      const available = await repo.isClaimedRefAvailable(
+        client,
+        input.tenantId,
+        input.claimedTelebirrRef
+      );
+      if (!available) {
+        throw new BadRequestError(
+          'This Telebirr reference is already being processed for another deposit.',
+          { reason: 'reference_already_claimed' }
+        );
+      }
     }
 
     const cutoff = new Date(Date.now() - AGENT_ONLINE_WINDOW_MS);
@@ -206,6 +230,8 @@ export async function initiateTelebirrDeposit(
       telebirrNumber: agent.telebirr_number,
       referenceCode,
       expiresAt,
+      claimedTelebirrRef: input.claimedTelebirrRef ?? null,
+      screenshotUrl: input.screenshotUrl ?? null,
     });
 
     return {

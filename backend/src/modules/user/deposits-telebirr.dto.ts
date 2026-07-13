@@ -12,6 +12,33 @@ const moneySchema = z
 
 export const initiateDepositSchema = z.object({
   amount: moneySchema,
+  /**
+   * Real Telebirr transaction reference the user pasted from their own
+   * Telebirr SMS (the `Ref:` value). Optional: when supplied the backend
+   * confirms the deposit by matching it against the agent SMS's parsed ref.
+   * Telebirr refs are short alphanumeric strings; keep it lenient but bounded.
+   */
+  telebirr_reference: z
+    .string()
+    .trim()
+    .min(4)
+    .max(64)
+    .regex(/^[A-Za-z0-9-]+$/, 'Invalid Telebirr reference')
+    .optional(),
+  /**
+   * Payment screenshot as a base64 data URL (image/*) or an http(s) URL.
+   * Stored as evidence for verification. Bounded to stay well under the
+   * 25mb JSON body limit.
+   */
+  screenshot_url: z
+    .string()
+    .trim()
+    .max(15_000_000)
+    .refine(
+      (v) => /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(v) || /^https?:\/\//.test(v),
+      'Screenshot must be an image data URL or http(s) URL'
+    )
+    .optional(),
 });
 export type InitiateDepositInput = z.infer<typeof initiateDepositSchema>;
 

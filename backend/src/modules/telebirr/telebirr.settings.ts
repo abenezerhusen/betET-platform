@@ -93,7 +93,7 @@ export const TELEBIRR_DEFAULTS: TelebirrSettings = {
   max_daily_agent_volume: 500_000,
   sender_phone_velocity_max: 5,
   sender_phone_velocity_window_minutes: 60,
-  approved_sender_ids: ['Telebirr', 'TELEBIRR', 'telebirr', '8978'],
+  approved_sender_ids: ['Telebirr', 'TELEBIRR', 'telebirr', '127', '8978', '6040', '8282'],
   refcode_brute_force_max: 20,
   refcode_brute_force_window_minutes: 60,
   reconciliation_variance_threshold: 100,

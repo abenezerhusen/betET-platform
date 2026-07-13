@@ -54,6 +54,12 @@ export interface TelebirrDepositRequestRow {
   amount: string;
   telebirr_number: string;
   reference_code: string;
+  /**
+   * The real Telebirr transaction reference the user pasted from their own
+   * Telebirr SMS. When set, the matcher confirms this request by exact
+   * equality against the agent SMS's parsed `telebirr_ref`.
+   */
+  claimed_telebirr_ref: string | null;
   expires_at: Date;
   status: string;
   matched_transaction_id: string | null;
@@ -101,7 +107,7 @@ export interface WalletLedgerRow {
 
 const SELECT_DEPOSIT_REQUEST = `
   id, tenant_id, user_id, amount, telebirr_number, reference_code,
-  expires_at, status, matched_transaction_id, created_at
+  claimed_telebirr_ref, expires_at, status, matched_transaction_id, created_at
 `;
 
 const SELECT_TELEBIRR_TX = `
@@ -635,13 +641,17 @@ export async function insertDepositRequest(
     telebirrNumber: string;
     referenceCode: string;
     expiresAt: Date;
+    claimedTelebirrRef?: string | null;
+    /** Base64 data URL of the payment screenshot (evidence). Kept out of the
+     *  hot projection; read on demand for review. */
+    screenshotUrl?: string | null;
   }
 ): Promise<TelebirrDepositRequestRow> {
   const r = await client.query<TelebirrDepositRequestRow>(
     `INSERT INTO telebirr_deposit_requests
        (tenant_id, user_id, amount, telebirr_number, reference_code,
-        expires_at, status)
-     VALUES ($1, $2, $3::numeric, $4, $5, $6, 'waiting')
+        claimed_telebirr_ref, screenshot_url, expires_at, status)
+     VALUES ($1, $2, $3::numeric, $4, $5, $6, $7, $8, 'waiting')
      RETURNING ${SELECT_DEPOSIT_REQUEST}`,
     [
       params.tenantId,
@@ -649,10 +659,76 @@ export async function insertDepositRequest(
       params.amount,
       params.telebirrNumber,
       params.referenceCode,
+      params.claimedTelebirrRef ?? null,
+      params.screenshotUrl ?? null,
       params.expiresAt,
     ]
   );
   return r.rows[0];
+}
+
+/**
+ * Read the payment screenshot for a deposit request (operator review). Kept
+ * separate from the hot projection so the base64 blob is only fetched when
+ * explicitly needed.
+ */
+export async function findDepositRequestScreenshot(
+  client: PoolClient,
+  tenantId: string,
+  requestId: string
+): Promise<string | null> {
+  const r = await client.query<{ screenshot_url: string | null }>(
+    `SELECT screenshot_url FROM telebirr_deposit_requests
+      WHERE tenant_id = $1 AND id = $2 LIMIT 1`,
+    [tenantId, requestId]
+  );
+  return r.rows[0]?.screenshot_url ?? null;
+}
+
+/**
+ * Strategy 0: exact match on the user-submitted Telebirr reference. Locks
+ * the request row so concurrent SMS arrivals can't double-confirm.
+ */
+export async function findOpenDepositRequestByClaimedRef(
+  client: PoolClient,
+  tenantId: string,
+  telebirrRef: string
+): Promise<TelebirrDepositRequestRow | null> {
+  const r = await client.query<TelebirrDepositRequestRow>(
+    `SELECT ${SELECT_DEPOSIT_REQUEST}
+       FROM telebirr_deposit_requests
+      WHERE tenant_id = $1
+        AND claimed_telebirr_ref = $2
+        AND status = 'waiting'
+        AND expires_at > now()
+      ORDER BY created_at ASC
+      LIMIT 1
+      FOR UPDATE`,
+    [tenantId, telebirrRef]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
+ * True when no OPEN (waiting, unexpired) deposit request already claims the
+ * given Telebirr reference — used to reject duplicate claims at initiate.
+ */
+export async function isClaimedRefAvailable(
+  client: PoolClient,
+  tenantId: string,
+  telebirrRef: string
+): Promise<boolean> {
+  const r = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1 FROM telebirr_deposit_requests
+        WHERE tenant_id = $1
+          AND claimed_telebirr_ref = $2
+          AND status = 'waiting'
+          AND expires_at > now()
+     ) AS exists`,
+    [tenantId, telebirrRef]
+  );
+  return !r.rows[0].exists;
 }
 
 export async function cancelDepositRequest(
