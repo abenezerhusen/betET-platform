@@ -77,6 +77,30 @@ export interface TelebirrSettings {
    *  manually processed by a cashier and require staffing — a tenant
    *  must opt in explicitly before users can request payouts. */
   withdrawal_enabled: boolean;
+
+  /** USSD template the paired phone dials to send a Telebirr payout.
+   *  Tokens {recipient}, {amount}, {pin} are substituted server-side
+   *  when a withdraw command is dispatched. Kept configurable so the
+   *  exact Telebirr send-money code can be tuned WITHOUT rebuilding the
+   *  Android app. (Legacy one-shot path; superseded by the interactive
+   *  menu flow below on devices with the accessibility automation.) */
+  withdrawal_ussd_template: string;
+
+  /* ------------------------------------------------------------------- */
+  /* Interactive USSD menu flow (multi-step Telebirr "send money")        */
+  /* ------------------------------------------------------------------- */
+
+  /** The USSD code that opens the Telebirr menu (default `*127#`). */
+  withdrawal_ussd_initial: string;
+
+  /** Ordered list of replies the phone types into each successive USSD
+   *  menu prompt. Tokens {recipient}, {amount}, {comment}, {pin} are
+   *  substituted at dispatch time. Configurable so menu changes are
+   *  fixed in admin/DB WITHOUT rebuilding the app. */
+  withdrawal_ussd_steps: string[];
+
+  /** The value typed into the "comment/reason" step (default `fee`). */
+  withdrawal_ussd_comment: string;
 }
 
 export const TELEBIRR_DEFAULTS: TelebirrSettings = {
@@ -100,6 +124,25 @@ export const TELEBIRR_DEFAULTS: TelebirrSettings = {
 
   p2p_enabled: true,
   withdrawal_enabled: false,
+  // Telebirr send-money one-shot USSD. Adjust in admin/DB to match the exact
+  // code for this SIM/telecom. Tokens are replaced at dispatch time.
+  withdrawal_ussd_template: '*127*1*{recipient}*{amount}*{pin}#',
+  // Interactive Telebirr "send money" menu flow. Default reflects the
+  // observed live sequence: *127# -> 2 -> 1 -> 1 (by phone) -> recipient ->
+  // 1 (confirm) -> amount -> comment -> 1 (confirm) -> PIN.
+  withdrawal_ussd_initial: '*127#',
+  withdrawal_ussd_steps: [
+    '2',
+    '1',
+    '1',
+    '{recipient}',
+    '1',
+    '{amount}',
+    '{comment}',
+    '1',
+    '{pin}',
+  ],
+  withdrawal_ussd_comment: 'fee',
 };
 
 export const TELEBIRR_SETTINGS_KEY = 'telebirr';
@@ -222,7 +265,83 @@ function mergeWithDefaults(
       raw.withdrawal_enabled,
       TELEBIRR_DEFAULTS.withdrawal_enabled
     ),
+    withdrawal_ussd_template:
+      typeof raw.withdrawal_ussd_template === 'string' &&
+      raw.withdrawal_ussd_template.trim().length > 0
+        ? raw.withdrawal_ussd_template.trim()
+        : TELEBIRR_DEFAULTS.withdrawal_ussd_template,
+    withdrawal_ussd_initial:
+      typeof raw.withdrawal_ussd_initial === 'string' &&
+      raw.withdrawal_ussd_initial.trim().length > 0
+        ? raw.withdrawal_ussd_initial.trim()
+        : TELEBIRR_DEFAULTS.withdrawal_ussd_initial,
+    withdrawal_ussd_steps:
+      Array.isArray(raw.withdrawal_ussd_steps) &&
+      raw.withdrawal_ussd_steps.length > 0 &&
+      raw.withdrawal_ussd_steps.every((s) => typeof s === 'string')
+        ? raw.withdrawal_ussd_steps.map((s) => String(s))
+        : [...TELEBIRR_DEFAULTS.withdrawal_ussd_steps],
+    withdrawal_ussd_comment:
+      typeof raw.withdrawal_ussd_comment === 'string' &&
+      raw.withdrawal_ussd_comment.trim().length > 0
+        ? raw.withdrawal_ussd_comment.trim()
+        : TELEBIRR_DEFAULTS.withdrawal_ussd_comment,
   };
+}
+
+/**
+ * Substitute {recipient}/{amount}/{pin} into the configured USSD template.
+ * Amount is normalised to a plain integer-or-decimal string (no thousands
+ * separators) so the dialer receives exactly what Telebirr expects.
+ */
+export function buildWithdrawalUssd(
+  template: string,
+  params: { recipient: string; amount: string | number; pin: string }
+): string {
+  // Telebirr's transfer USSD expects a plain number (e.g. `100`, or `100.5`),
+  // NOT a fixed 2-decimal string like `100.00` — the trailing `.00` makes the
+  // operator reject the request (USSD failure code -1). Normalise to the
+  // shortest exact numeric form: whole numbers lose the decimals entirely.
+  const cleaned = String(params.amount).replace(/[^0-9.]/g, '');
+  const num = Number(cleaned);
+  const amountStr =
+    Number.isFinite(num) && num > 0 ? String(num) : cleaned;
+  return template
+    .replaceAll('{recipient}', params.recipient)
+    .replaceAll('{amount}', amountStr)
+    .replaceAll('{pin}', params.pin);
+}
+
+/** Normalise an amount for USSD input: whole numbers drop the decimals. */
+function normaliseUssdAmount(amount: string | number): string {
+  const cleaned = String(amount).replace(/[^0-9.]/g, '');
+  const num = Number(cleaned);
+  return Number.isFinite(num) && num > 0 ? String(num) : cleaned;
+}
+
+/**
+ * Resolve the interactive USSD "send money" menu flow the phone will
+ * auto-navigate: returns the initial code and the ordered list of replies
+ * with {recipient}/{amount}/{comment}/{pin} substituted.
+ */
+export function buildWithdrawalUssdFlow(
+  settings: Pick<
+    TelebirrSettings,
+    | 'withdrawal_ussd_initial'
+    | 'withdrawal_ussd_steps'
+    | 'withdrawal_ussd_comment'
+  >,
+  params: { recipient: string; amount: string | number; pin: string }
+): { initial: string; steps: string[] } {
+  const amountStr = normaliseUssdAmount(params.amount);
+  const steps = settings.withdrawal_ussd_steps.map((s) =>
+    s
+      .replaceAll('{recipient}', params.recipient)
+      .replaceAll('{amount}', amountStr)
+      .replaceAll('{comment}', settings.withdrawal_ussd_comment)
+      .replaceAll('{pin}', params.pin)
+  );
+  return { initial: settings.withdrawal_ussd_initial, steps };
 }
 
 function sanitiseSenderList(raw: unknown): string[] {

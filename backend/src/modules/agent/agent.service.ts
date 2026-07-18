@@ -24,6 +24,7 @@ import {
 } from '../telebirr/telebirr.fraud';
 import { loadTelebirrSettings } from '../telebirr/telebirr.settings';
 import * as telebirrRepo from '../telebirr/telebirr.repository';
+import { drainWithdrawalQueue } from '../telebirr/telebirr.withdrawal.service';
 
 import * as repo from './agent.repository';
 import {
@@ -450,8 +451,10 @@ export async function heartbeat(
               payload
          FROM p2p_commands
         WHERE status = 'pending'
+          AND (agent_id = $1 OR agent_id IS NULL)
         ORDER BY created_at ASC
-        LIMIT 20`
+        LIMIT 20`,
+      [agentId]
     );
     return {
       pending,
@@ -806,9 +809,15 @@ export async function getStatus(
     const pending = await repo.countTenantPendingTelebirr(client, tenantId);
 
     // Wallet figures identical to the admin "Wallet Devices" card:
-    //   pre_deposit      = net of confirmed swaps (fallback to stored balance)
-    //   total_capacity   = pre_deposit * (1 + commission%)
-    //   available_capacity = total_capacity (matches the admin card)
+    //   pre_deposit        = agent's pre-funded base (manual top-up swaps),
+    //                        falling back to the SIM-reported balance when no
+    //                        manual swap has been booked yet.
+    //   total_capacity     = pre_deposit * (1 + commission%)
+    //   available_capacity = total_capacity - credited deposits + withdrawal
+    //                        swaps. This is the live pre-deposit "pool": every
+    //                        user deposit consumes headroom, and every paid-out
+    //                        withdrawal (booked as a withdrawal swap) restores
+    //                        it, so the agent never needs to re-deposit.
     // Read-only; any failure degrades to balance-based values so the status
     // poll the app relies on is never broken.
     const balanceNum = Number(agent.balance) || 0;
@@ -820,18 +829,29 @@ export async function getStatus(
       available_capacity: '0',
     };
     try {
-      const swapRes = await client.query<{ pre_deposit: string | null }>(
-        `SELECT SUM(CASE WHEN source = 'manual'     AND status = 'added' THEN amount
-                         WHEN source = 'withdrawal' AND status = 'added' THEN -amount
-                         ELSE 0 END)::text AS pre_deposit
-           FROM p2p_swaps
-          WHERE agent_id = $1 AND tenant_id = $2`,
+      const capRes = await client.query<{
+        pre_deposit: string | null;
+        wd_swaps: string | null;
+        deposits: string | null;
+      }>(
+        `SELECT
+           (SELECT SUM(amount) FROM p2p_swaps
+              WHERE agent_id = $1 AND tenant_id = $2
+                AND source = 'manual' AND status = 'added')::text     AS pre_deposit,
+           (SELECT COALESCE(SUM(amount), 0) FROM p2p_swaps
+              WHERE agent_id = $1 AND tenant_id = $2
+                AND source = 'withdrawal' AND status = 'added')::text  AS wd_swaps,
+           (SELECT COALESCE(SUM(amount), 0) FROM telebirr_transactions
+              WHERE agent_id = $1 AND tenant_id = $2
+                AND status IN ('matched', 'credited'))::text           AS deposits`,
         [agentId, tenantId]
       );
       const preDeposit =
-        swapRes.rows[0]?.pre_deposit != null
-          ? Number(swapRes.rows[0].pre_deposit)
+        capRes.rows[0]?.pre_deposit != null
+          ? Number(capRes.rows[0].pre_deposit)
           : balanceNum;
+      const wdSwaps = Number(capRes.rows[0]?.wd_swaps ?? 0) || 0;
+      const depositsTotal = Number(capRes.rows[0]?.deposits ?? 0) || 0;
 
       const commRes = await client.query<{ deposit_pct: string | null }>(
         `SELECT deposit_pct::text AS deposit_pct
@@ -858,12 +878,24 @@ export async function getStatus(
       if (!Number.isFinite(commission)) commission = 2.5;
 
       const totalCapacity = Math.round(preDeposit * (1 + commission / 100));
+      const availableCapacity = Math.max(
+        Math.round(totalCapacity - depositsTotal + wdSwaps),
+        0
+      );
+      // Live cash the agent actually holds: seed pre-deposit + deposits
+      // received from users - withdrawals paid out (booked as withdrawal
+      // swaps). Moves up on every deposit and down on every payout, and is
+      // clamped at 0 so it can never show negative.
+      const liveBalance = Math.max(
+        Math.round(preDeposit + depositsTotal - wdSwaps),
+        0
+      );
       wallet = {
-        balance: agent.balance,
+        balance: String(liveBalance),
         commission_rate: String(commission),
         pre_deposit: String(Math.round(preDeposit)),
         total_capacity: String(totalCapacity),
-        available_capacity: String(totalCapacity),
+        available_capacity: String(availableCapacity),
       };
     } catch {
       /* keep balance-based fallback */
@@ -886,6 +918,189 @@ export async function getStatus(
       server_time: new Date().toISOString(),
     };
   });
+}
+
+/* ------------------------------------------------------------------------- */
+/* Command result (USSD / withdrawal automation)                             */
+/* ------------------------------------------------------------------------- */
+
+export interface CommandResultOutcome {
+  ok: true;
+  withdrawal_completed: boolean;
+  swap_created: boolean;
+  withdrawal_reverted: boolean;
+}
+
+/**
+ * Record the result the agent device reports for a queued command
+ * (`PATCH /api/agent/commands/:id`). Runs in a single transaction so the
+ * command update and its side effects commit atomically.
+ *
+ * For a successful `withdraw` command we automatically:
+ *   1. mark the linked telebirr withdrawal request `completed`,
+ *   2. flip the user's pending debit ledger row to `completed`, and
+ *   3. book a `withdrawal` swap that restores the agent's available
+ *      capacity (the "swap" — agent paid out, so headroom returns).
+ *
+ * This makes the end-to-end withdrawal + capacity restoration fully
+ * automatic once the USSD transfer succeeds on the device, with no manual
+ * admin step required. A missing/foreign command id is a no-op.
+ */
+export async function recordCommandResult(
+  agentId: string,
+  tenantId: string,
+  commandId: string,
+  status: 'success' | 'failed',
+  result: Record<string, unknown> | undefined
+): Promise<CommandResultOutcome> {
+  const outcome = await withTenantClient(
+    { tenantId, bypassRls: true },
+    async (client) => {
+    const cmdRes = await client.query<{
+      id: string;
+      kind: string;
+      agent_id: string | null;
+      payload: Record<string, unknown> | null;
+    }>(
+      `UPDATE p2p_commands
+          SET status = $2,
+              result = COALESCE($3::jsonb, result),
+              executed_at = now()
+        WHERE id = $1 AND agent_id = $4
+        RETURNING id, kind, agent_id, payload`,
+      [commandId, status, result ? JSON.stringify(result) : null, agentId]
+    );
+
+    const cmd = cmdRes.rows[0];
+    const outcome: CommandResultOutcome = {
+      ok: true,
+      withdrawal_completed: false,
+      swap_created: false,
+      withdrawal_reverted: false,
+    };
+    if (!cmd) return outcome; // unknown command or not owned by this agent
+
+    if (cmd.kind !== 'withdraw') return outcome;
+
+    const withdrawalId =
+      typeof cmd.payload?.withdrawal_id === 'string'
+        ? cmd.payload.withdrawal_id
+        : null;
+    if (!withdrawalId) return outcome;
+
+    // USSD failed on the device: revert the withdrawal and refund the user so
+    // their money is not stuck and they can request again. Without this the
+    // request stays 'processing' forever ("you already have an open request")
+    // and the debited funds are never returned.
+    if (status !== 'success') {
+      const rev = await client.query<{
+        id: string;
+        amount: string;
+        debit_transaction_id: string | null;
+      }>(
+        `UPDATE telebirr_withdrawal_requests
+            SET status = 'failed',
+                completed_at = now()
+          WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'processing')
+          RETURNING id, amount::text AS amount, debit_transaction_id`,
+        [withdrawalId, tenantId]
+      );
+      const r = rev.rows[0];
+      if (!r) return outcome; // already resolved elsewhere
+      if (r.debit_transaction_id) {
+        const txRes = await client.query<{ wallet_id: string }>(
+          `SELECT wallet_id FROM transactions WHERE id = $1`,
+          [r.debit_transaction_id]
+        );
+        const walletId = txRes.rows[0]?.wallet_id ?? null;
+        if (walletId) {
+          await client.query(
+            `UPDATE wallets
+                SET withdrawable_balance = withdrawable_balance + $2::numeric,
+                    version = version + 1,
+                    updated_at = now()
+              WHERE id = $1`,
+            [walletId, r.amount]
+          );
+        }
+        await client.query(
+          `UPDATE transactions SET status = 'failed' WHERE id = $1`,
+          [r.debit_transaction_id]
+        );
+      }
+      outcome.withdrawal_reverted = true;
+      return outcome;
+    }
+
+    const telebirrRef =
+      (typeof result?.telebirr_ref === 'string' && result.telebirr_ref) ||
+      (typeof result?.ref === 'string' && result.ref) ||
+      null;
+
+    // Complete the withdrawal (pending/processing -> completed).
+    const wr = await client.query<{
+      id: string;
+      amount: string;
+      user_id: string;
+      debit_transaction_id: string | null;
+    }>(
+      `UPDATE telebirr_withdrawal_requests
+          SET status = 'completed',
+              telebirr_ref = COALESCE($3, telebirr_ref),
+              completed_at = now()
+        WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'processing')
+        RETURNING id, amount::text AS amount, user_id, debit_transaction_id`,
+      [withdrawalId, tenantId, telebirrRef]
+    );
+    const w = wr.rows[0];
+    if (!w) return outcome; // already completed/rejected elsewhere
+    outcome.withdrawal_completed = true;
+
+    // Flip the user's pending debit ledger row to completed (money is gone).
+    if (w.debit_transaction_id) {
+      await client.query(
+        `UPDATE transactions
+            SET status = 'completed'
+          WHERE id = $1`,
+        [w.debit_transaction_id]
+      );
+    }
+
+    // Book the capacity-restoring withdrawal swap for the agent.
+    if (cmd.agent_id) {
+      await client.query(
+        `INSERT INTO p2p_swaps (
+           tenant_id, agent_id, amount, source, status,
+           ref_user_id, ref_withdrawal_id, note
+         ) VALUES ($1, $2, $3, 'withdrawal', 'added', $4, $5, $6)`,
+        [
+          tenantId,
+          cmd.agent_id,
+          w.amount,
+          w.user_id,
+          withdrawalId,
+          'auto swap on USSD withdrawal success',
+        ]
+      );
+      outcome.swap_created = true;
+    }
+
+    return outcome;
+    }
+  );
+
+  // A wallet just freed up (this command finished, success or failure). Push
+  // the next queued withdrawal(s) to any now-free online wallet so requests
+  // that were waiting behind this one proceed step by step. Best-effort.
+  if (outcome.withdrawal_completed || outcome.withdrawal_reverted) {
+    try {
+      await drainWithdrawalQueue(tenantId);
+    } catch (e) {
+      logger.warn({ e, tenantId }, 'drainWithdrawalQueue failed');
+    }
+  }
+
+  return outcome;
 }
 
 /* ------------------------------------------------------------------------- */

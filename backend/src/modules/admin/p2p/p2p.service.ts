@@ -6,6 +6,12 @@ import { tryAudit } from '../../audit/audit.service';
 import { emitToAdmins, emitToUser, emitWalletUpdated } from '../../../realtime/socket';
 import * as walletRepo from '../wallets/wallets.repository';
 import { getAdminScope, getIp, getUa, requireScopedTenantId } from '../admin-shared';
+import { sealSecret, openSecret } from '../../../infrastructure/crypto/secret-cipher';
+import {
+  loadTelebirrSettings,
+  buildWithdrawalUssd,
+  buildWithdrawalUssdFlow,
+} from '../../telebirr/telebirr.settings';
 import * as repo from './p2p.repository';
 import {
   sendEmailBestEffort,
@@ -38,6 +44,7 @@ import type {
   ToggleSubAccountInput,
   TopUpInput,
   UpdateCommandStatusInput,
+  UpdateUssdPinInput,
   UpdateOperatorInput,
   UpdateP2pSettingsInput,
   UpdateWalletDeviceInput,
@@ -231,6 +238,9 @@ export async function registerWalletDevice(
         agent_name: input.name,
         telebirr_number: input.telebirr_number,
         device_id: deviceId,
+        ussd_pin_encrypted: input.ussd_pin
+          ? sealSecret(input.ussd_pin)
+          : null,
       });
       // Initial pre-deposit booked as a "manual" swap row.
       const swap = await repo.createSwap(client, tenantId, {
@@ -266,6 +276,41 @@ export async function registerWalletDevice(
   emitToAdmins(tenantId, 'P2P_WALLET_DEVICE_REGISTERED', { agent: result.agent });
 
   return result;
+}
+
+export async function setWalletUssdPin(
+  req: Request,
+  id: string,
+  input: UpdateUssdPinInput
+) {
+  const scope = getAdminScope(req);
+  await withTenantClient(
+    { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      const before = await repo.getAgent(client, id);
+      if (!before) throw new NotFoundError('Wallet device not found');
+      const updated = await repo.setAgentUssdPin(
+        client,
+        id,
+        sealSecret(input.pin)
+      );
+      if (!updated) throw new NotFoundError('Wallet device not found');
+      audit({
+        tenantId: before.tenant_id,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'p2p.wallet_device.set_ussd_pin',
+        resource: 'telebirr_agents',
+        resourceId: id,
+        // Never log the PIN itself.
+        after: { ussd_pin_set: true },
+        status: 'success',
+        ip: getIp(req),
+        userAgent: getUa(req),
+      });
+    }
+  );
+  return { ok: true, agent_id: id };
 }
 
 export async function updateWalletDevice(
@@ -889,6 +934,58 @@ export async function setApprovalThreshold(
   );
 }
 
+/**
+ * Build the enriched `withdraw` command payload: the recipient phone,
+ * amount, and a ready-to-dial USSD string (with the wallet's decrypted PIN
+ * substituted). Falls back to a minimal payload if the withdrawal row or
+ * PIN is unavailable so the command is still queued.
+ */
+async function buildWithdrawCommandPayload(
+  client: import('pg').PoolClient,
+  tenantId: string,
+  withdrawalId: string,
+  agentId: string
+): Promise<Record<string, unknown>> {
+  const wr = await client.query<{ amount: string; telebirr_number: string; account_name: string }>(
+    `SELECT amount::text AS amount, telebirr_number, account_name
+       FROM telebirr_withdrawal_requests
+      WHERE id = $1 AND tenant_id = $2`,
+    [withdrawalId, tenantId]
+  );
+  const w = wr.rows[0];
+  if (!w) return { withdrawal_id: withdrawalId };
+
+  let pin = '';
+  try {
+    const sealed = await repo.getAgentUssdPinEncrypted(client, agentId);
+    pin = sealed ? openSecret(sealed) : '';
+  } catch {
+    pin = '';
+  }
+  const settings = await loadTelebirrSettings(client, tenantId);
+  const ussd = buildWithdrawalUssd(settings.withdrawal_ussd_template, {
+    recipient: w.telebirr_number,
+    amount: w.amount,
+    pin,
+  });
+  const flow = buildWithdrawalUssdFlow(settings, {
+    recipient: w.telebirr_number,
+    amount: w.amount,
+    pin,
+  });
+  return {
+    withdrawal_id: withdrawalId,
+    amount: w.amount,
+    telebirr_number: w.telebirr_number,
+    recipient_phone: w.telebirr_number,
+    account_name: w.account_name,
+    ussd,
+    ussd_initial: flow.initial,
+    ussd_steps: flow.steps,
+    has_pin: pin.length > 0,
+  };
+}
+
 export async function approveWithdrawal(
   req: Request,
   withdrawalId: string,
@@ -908,10 +1005,16 @@ export async function approveWithdrawal(
 
       // Optionally enqueue a USSD command for the agent.
       if (input.agent_id) {
+        const payload = await buildWithdrawCommandPayload(
+          client,
+          r.rows[0].tenant_id,
+          withdrawalId,
+          input.agent_id
+        );
         await repo.createCommand(client, r.rows[0].tenant_id, {
           agent_id: input.agent_id,
           kind: 'withdraw',
-          payload: { withdrawal_id: withdrawalId },
+          payload,
           reference: withdrawalId,
           issued_by: scope.actorId,
         });
@@ -1002,10 +1105,16 @@ export async function switchWithdrawalWallet(
            WHERE reference = $1 AND status IN ('pending','sent','executing')`,
         [withdrawalId]
       );
+      const payload = await buildWithdrawCommandPayload(
+        client,
+        tenantId,
+        withdrawalId,
+        input.agent_id
+      );
       const cmd = await repo.createCommand(client, tenantId, {
         agent_id: input.agent_id,
         kind: 'withdraw',
-        payload: { withdrawal_id: withdrawalId, switched: true },
+        payload: { ...payload, switched: true },
         reference: withdrawalId,
         issued_by: scope.actorId,
       });

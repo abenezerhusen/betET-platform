@@ -56,8 +56,10 @@ export const withdrawalSwapSchema = z.object({
 export type WithdrawalSwapInput = z.infer<typeof withdrawalSwapSchema>;
 
 export const updateUssdPinSchema = z.object({
-  current_pin: z.string().trim().min(4).max(16),
-  new_pin: z.string().trim().min(4).max(16),
+  // Simplified: this field IS the Telebirr USSD PIN tied to the wallet
+  // device. No current/new/confirm dance — the operator just sets the PIN
+  // the phone app will use to execute USSD payouts.
+  pin: z.string().trim().regex(/^\d{4,16}$/, 'PIN must be 4-16 digits'),
 });
 export type UpdateUssdPinInput = z.infer<typeof updateUssdPinSchema>;
 

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/config/app_config.dart';
 import '../../core/storage/secure_store.dart';
 import '../../data/api_client.dart';
+import '../../services/native_control.dart';
 import '../../services/permissions_service.dart';
 import '../auth/auth_controller.dart';
 
@@ -24,6 +25,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _savingUrl = false;
   bool _testing = false;
   bool _updatingPassword = false;
+  bool _ussdA11yEnabled = false;
+  bool _overlayEnabled = false;
   String? _testMsg;
   String? _passwordMsg;
 
@@ -32,6 +35,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.initState();
     final cfg = ref.read(appConfigProvider).valueOrNull;
     if (cfg != null) _backendUrlCtrl.text = cfg.backendUrl;
+    _refreshA11yStatus();
+  }
+
+  Future<void> _refreshA11yStatus() async {
+    final enabled = await NativeControl.isUssdAccessibilityEnabled();
+    final overlay = await NativeControl.canDrawOverlays();
+    if (!mounted) return;
+    setState(() {
+      _ussdA11yEnabled = enabled;
+      _overlayEnabled = overlay;
+    });
   }
 
   @override
@@ -239,6 +253,110 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       );
                     },
                     child: const Text('Request / Fix Permissions'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'USSD Automation',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: (_ussdA11yEnabled ? Colors.green : Colors.red)
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _ussdA11yEnabled ? 'Enabled' : 'Disabled',
+                          style: TextStyle(
+                            color:
+                                _ussdA11yEnabled ? Colors.green : Colors.red,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Required to auto-complete Telebirr send-money withdrawals. '
+                    'Turn on "BirrPay USSD Automation" under Accessibility, then '
+                    'come back and refresh.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: () async {
+                          await NativeControl.openAccessibilitySettings();
+                        },
+                        child: const Text('Open Accessibility Settings'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonal(
+                        onPressed: _refreshA11yStatus,
+                        child: const Text('Refresh'),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 28),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Hide USSD screen (run in background)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: (_overlayEnabled ? Colors.green : Colors.red)
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _overlayEnabled ? 'On' : 'Off',
+                          style: TextStyle(
+                            color: _overlayEnabled ? Colors.green : Colors.red,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Covers the Telebirr menu with a "Processing…" screen so the '
+                    'withdrawal runs out of sight. Enable "Display over other apps".',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: () async {
+                      await NativeControl.openOverlaySettings();
+                    },
+                    child: const Text('Open Display-Over-Apps Settings'),
                   ),
                 ],
               ),

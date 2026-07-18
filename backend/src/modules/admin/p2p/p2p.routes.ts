@@ -204,10 +204,8 @@ router.post(
   '/wallets/:id/pin',
   wrap((req) => {
     const { id } = idParamSchema.parse(req.params);
-    // Body validated even though service currently only checks shape — the
-    // PIN itself never round-trips back through API responses.
-    updateUssdPinSchema.parse(req.body);
-    return Promise.resolve({ ok: true, agent_id: id });
+    const body = updateUssdPinSchema.parse(req.body);
+    return service.setWalletUssdPin(req, id, body);
   })
 );
 

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ussd_accessibility_desc">Lets BirrPay automatically complete Telebirr send-money USSD menus for approved withdrawals. It only types the queued withdrawal steps while a payout is being processed; it does not read your other apps.</string>
+</resources>

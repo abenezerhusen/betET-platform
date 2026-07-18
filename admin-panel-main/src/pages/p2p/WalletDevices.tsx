@@ -1539,22 +1539,12 @@ export function WalletDevices() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Current USSD PIN</label>
-                <input
-                  type="password"
-                  value={pinCurrent}
-                  onChange={(e) => setPinCurrent(e.target.value)}
-                  autoComplete="off"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">New USSD PIN</label>
                 <input
                   type="password"
                   value={pinNew}
                   onChange={(e) => setPinNew(e.target.value)}
-                  placeholder="Enter new PIN"
+                  placeholder="Enter Telebirr PIN"
                   autoComplete="new-password"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -1588,18 +1578,21 @@ export function WalletDevices() {
                 type="button"
                 onClick={() => void (async () => {
                   if (!pinDevice) return;
-                  if (!pinCurrent.trim() || !pinNew.trim()) {
-                    toast('Current and new PIN are required.', 'error');
+                  if (!pinNew.trim()) {
+                    toast('PIN is required.', 'error');
+                    return;
+                  }
+                  if (!/^\d{4,16}$/.test(pinNew.trim())) {
+                    toast('PIN must be 4-16 digits.', 'error');
                     return;
                   }
                   if (pinNew !== pinConfirm) {
-                    toast('New PIN confirmation does not match.', 'error');
+                    toast('PIN confirmation does not match.', 'error');
                     return;
                   }
                   try {
                     await updateWalletUssdPin(pinDevice.id, {
-                      current_pin: pinCurrent.trim(),
-                      new_pin: pinNew.trim(),
+                      pin: pinNew.trim(),
                     });
                     toast(`PIN updated for ${pinDevice.name}.`);
                     setPinDevice(null);

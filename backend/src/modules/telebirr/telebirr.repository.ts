@@ -231,6 +231,94 @@ export async function markAgentAssigned(
 }
 
 /**
+ * Pick an ONLINE agent whose Telebirr wallet holds enough real cash to pay
+ * out a withdrawal of `amount`. Used by the auto-routed withdrawal flow so a
+ * request is only dispatched to a wallet that can actually send the money
+ * via USSD.
+ *
+ * Spendable cash follows the pre-deposit pool model:
+ *   spendable = seed_pool + deposits_received - withdrawals_paid - in_flight
+ *     seed_pool          = manual "added" swaps (fallback to agents.balance)
+ *     deposits_received  = matched/credited Telebirr transactions (cash in)
+ *     withdrawals_paid   = completed withdrawal swaps (cash out)
+ *     in_flight          = amounts of processing withdrawals already routed
+ *                          to this agent but not yet completed
+ *
+ * Selection order: admin wallet priority first, then the wallet with the
+ * most spendable cash. Returns null when no online wallet can cover it.
+ */
+export async function pickAgentForWithdrawal(
+  client: PoolClient,
+  tenantId: string,
+  amount: string,
+  lastSeenAfter: Date
+): Promise<(TelebirrAgentRow & { spendable: string }) | null> {
+  const r = await client.query<TelebirrAgentRow & { spendable: string }>(
+    `SELECT a.id, a.tenant_id, a.agent_name, a.telebirr_number,
+            a.device_id, a.status, a.balance, a.assigned_cashier_id,
+            a.created_at,
+            (COALESCE(pre.amt, a.balance::numeric, 0)
+              + COALESCE(dep.amt, 0)
+              - COALESCE(wd.amt, 0)
+              - COALESCE(inflight.amt, 0))::text AS spendable
+       FROM telebirr_agents a
+       LEFT JOIN (
+         SELECT agent_id, SUM(amount) AS amt
+           FROM p2p_swaps
+          WHERE tenant_id = $1 AND source = 'manual' AND status = 'added'
+          GROUP BY agent_id
+       ) pre ON pre.agent_id = a.id
+       LEFT JOIN (
+         SELECT agent_id, SUM(amount) AS amt
+           FROM telebirr_transactions
+          WHERE tenant_id = $1 AND status IN ('matched', 'credited')
+          GROUP BY agent_id
+       ) dep ON dep.agent_id = a.id
+       LEFT JOIN (
+         SELECT agent_id, SUM(amount) AS amt
+           FROM p2p_swaps
+          WHERE tenant_id = $1 AND source = 'withdrawal' AND status = 'added'
+          GROUP BY agent_id
+       ) wd ON wd.agent_id = a.id
+       LEFT JOIN (
+         SELECT c.agent_id, SUM(w.amount) AS amt
+           FROM p2p_commands c
+           JOIN telebirr_withdrawal_requests w
+             ON w.id = c.reference::uuid
+          WHERE c.tenant_id = $1
+            AND c.kind = 'withdraw'
+            AND c.status IN ('pending', 'sent', 'executing')
+            AND w.status = 'processing'
+          GROUP BY c.agent_id
+       ) inflight ON inflight.agent_id = a.id
+       LEFT JOIN p2p_wallet_priority wp
+              ON wp.agent_id = a.id AND wp.tenant_id = $1
+      WHERE a.tenant_id = $1
+        AND a.status = 'active'
+        AND a.last_seen_at IS NOT NULL
+        AND a.last_seen_at > $2
+        AND COALESCE(wp.enabled, true) = true
+        -- USSD is serial per phone: never route a second withdrawal to a
+        -- wallet that is already running one. Such wallets are "busy" until
+        -- their command completes; the request then queues or goes to another
+        -- online wallet.
+        AND inflight.agent_id IS NULL
+        AND (COALESCE(pre.amt, a.balance::numeric, 0)
+              + COALESCE(dep.amt, 0)
+              - COALESCE(wd.amt, 0)
+              - COALESCE(inflight.amt, 0)) >= $3::numeric
+      ORDER BY wp.priority ASC NULLS LAST,
+               (COALESCE(pre.amt, a.balance::numeric, 0)
+                 + COALESCE(dep.amt, 0)
+                 - COALESCE(wd.amt, 0)
+                 - COALESCE(inflight.amt, 0)) DESC
+      LIMIT 1`,
+    [tenantId, lastSeenAfter, amount]
+  );
+  return r.rows[0] ?? null;
+}
+
+/**
  * Count of waiting (not-yet-expired) deposit requests routed to a
  * given agent number. Used by the deposit-flow helper to surface a
  * "this agent is busy, expect a delay" hint to the UI.

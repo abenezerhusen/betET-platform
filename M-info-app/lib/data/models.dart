@@ -236,19 +236,70 @@ class TxLogEntry {
       );
 }
 
+/// A backend-issued command for this device, delivered inside the
+/// heartbeat response. The only command the app acts on today is
+/// `withdraw` (dial a Telebirr send-money USSD); others are ignored.
+class AgentCommand {
+  AgentCommand({
+    required this.id,
+    required this.commandType,
+    required this.payload,
+  });
+
+  final String id;
+  final String commandType;
+  final Map<String, dynamic> payload;
+
+  /// Ready-to-dial USSD string built server-side (recipient/amount/pin
+  /// already substituted). Null when the backend couldn't build it.
+  /// Legacy one-shot path; prefer [ussdInitial] + [ussdSteps].
+  String? get ussd => payload['ussd'] as String?;
+  String? get amount => payload['amount']?.toString();
+  String? get recipientPhone =>
+      (payload['recipient_phone'] ?? payload['telebirr_number'])?.toString();
+
+  /// Interactive USSD menu flow: the code to dial to open the Telebirr menu
+  /// (e.g. `*127#`).
+  String? get ussdInitial => payload['ussd_initial'] as String?;
+
+  /// The ordered replies the phone types into each successive USSD prompt
+  /// (recipient/amount/comment/pin already substituted server-side).
+  List<String> get ussdSteps {
+    final raw = payload['ussd_steps'];
+    if (raw is List) {
+      return raw.map((e) => e.toString()).toList(growable: false);
+    }
+    return const <String>[];
+  }
+
+  factory AgentCommand.fromJson(Map<String, dynamic> json) => AgentCommand(
+        id: json['id'] as String,
+        commandType:
+            (json['command_type'] ?? json['kind'] ?? '').toString(),
+        payload: ((json['payload'] as Map?) ?? <String, dynamic>{})
+            .cast<String, dynamic>(),
+      );
+}
+
 class HeartbeatResult {
   HeartbeatResult({
     required this.serverTime,
     required this.pendingRequests,
+    required this.commands,
   });
 
   final DateTime serverTime;
   final int pendingRequests;
+  final List<AgentCommand> commands;
 
   factory HeartbeatResult.fromJson(Map<String, dynamic> json) =>
       HeartbeatResult(
         serverTime: DateTime.parse(json['serverTime'] as String),
         pendingRequests:
             (json['pendingRequests'] as num?)?.toInt() ?? 0,
+        commands: ((json['commands'] as List?) ?? <dynamic>[])
+            .whereType<Map>()
+            .map((e) => AgentCommand.fromJson(e.cast<String, dynamic>()))
+            .toList(growable: false),
       );
 }

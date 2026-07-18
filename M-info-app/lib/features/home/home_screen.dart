@@ -21,7 +21,8 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   Timer? _statusTimer;
   AgentStatus? _status;
   String? _statusError;
@@ -30,18 +31,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startServices();
       _refreshStatus();
+      // Poll frequently so Balance / Pre-Deposit / Capacity reflect deposits
+      // and withdrawals almost live while the operator is watching.
       _statusTimer = Timer.periodic(
-        const Duration(seconds: 30),
+        const Duration(seconds: 8),
         (_) => _refreshStatus(),
       );
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Refresh the moment the operator brings the app back to the foreground,
+    // so the wallet card is never stale after being in the background.
+    if (state == AppLifecycleState.resumed) {
+      _refreshStatus();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _statusTimer?.cancel();
     super.dispose();
   }

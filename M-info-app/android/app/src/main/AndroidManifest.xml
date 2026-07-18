@@ -10,6 +10,12 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
 
+    <!-- USSD execution: TelephonyManager.sendUssdRequest dials the       -->
+    <!-- Telebirr send-money code for auto-processed withdrawals.         -->
+    <!-- READ_PHONE_STATE lets us route USSD via the correct SIM slot.    -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
     <!-- Boot completed: BootReceiver re-launches PayService on boot   -->
     <!-- so a phone unattended in a closet still pages the backend     -->
     <!-- after a power cut.                                            -->
@@ -32,6 +38,11 @@
     <!-- this manually so the OS never freezes the SMS listener.       -->
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Draw-over-other-apps: opaque cover shown over the Telebirr USSD  -->
+    <!-- dialogs while a withdrawal is auto-processed, so the flow runs   -->
+    <!-- "in the background" from the operator's point of view.          -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- AlarmManager-driven watchdog: re-pings the service every 15m  -->
     <!-- in case the OS killed it.                                      -->
@@ -107,6 +118,26 @@
         <!-- explicitly. Leaving this comment as a marker — if the     -->
         <!-- plugin is ever swapped, an explicit                       -->
         <!-- <receiver android:name=".SmsReceiver" ...> goes here.    -->
+
+        <!-- ======================================================== -->
+        <!-- UssdAccessibilityService                                  -->
+        <!-- ======================================================== -->
+        <!-- Auto-navigates Telebirr's multi-step send-money USSD menu  -->
+        <!-- for approved withdrawals. Must be enabled once by the      -->
+        <!-- operator in Settings → Accessibility.                     -->
+        <service
+            android:name=".UssdAccessibilityService"
+            android:exported="false"
+            android:label="BirrPay USSD Automation"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action
+                    android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ussd_accessibility_config" />
+        </service>
 
     </application>
 

@@ -242,12 +242,14 @@ export async function createAgent(
     telebirr_number: string;
     device_id: string;
     auth_token_hash?: string;
+    ussd_pin_encrypted?: string | null;
   }
 ): Promise<AgentRow> {
   const res = await client.query<AgentRow>(
     `INSERT INTO telebirr_agents (
-       tenant_id, agent_name, telebirr_number, device_id, auth_token_hash, status
-     ) VALUES ($1,$2,$3,$4,$5,'active')
+       tenant_id, agent_name, telebirr_number, device_id, auth_token_hash,
+       ussd_pin_encrypted, status
+     ) VALUES ($1,$2,$3,$4,$5,$6,'active')
      RETURNING id, tenant_id, agent_name, telebirr_number, device_id, device_name,
                app_version, last_seen_at, status, balance, assigned_cashier_id,
                last_assigned_at, created_at`,
@@ -257,9 +259,46 @@ export async function createAgent(
       input.telebirr_number,
       input.device_id,
       input.auth_token_hash ?? null,
+      input.ussd_pin_encrypted ?? null,
     ]
   );
   return res.rows[0];
+}
+
+/**
+ * Set (or replace) the sealed USSD PIN for a wallet device. The caller
+ * passes the already-sealed ciphertext.
+ */
+export async function setAgentUssdPin(
+  client: PoolClient,
+  id: string,
+  ussdPinEncrypted: string
+): Promise<AgentRow | null> {
+  const res = await client.query<AgentRow>(
+    `UPDATE telebirr_agents
+        SET ussd_pin_encrypted = $2
+      WHERE id = $1
+      RETURNING id, tenant_id, agent_name, telebirr_number, device_id, device_name,
+                app_version, last_seen_at, status, balance, assigned_cashier_id,
+                last_assigned_at, created_at`,
+    [id, ussdPinEncrypted]
+  );
+  return res.rows[0] ?? null;
+}
+
+/**
+ * Read the sealed USSD PIN ciphertext for an agent (by id). Returns null
+ * when unset. Only used server-side to build the outbound withdraw USSD.
+ */
+export async function getAgentUssdPinEncrypted(
+  client: PoolClient,
+  agentId: string
+): Promise<string | null> {
+  const res = await client.query<{ ussd_pin_encrypted: string | null }>(
+    `SELECT ussd_pin_encrypted FROM telebirr_agents WHERE id = $1`,
+    [agentId]
+  );
+  return res.rows[0]?.ussd_pin_encrypted ?? null;
 }
 
 export async function updateAgent(
@@ -1186,11 +1225,15 @@ export async function dashboardKpis(
  *   - status / balance / device link
  *   - daily_limit (from p2p_settings.max_daily_per_wallet)
  *   - used_today (sum of credited deposits today)
- *   - pre_deposit (latest non-failed manual swap balance — used to cover
- *     outgoing withdrawals; computed as net SUM(amount) of manual swaps)
+ *   - pre_deposit (agent's pre-funded base = SUM of manual top-up swaps,
+ *     falling back to the SIM-reported balance when none booked yet)
  *   - commission_rate (from p2p_commissions.deposit_pct override, else the
  *     tenant default)
- *   - total_capacity / available_capacity (daily_limit minus used_today)
+ *   - total_capacity = pre_deposit × (1 + commission_rate%)
+ *   - available_capacity = total_capacity − credited deposits + withdrawal
+ *     swaps (the live pre-deposit pool: deposits consume headroom, paid-out
+ *     withdrawals restore it)
+ *   - withdrawals_today (sum of withdrawal swaps booked today)
  *   - earned_today (deposits_today × commission_rate%)
  */
 export interface DashboardWalletRow {
@@ -1235,38 +1278,31 @@ export async function dashboardWalletStatus(
         FROM telebirr_agents a
        WHERE ${tenantClause('a')}
     ),
-    today_dep AS (
+    dep AS (
       SELECT t.agent_id,
              COALESCE(SUM(t.amount) FILTER (
                WHERE t.status IN ('matched','credited')
-             ), 0)::text                                       AS used,
+             ), 0)::numeric                                    AS total,
              COALESCE(SUM(t.amount) FILTER (
                WHERE t.status IN ('matched','credited')
-             ), 0)::text                                       AS deposited
+                 AND t.created_at >= date_trunc('day', now())
+             ), 0)::numeric                                    AS today
         FROM telebirr_transactions t
-       WHERE t.created_at >= date_trunc('day', now())
-         AND ${tenantClause('t')}
+       WHERE ${tenantClause('t')}
        GROUP BY t.agent_id
-    ),
-    today_wd AS (
-      SELECT NULL::uuid AS agent_id,
-             COALESCE(SUM(w.amount) FILTER (
-               WHERE w.status = 'completed'
-             ), 0)::text                                       AS withdrawn
-        FROM telebirr_withdrawal_requests w
-       WHERE w.created_at >= date_trunc('day', now())
-         AND ${tenantClause('w')}
     ),
     swaps AS (
       SELECT s.agent_id,
-             COALESCE(SUM(
-               CASE WHEN s.source = 'manual' AND s.status = 'added'
-                    THEN s.amount
-                    WHEN s.source = 'withdrawal' AND s.status = 'added'
-                    THEN -s.amount
-                    ELSE 0
-               END
-             ), 0)::text                                       AS pre_deposit
+             SUM(s.amount) FILTER (
+               WHERE s.source = 'manual' AND s.status = 'added'
+             )                                                 AS manual_added,
+             COALESCE(SUM(s.amount) FILTER (
+               WHERE s.source = 'withdrawal' AND s.status = 'added'
+             ), 0)::numeric                                    AS wd_added,
+             COALESCE(SUM(s.amount) FILTER (
+               WHERE s.source = 'withdrawal' AND s.status = 'added'
+                 AND s.created_at >= date_trunc('day', now())
+             ), 0)::numeric                                    AS wd_added_today
         FROM p2p_swaps s
        WHERE ${tenantClause('s')}
        GROUP BY s.agent_id
@@ -1291,28 +1327,48 @@ export async function dashboardWalletStatus(
       a.telebirr_number,
       a.status,
       a.last_seen_at,
-      a.balance,
+      -- Live cash held: pre-deposit + deposits received - withdrawals paid,
+      -- clamped at 0 (matches the agent app's Balance figure exactly).
+      GREATEST(
+        COALESCE(sw.manual_added, a.balance::numeric, 0)
+        + COALESCE(dep.total, 0)
+        - COALESCE(sw.wd_added, 0),
+        0
+      )::text                                                 AS balance,
       COALESCE((SELECT daily_limit FROM settings), '0')      AS daily_limit,
-      COALESCE(td.used, '0')                                  AS used_today,
-      COALESCE(s.pre_deposit, '0')                            AS pre_deposit,
+      COALESCE(dep.today, 0)::text                            AS used_today,
+      COALESCE(sw.manual_added, a.balance::numeric, 0)::text  AS pre_deposit,
       COALESCE(c.deposit_pct, (SELECT default_pct FROM settings), '0')
                                                               AS commission_rate,
-      COALESCE((SELECT daily_limit FROM settings), '0')      AS total_capacity,
+      ROUND(
+        COALESCE(sw.manual_added, a.balance::numeric, 0)
+        * (1 + COALESCE(
+                 c.deposit_pct::numeric,
+                 (SELECT default_pct FROM settings)::numeric, 0
+               ) / 100.0)
+      )::text                                                 AS total_capacity,
       GREATEST(
-        COALESCE((SELECT daily_limit FROM settings)::numeric, 0)
-          - COALESCE(td.used::numeric, 0),
+        ROUND(
+          COALESCE(sw.manual_added, a.balance::numeric, 0)
+          * (1 + COALESCE(
+                   c.deposit_pct::numeric,
+                   (SELECT default_pct FROM settings)::numeric, 0
+                 ) / 100.0)
+        )
+          - COALESCE(dep.total, 0)
+          + COALESCE(sw.wd_added, 0),
         0
       )::text                                                 AS available_capacity,
-      COALESCE(td.deposited, '0')                             AS deposits_today,
-      '0'::text                                               AS withdrawals_today,
+      COALESCE(dep.today, 0)::text                            AS deposits_today,
+      COALESCE(sw.wd_added_today, 0)::text                    AS withdrawals_today,
       (
-        COALESCE(td.deposited::numeric, 0)
+        COALESCE(dep.today, 0)
         * COALESCE(c.deposit_pct::numeric, (SELECT default_pct FROM settings)::numeric, 0)
         / 100.0
       )::text                                                 AS earned_today
       FROM agents a
-      LEFT JOIN today_dep   td ON td.agent_id = a.agent_id
-      LEFT JOIN swaps        s  ON s.agent_id  = a.agent_id
+      LEFT JOIN dep         ON dep.agent_id = a.agent_id
+      LEFT JOIN swaps  sw   ON sw.agent_id  = a.agent_id
       LEFT JOIN commissions  c  ON c.agent_id  = a.agent_id
       ORDER BY a.agent_name
   `;

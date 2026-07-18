@@ -206,7 +206,7 @@ export function listWalletSwaps(id: string) {
   );
 }
 
-export function updateWalletUssdPin(id: string, input: { current_pin: string; new_pin: string }) {
+export function updateWalletUssdPin(id: string, input: { pin: string }) {
   return http.post<Record<string, unknown>>(`/api/admin/p2p/wallets/${id}/pin`, input);
 }
 

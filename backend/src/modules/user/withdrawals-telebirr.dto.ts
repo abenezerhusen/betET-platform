@@ -17,7 +17,9 @@ const amountSchema = z
 export const initiateWithdrawalSchema = z.object({
   amount: amountSchema,
   telebirr_number: telebirrNumberSchema,
-  account_name: accountNameSchema,
+  // Optional: the payout UI collects phone + amount only. When omitted the
+  // service defaults the account holder name to the destination phone.
+  account_name: accountNameSchema.optional(),
 });
 export type InitiateWithdrawalInput = z.infer<typeof initiateWithdrawalSchema>;
 

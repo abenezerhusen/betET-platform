@@ -247,20 +247,14 @@ export async function updateCommandResult(
         result: z.record(z.unknown()).optional(),
       })
       .parse(req.body ?? {});
-    await withTenantClient(
-      { tenantId: scope.tenantId, bypassRls: true },
-      async (client) => {
-        await client.query(
-          `UPDATE p2p_commands
-              SET status = $2,
-                  result = COALESCE($3::jsonb, result),
-                  executed_at = now()
-            WHERE id = $1`,
-          [commandId, payload.status, payload.result ? JSON.stringify(payload.result) : null]
-        );
-      }
+    const outcome = await service.recordCommandResult(
+      scope.id,
+      scope.tenantId,
+      commandId,
+      payload.status,
+      payload.result
     );
-    res.json({ ok: true });
+    res.json(outcome);
   } catch (err) {
     next(err);
   }

@@ -23,7 +23,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/context/AuthContext";
 import { walletApi } from "@/lib/api";
-import { p2pProviders } from "@/data/p2pAccounts";
 
 const withdrawalSchema = z.object({
   // Zod v4 dropped `invalid_type_error`; use `message` instead.
@@ -33,7 +32,6 @@ const withdrawalSchema = z.object({
     .min(10, "Minimum withdrawal is 10 ETB")
     .max(1_000_000, "Maximum withdrawal is 1,000,000 ETB"),
   telebirrNumber: z.string().trim().min(8, "Telebirr number is required"),
-  accountName: z.string().trim().min(2, "Account name is required"),
 });
 
 function OperationSwitcher() {
@@ -68,7 +66,6 @@ export default function WithdrawPage() {
   const [activeTab, setActiveTab] = useState("request");
   const [amount, setAmount] = useState("");
   const [telebirrNumber, setTelebirrNumber] = useState(user?.phone ?? "");
-  const [accountName, setAccountName] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -99,14 +96,12 @@ export default function WithdrawPage() {
     Number.isFinite(parsedAmount) &&
     parsedAmount > 0 &&
     parsedAmount <= withdrawable &&
-    !!telebirrNumber.trim() &&
-    !!accountName.trim();
+    !!telebirrNumber.trim();
 
   const requestWithdraw = async () => {
     const parsed = withdrawalSchema.safeParse({
       amount: parsedAmount,
       telebirrNumber,
-      accountName,
     });
     if (!parsed.success) {
       setValidationError(parsed.error.issues[0]?.message ?? "Invalid withdrawal input");
@@ -128,7 +123,6 @@ export default function WithdrawPage() {
       const out = await walletApi.telebirrWithdrawalInitiate({
         amount: String(parsed.data.amount),
         telebirr_number: parsed.data.telebirrNumber,
-        account_name: parsed.data.accountName,
       });
       setSuccessMsg(`Withdrawal request submitted (${out.request_id}).`);
       setAmount("");
@@ -212,24 +206,18 @@ export default function WithdrawPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1">Telebirr Number</label>
+                  <label className="block text-xs text-gray-400 mb-1">
+                    Telebirr Number (from your profile)
+                  </label>
                   <Input
                     value={telebirrNumber}
-                    onChange={(e) => setTelebirrNumber(e.target.value)}
-                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Account Name</label>
-                  <Input
-                    value={accountName}
-                    onChange={(e) => setAccountName(e.target.value)}
-                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
+                    readOnly
+                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white opacity-80"
                   />
                 </div>
                 <div className="text-[11px] text-gray-500 flex items-center gap-1">
                   <Lock className="w-3 h-3" />
-                  Withdrawal requires sufficient available balance.
+                  Paid out automatically via Telebirr to your profile number.
                 </div>
                 {validationError && (
                   <div className="text-xs text-red-400">{validationError}</div>
@@ -314,26 +302,23 @@ function P2PWithdrawPanel({
   balance: number;
   refreshWallet: () => Promise<void>;
 }) {
-  const [providerKey, setProviderKey] = useState(p2pProviders[0]?.key ?? "");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [accountName, setAccountName] = useState("");
+  const { user } = useAuth();
+  const [phone, setPhone] = useState(user?.phone ?? "");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [okMsg, setOkMsg] = useState("");
 
-  const provider = useMemo(
-    () => p2pProviders.find((p) => p.key === providerKey) ?? p2pProviders[0],
-    [providerKey]
-  );
+  useEffect(() => {
+    setPhone(user?.phone ?? "");
+  }, [user?.phone]);
 
   const parsed = Number(amount || 0);
   const canSubmit =
     Number.isFinite(parsed) &&
     parsed >= 10 &&
     parsed <= balance &&
-    !!accountNumber.trim() &&
-    !!accountName.trim() &&
+    !!phone.trim() &&
     !busy;
 
   const submit = async () => {
@@ -343,25 +328,23 @@ function P2PWithdrawPanel({
       setErr(
         parsed > balance
           ? "Withdrawal exceeds available balance."
-          : "Fill in all fields. Minimum withdrawal is 10 ETB."
+          : "Enter an amount of at least 10 ETB."
       );
       return;
     }
     setBusy(true);
     try {
-      const out = await walletApi.submitWithdrawal({
+      const out = await walletApi.telebirrWithdrawalInitiate({
         amount: String(parsed),
-        payment_method: provider?.type === "bank" ? "bank_transfer" : "mobile_money",
-        payment_details: {
-          provider: provider?.name,
-          account_number: accountNumber.trim(),
-          account_name: accountName.trim(),
-        },
-        notes: `P2P withdrawal via ${provider?.name}`,
+        telebirr_number: phone.trim(),
       });
-      setOkMsg(`Withdrawal request submitted (${out.withdrawal_id}). Status: ${out.status}.`);
+      setOkMsg(
+        `Withdrawal submitted (${out.request_id}). ` +
+          (out.status === "processing"
+            ? "An agent is sending your Telebirr payout now."
+            : "Waiting for an available agent to send your payout.")
+      );
       setAmount("");
-      setAccountNumber("");
       await refreshWallet();
     } catch (e) {
       setErr((e as Error).message || "Failed to submit withdrawal request.");
@@ -375,50 +358,21 @@ function P2PWithdrawPanel({
       <div className="p-4 rounded-lg space-y-3" style={{ background: "var(--mezzo-bg-secondary)" }}>
         <div className="flex items-center gap-2">
           <Landmark className="w-4 h-4 text-[var(--mezzo-accent-yellow)]" />
-          <h3 className="font-semibold text-sm">P2P Transfer Withdrawal</h3>
+          <h3 className="font-semibold text-sm">P2P Telebirr Withdrawal</h3>
         </div>
         <p className="text-xs text-gray-400">
-          Withdraw to your own bank or mobile-wallet account. Funds are sent
-          once the request is approved.
+          Enter the amount and we send it to your profile Telebirr number
+          automatically from an agent wallet via USSD.
         </p>
 
         <div>
-          <label className="block text-xs text-gray-400 mb-1">Provider</label>
-          <div className="flex flex-wrap gap-2">
-            {p2pProviders.map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => setProviderKey(p.key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                  p.key === providerKey
-                    ? "bg-[var(--mezzo-accent-green)] text-black"
-                    : "text-gray-300 hover:text-white"
-                }`}
-                style={p.key === providerKey ? undefined : { background: "var(--mezzo-bg-tertiary)" }}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
           <label className="block text-xs text-gray-400 mb-1">
-            {provider?.type === "bank" ? "Your Account Number" : "Your Phone Number"}
+            Your Phone Number (from your profile)
           </label>
           <Input
-            value={accountNumber}
-            onChange={(e) => setAccountNumber(e.target.value)}
-            className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-400 mb-1">Account Holder Name</label>
-          <Input
-            value={accountName}
-            onChange={(e) => setAccountName(e.target.value)}
-            className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
+            value={phone}
+            readOnly
+            className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white opacity-80"
           />
         </div>
         <div>

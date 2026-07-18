@@ -150,7 +150,7 @@ export async function telebirrDepositCancel(requestId: string): Promise<{
 export interface TelebirrWithdrawalInitiateInput {
   amount: string;
   telebirr_number: string;
-  account_name: string;
+  account_name?: string;
 }
 
 export interface TelebirrWithdrawalRow {

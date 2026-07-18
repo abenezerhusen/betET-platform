@@ -31,8 +31,20 @@ import {
 } from '../../http/errors/http-error';
 import { tryAudit } from '../audit/audit.service';
 import { assertWithdrawalAllowed } from '../../services/deposit-wagering.service';
-import { loadTelebirrSettings } from './telebirr.settings';
+import { logger } from '../../infrastructure/logger';
+import { openSecret } from '../../infrastructure/crypto/secret-cipher';
+import {
+  loadTelebirrSettings,
+  buildWithdrawalUssd,
+  buildWithdrawalUssdFlow,
+} from './telebirr.settings';
 import * as withdrawalRepo from './telebirr.withdrawal.repository';
+import * as telebirrRepo from './telebirr.repository';
+import * as p2pRepo from '../admin/p2p/p2p.repository';
+
+// An agent must have sent a heartbeat within this window to be considered
+// online and eligible to receive an auto-dispatched USSD withdrawal command.
+const AGENT_ONLINE_WINDOW_MS = 3 * 60 * 1000;
 
 /* ------------------------------------------------------------------------- */
 /* Types                                                                     */
@@ -44,20 +56,26 @@ export interface InitiateWithdrawalInput {
   amount: string;
   currency: string;
   telebirrNumber: string;
-  accountName: string;
+  /**
+   * Optional. The payout UI only asks for phone + amount now; when omitted
+   * we default the account holder name to the destination phone number.
+   */
+  accountName?: string | null;
   ip: string | null;
   userAgent: string | null;
 }
 
 export interface InitiateWithdrawalResult {
   request_id: string;
-  status: 'pending';
+  status: 'pending' | 'processing';
   amount: string;
   currency: string;
   telebirr_number: string;
   account_name: string;
   estimated_completion: string;
   created_at: string;
+  /** Set when the request was auto-dispatched to an agent for USSD payout. */
+  routed_agent_id?: string | null;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -153,6 +171,11 @@ export async function initiateWithdrawal(
       { reason: 'invalid_telebirr_number' }
     );
   }
+
+  // Account name is optional now (UI collects phone + amount only). Default
+  // it to the destination phone so downstream records and the NOT NULL
+  // column stay populated.
+  const accountName = input.accountName?.trim() || canonicalNumber;
 
   if (input.currency !== 'ETB') {
     throw new BadRequestError(
@@ -300,7 +323,7 @@ export async function initiateWithdrawal(
           JSON.stringify({
             method: 'telebirr',
             telebirr_number: canonicalNumber,
-            account_name: input.accountName,
+            account_name: accountName,
           }),
         ]
       );
@@ -312,13 +335,42 @@ export async function initiateWithdrawal(
         amount: input.amount,
         currency: input.currency,
         telebirrNumber: canonicalNumber,
-        accountName: input.accountName,
+        accountName,
         debitTransactionId,
       });
 
       return { request, debitTransactionId };
     }
   );
+
+  // Auto-dispatch to an online agent wallet for USSD payout. Best-effort:
+  // if no agent is online we leave the request 'pending' for manual
+  // handling in the admin withdrawal queue. When an agent picks up the
+  // command, runs the USSD, and reports success, `recordCommandResult`
+  // auto-completes the withdrawal and books the capacity-restoring swap.
+  // Auto-dispatch to a FREE online wallet. If every suitable wallet is busy
+  // running another USSD (or none is online), the request stays 'pending' —
+  // i.e. queued — and `drainWithdrawalQueue` dispatches it the moment a wallet
+  // frees up. This gives parallelism across different wallets and a serial,
+  // step-by-step queue per wallet.
+  let routedAgentId: string | null = null;
+  try {
+    routedAgentId = await withTenantClient(
+      { tenantId: input.tenantId, bypassRls: true },
+      async (client) =>
+        dispatchWithdrawalToAgent(client, input.tenantId, {
+          id: out.request.id,
+          amount: out.request.amount,
+          telebirr_number: out.request.telebirr_number,
+          account_name: out.request.account_name,
+        })
+    );
+  } catch (err) {
+    logger.warn(
+      { err, requestId: out.request.id },
+      'withdrawal auto-route to agent failed; left pending for manual handling'
+    );
+  }
 
   await tryAudit(
     {
@@ -332,6 +384,7 @@ export async function initiateWithdrawal(
         amount: out.request.amount,
         telebirr_number: out.request.telebirr_number,
         account_name: out.request.account_name,
+        routed_agent_id: routedAgentId,
       },
       ip: input.ip,
       userAgent: input.userAgent,
@@ -342,7 +395,8 @@ export async function initiateWithdrawal(
 
   return {
     request_id: out.request.id,
-    status: 'pending',
+    status: routedAgentId ? 'processing' : 'pending',
+    routed_agent_id: routedAgentId,
     amount: out.request.amount,
     currency: out.request.currency,
     telebirr_number: out.request.telebirr_number,
@@ -350,6 +404,122 @@ export async function initiateWithdrawal(
     estimated_completion: '15-30 minutes during business hours',
     created_at: out.request.created_at.toISOString(),
   };
+}
+
+/* ------------------------------------------------------------------------- */
+/* Dispatch + queue                                                          */
+/* ------------------------------------------------------------------------- */
+
+interface DispatchableWithdrawal {
+  id: string;
+  amount: string;
+  telebirr_number: string;
+  account_name: string;
+}
+
+/**
+ * Dispatch a single 'pending' withdrawal to a FREE online wallet: flips it to
+ * 'processing' and enqueues the USSD `withdraw` command (with the interactive
+ * menu flow + decrypted PIN). Returns the agent id when dispatched, or null
+ * when no free wallet can currently cover it (the request stays queued).
+ *
+ * Must run inside a tenant transaction. Serial-per-wallet safety comes from
+ * `pickAgentForWithdrawal`, which excludes wallets that already have an
+ * in-flight withdraw command.
+ */
+export async function dispatchWithdrawalToAgent(
+  client: import('pg').PoolClient,
+  tenantId: string,
+  w: DispatchableWithdrawal
+): Promise<string | null> {
+  const onlineAfter = new Date(Date.now() - AGENT_ONLINE_WINDOW_MS);
+  const agent = await telebirrRepo.pickAgentForWithdrawal(
+    client,
+    tenantId,
+    w.amount,
+    onlineAfter
+  );
+  if (!agent) return null;
+
+  const upd = await client.query<{ id: string }>(
+    `UPDATE telebirr_withdrawal_requests
+        SET status = 'processing', processed_at = now()
+      WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+      RETURNING id`,
+    [w.id, tenantId]
+  );
+  if (!upd.rows[0]) return null;
+
+  // Decrypt the wallet's Telebirr PIN and pre-build the USSD the phone dials.
+  let pin = '';
+  try {
+    const sealed = await p2pRepo.getAgentUssdPinEncrypted(client, agent.id);
+    pin = sealed ? openSecret(sealed) : '';
+  } catch (e) {
+    logger.warn({ e, agentId: agent.id }, 'failed to open agent USSD PIN');
+  }
+  const routeSettings = await loadTelebirrSettings(client, tenantId);
+  const ussd = buildWithdrawalUssd(routeSettings.withdrawal_ussd_template, {
+    recipient: w.telebirr_number,
+    amount: w.amount,
+    pin,
+  });
+  const flow = buildWithdrawalUssdFlow(routeSettings, {
+    recipient: w.telebirr_number,
+    amount: w.amount,
+    pin,
+  });
+
+  await p2pRepo.createCommand(client, tenantId, {
+    agent_id: agent.id,
+    kind: 'withdraw',
+    payload: {
+      withdrawal_id: w.id,
+      amount: w.amount,
+      telebirr_number: w.telebirr_number,
+      recipient_phone: w.telebirr_number,
+      account_name: w.account_name,
+      ussd,
+      ussd_initial: flow.initial,
+      ussd_steps: flow.steps,
+      has_pin: pin.length > 0,
+    },
+    reference: w.id,
+    issued_by: null,
+  });
+  await telebirrRepo.markAgentAssigned(client, agent.id);
+  return agent.id;
+}
+
+/**
+ * Drain the withdrawal queue: dispatch the oldest 'pending' withdrawals to any
+ * now-free online wallets (FIFO). Called after a withdrawal completes/fails so
+ * a freed wallet immediately picks up the next queued payout. Best-effort and
+ * safe to call concurrently (rows are locked FOR UPDATE SKIP LOCKED).
+ */
+export async function drainWithdrawalQueue(tenantId: string): Promise<void> {
+  await withTenantClient(
+    { tenantId, bypassRls: true },
+    async (client) => {
+      // Bounded loop so one drain can fill several freed wallets at once
+      // without ever spinning forever.
+      for (let i = 0; i < 25; i += 1) {
+        const next = await client.query<DispatchableWithdrawal>(
+          `SELECT id, amount::text AS amount, telebirr_number, account_name
+             FROM telebirr_withdrawal_requests
+            WHERE tenant_id = $1 AND status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED`,
+          [tenantId]
+        );
+        const w = next.rows[0];
+        if (!w) break; // queue empty
+        const agentId = await dispatchWithdrawalToAgent(client, tenantId, w);
+        if (!agentId) break; // no free wallet for the head of the queue
+      }
+    }
+  );
 }
 
 /* ------------------------------------------------------------------------- */

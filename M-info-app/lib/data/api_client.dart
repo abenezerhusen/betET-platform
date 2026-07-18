@@ -277,6 +277,24 @@ class AgentApi {
     return items;
   }
 
+  /// Report the outcome of a command back to the backend. For a
+  /// `withdraw` command a `success` status triggers the server-side
+  /// auto-complete + capacity swap.
+  Future<void> updateCommandResult({
+    required String id,
+    required String status, // 'success' | 'failed'
+    Map<String, dynamic>? result,
+  }) async {
+    final res = await _dio.patch<Map<String, dynamic>>(
+      '/api/agent/commands/$id',
+      data: <String, dynamic>{
+        'status': status,
+        if (result != null) 'result': result,
+      },
+    );
+    _ensureOk(res, 'commands.update');
+  }
+
   Future<void> manualConfirm({
     required String telebirrRef,
     required String userId,
