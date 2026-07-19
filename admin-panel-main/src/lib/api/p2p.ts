@@ -141,6 +141,8 @@ export interface RegisterWalletDevicePayload {
   commission_rate?: number;
   daily_limit?: number;
   ussd_pin?: string;
+  /** APK login password. Username for the agent app is `telebirr_number`. */
+  login_password?: string;
   device_id?: string;
 }
 
@@ -208,6 +210,18 @@ export function listWalletSwaps(id: string) {
 
 export function updateWalletUssdPin(id: string, input: { pin: string }) {
   return http.post<Record<string, unknown>>(`/api/admin/p2p/wallets/${id}/pin`, input);
+}
+
+/**
+ * Set / reset the APK login password for a wallet device. The agent app
+ * logs in with the wallet's telebirr_number as the username and this
+ * password. Independent from the USSD PIN.
+ */
+export function updateWalletPassword(id: string, input: { password: string }) {
+  return http.post<{ ok: boolean; agent_id: string }>(
+    `/api/admin/p2p/wallets/${id}/password`,
+    input
+  );
 }
 
 export function listSubAccounts(walletId: string) {

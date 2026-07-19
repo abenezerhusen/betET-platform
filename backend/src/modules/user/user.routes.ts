@@ -10,6 +10,7 @@ import depositsTelebirrRouter from './deposits-telebirr.routes';
 import disputesTelebirrRouter from './disputes-telebirr.routes';
 import withdrawalsTelebirrRouter from './withdrawals-telebirr.routes';
 import paymentMethodsRouter from './payment-methods.routes';
+import paymentsGatewayRouter from './payments-gateway.routes';
 import publicGamePicksRouter from '../public/game-picks/game-picks.module';
 import tournamentsRouter from './tournaments.routes';
 import branchWithdrawalRouter from './branch-withdrawal.routes';
@@ -44,6 +45,9 @@ router.use('/', depositsTelebirrRouter);
 router.use('/', disputesTelebirrRouter);
 router.use('/', withdrawalsTelebirrRouter);
 router.use('/', paymentMethodsRouter);
+// Online Payment gateway (Telebirr/CBE Birr/M-Pesa) — independent of the
+// Telebirr P2P and branch-withdrawal flows above.
+router.use('/', paymentsGatewayRouter);
 // Section 16 — branch (cash) withdrawals: user requests a single-use
 // code that any shop cashier can pay out via /api/cashier/withdrawal/*.
 router.use('/', branchWithdrawalRouter);

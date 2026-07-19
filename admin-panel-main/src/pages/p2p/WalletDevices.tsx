@@ -13,6 +13,7 @@ import {
   toggleSubAccount as apiToggleLinkedAccount,
   topUpWalletDevice,
   updateWalletDevice,
+  updateWalletPassword,
   updateWalletUssdPin,
   withdrawalSwap as apiWithdrawalSwap,
   type WalletAgentRow,
@@ -138,7 +139,10 @@ function agentToDevice(agent: WalletAgentRow, depositPct: number): Device {
     dailyLimit: '—',
     usedToday: '—',
     lastSeen: agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : 'Never',
-    enabled: agent.status !== 'suspended',
+    // A wallet is "enabled" only while active (or online). Disabling sets the
+    // status to `inactive`, so the toggle must reflect that — not merely
+    // exclude `suspended`.
+    enabled: agent.status === 'active' || agent.status === 'online',
     token: agent.device_id,
     commissionRate: pct,
     swaps: [],
@@ -160,9 +164,12 @@ export function WalletDevices() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [pinDevice, setPinDevice] = useState<Device | null>(null);
-  const [pinCurrent, setPinCurrent] = useState('');
+  const [, setPinCurrent] = useState('');
   const [pinNew, setPinNew] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
+  const [pwdDevice, setPwdDevice] = useState<Device | null>(null);
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdConfirm, setPwdConfirm] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const [showRegister, setShowRegister] = useState(false);
 
@@ -173,6 +180,7 @@ export function WalletDevices() {
     commissionRate: '2.5',
     dailyLimit: '100000',
     pin: '',
+    loginPassword: '',
   };
   const [registerForm, setRegisterForm] = useState(emptyRegister);
 
@@ -209,6 +217,11 @@ export function WalletDevices() {
     const commission = parseFloat(registerForm.commissionRate) || 2.5;
     const dailyLimit = parseFloat(registerForm.dailyLimit) || 100000;
     if (!registerForm.name.trim() || !registerForm.phone.trim() || preDepositNum <= 0) return;
+    const pwd = registerForm.loginPassword.trim();
+    if (pwd && pwd.length < 6) {
+      toast('Login password must be at least 6 characters.', 'error');
+      return;
+    }
     try {
       await apiRegisterWalletDevice({
         name: registerForm.name.trim(),
@@ -217,6 +230,7 @@ export function WalletDevices() {
         commission_rate: commission,
         daily_limit: dailyLimit,
         ussd_pin: registerForm.pin.trim() || undefined,
+        login_password: registerForm.loginPassword.trim() || undefined,
       });
       toast('Wallet registered.');
       setRegisterForm(emptyRegister);
@@ -842,6 +856,17 @@ export function WalletDevices() {
                   className="inline-flex items-center text-xs font-medium text-gray-600 hover:text-gray-900"
                 >
                   <Lock size={12} className="mr-1" /> PIN
+                </button>
+                <button
+                  onClick={() => {
+                    setPwdNew('');
+                    setPwdConfirm('');
+                    setPwdDevice(device);
+                  }}
+                  className="inline-flex items-center text-xs font-medium text-gray-600 hover:text-gray-900"
+                  title="Set the agent app (APK) login password"
+                >
+                  <Key size={12} className="mr-1" /> Login PW
                 </button>
                 <button
                   onClick={() => toast(`Opening edit form for ${device.name}…`)}
@@ -1476,6 +1501,30 @@ export function WalletDevices() {
                   />
                 </div>
               </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  App Login Password
+                </label>
+                <input
+                  type="password"
+                  value={registerForm.loginPassword}
+                  onChange={(e) =>
+                    setRegisterForm({ ...registerForm, loginPassword: e.target.value })
+                  }
+                  placeholder="Min 6 characters"
+                  autoComplete="new-password"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  The agent signs into the phone app with{' '}
+                  <span className="font-medium">
+                    {registerForm.phone.trim() || 'the Telebirr phone number'}
+                  </span>{' '}
+                  as the username and this password. Leave blank to set it later via{' '}
+                  <span className="font-medium">Login PW</span>. This is not the USSD PIN.
+                </p>
+              </div>
             </div>
 
             <div className="flex justify-end space-x-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg sticky bottom-0">
@@ -1607,6 +1656,114 @@ export function WalletDevices() {
               >
                 <Lock size={16} className="mr-2" />
                 Update PIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pwdDevice && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center space-x-2">
+                <Key className="h-5 w-5 text-blue-600" />
+                <h3 className="text-lg font-medium text-gray-900">Set App Login Password</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPwdDevice(null);
+                  setPwdNew('');
+                  setPwdConfirm('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                The agent logs into the phone app with{' '}
+                <span className="font-semibold">{pwdDevice.phone}</span> as the username and this
+                password. This is <strong>not</strong> the USSD PIN. The password is stored hashed
+                and never shown again.
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Wallet Device</label>
+                <input
+                  type="text"
+                  readOnly
+                  value={`${pwdDevice.name} (${pwdDevice.phone})`}
+                  className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Login Password
+                </label>
+                <input
+                  type="password"
+                  value={pwdNew}
+                  onChange={(e) => setPwdNew(e.target.value)}
+                  placeholder="Min 6 characters"
+                  autoComplete="new-password"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={pwdConfirm}
+                  onChange={(e) => setPwdConfirm(e.target.value)}
+                  placeholder="Re-enter password"
+                  autoComplete="new-password"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end space-x-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  setPwdDevice(null);
+                  setPwdNew('');
+                  setPwdConfirm('');
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void (async () => {
+                  if (!pwdDevice) return;
+                  const pwd = pwdNew.trim();
+                  if (pwd.length < 6) {
+                    toast('Password must be at least 6 characters.', 'error');
+                    return;
+                  }
+                  if (pwd !== pwdConfirm.trim()) {
+                    toast('Password confirmation does not match.', 'error');
+                    return;
+                  }
+                  try {
+                    await updateWalletPassword(pwdDevice.id, { password: pwd });
+                    toast(`Login password set for ${pwdDevice.name}.`);
+                    setPwdDevice(null);
+                    setPwdNew('');
+                    setPwdConfirm('');
+                  } catch (e) {
+                    toast(errMsg(e), 'error');
+                  }
+                })()}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+              >
+                <Key size={16} className="mr-2" />
+                Set Password
               </button>
             </div>
           </div>

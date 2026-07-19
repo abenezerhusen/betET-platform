@@ -8,8 +8,14 @@
 
 import { providerRegistry } from './providerRegistry';
 import { telebirrP2PProvider } from './TelebirrP2PProvider';
+import { gatewayProviders } from './gateway/providers';
 
 providerRegistry.register(telebirrP2PProvider);
+// Online Payment gateway providers (Telebirr, CBE Birr, M-Pesa). Separate
+// from the Telebirr P2P provider above.
+for (const provider of gatewayProviders) {
+  providerRegistry.register(provider);
+}
 
 export { BasePaymentProvider } from './BasePaymentProvider';
 export { providerRegistry } from './providerRegistry';

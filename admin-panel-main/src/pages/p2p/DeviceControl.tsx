@@ -16,6 +16,7 @@ interface DeviceVM {
   phone: string;
   status: 'Online' | 'Offline';
   lastSeen: string;
+  enabled: boolean;
 }
 
 function errMsg(e: unknown): string {
@@ -32,6 +33,9 @@ function rowToVm(a: WalletAgentRow): DeviceVM {
     phone: a.telebirr_number || '—',
     status: online ? 'Online' : 'Offline',
     lastSeen: a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : 'Never',
+    // Enabled = active/online. Disabling sets status to `inactive`, which
+    // blocks the agent from logging in and from deposit/withdrawal rotation.
+    enabled: a.status === 'active' || a.status === 'online',
   };
 }
 
@@ -94,8 +98,18 @@ export function DeviceControl() {
 
   const disableAgent = async (d: DeviceVM) => {
     try {
-      await updateWalletDevice(d.id, { status: 'inactive' });
-      toast(`${d.name} set inactive.`);
+      await updateWalletDevice(d.id, { enabled: false });
+      toast(`${d.name} disabled.`);
+      await load();
+    } catch (e) {
+      toast(errMsg(e), 'error');
+    }
+  };
+
+  const enableAgent = async (d: DeviceVM) => {
+    try {
+      await updateWalletDevice(d.id, { enabled: true });
+      toast(`${d.name} enabled.`);
       await load();
     } catch (e) {
       toast(errMsg(e), 'error');
@@ -237,13 +251,23 @@ export function DeviceControl() {
               >
                 <RotateCw size={12} className="mr-1" /> Restart
               </button>
-              <button
-                type="button"
-                onClick={() => void disableAgent(device)}
-                className="inline-flex items-center justify-center px-3 py-1.5 border border-gray-300 rounded text-xs font-medium text-red-600 bg-white hover:bg-red-50"
-              >
-                <Power size={12} className="mr-1" /> Disable
-              </button>
+              {device.enabled ? (
+                <button
+                  type="button"
+                  onClick={() => void disableAgent(device)}
+                  className="inline-flex items-center justify-center px-3 py-1.5 border border-gray-300 rounded text-xs font-medium text-red-600 bg-white hover:bg-red-50"
+                >
+                  <Power size={12} className="mr-1" /> Disable
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void enableAgent(device)}
+                  className="inline-flex items-center justify-center px-3 py-1.5 border border-gray-300 rounded text-xs font-medium text-green-600 bg-white hover:bg-green-50"
+                >
+                  <Power size={12} className="mr-1" /> Enable
+                </button>
+              )}
             </div>
           </div>
         ))}

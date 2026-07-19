@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import bcrypt from 'bcrypt';
 import type { Request } from 'express';
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { ConflictError, NotFoundError } from '../../../http/errors/http-error';
@@ -39,6 +40,7 @@ import type {
   SetApprovalThresholdInput,
   SetOperatorAssignmentsInput,
   SetOperatorPermissionsInput,
+  SetWalletPasswordInput,
   SetWalletPriorityInput,
   SwitchWithdrawalWalletInput,
   ToggleSubAccountInput,
@@ -231,6 +233,13 @@ export async function registerWalletDevice(
 
   const deviceId = input.device_id?.trim() || `dev_${crypto.randomUUID()}`;
 
+  // APK login password → bcrypt hash stored in auth_token_hash. Optional at
+  // registration; when omitted the device cannot log in until a password is
+  // set via the password endpoint.
+  const authTokenHash = input.login_password
+    ? await bcrypt.hash(input.login_password, 10)
+    : undefined;
+
   const result = await withTenantClient(
     { tenantId, bypassRls: scope.bypassRls },
     async (client) => {
@@ -238,6 +247,7 @@ export async function registerWalletDevice(
         agent_name: input.name,
         telebirr_number: input.telebirr_number,
         device_id: deviceId,
+        auth_token_hash: authTokenHash,
         ussd_pin_encrypted: input.ussd_pin
           ? sealSecret(input.ussd_pin)
           : null,
@@ -313,6 +323,44 @@ export async function setWalletUssdPin(
   return { ok: true, agent_id: id };
 }
 
+/**
+ * Set (or reset) the APK login password for a wallet device. The agent app
+ * authenticates with the wallet's telebirr_number as the username and this
+ * value as the password. Stored as a bcrypt hash in auth_token_hash;
+ * completely independent from the USSD PIN.
+ */
+export async function setWalletLoginPassword(
+  req: Request,
+  id: string,
+  input: SetWalletPasswordInput
+) {
+  const scope = getAdminScope(req);
+  await withTenantClient(
+    { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      const before = await repo.getAgent(client, id);
+      if (!before) throw new NotFoundError('Wallet device not found');
+      const hash = await bcrypt.hash(input.password, 10);
+      const updated = await repo.setAgentAuthTokenHash(client, id, hash);
+      if (!updated) throw new NotFoundError('Wallet device not found');
+      audit({
+        tenantId: before.tenant_id,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'p2p.wallet_device.set_login_password',
+        resource: 'telebirr_agents',
+        resourceId: id,
+        // Never log the password itself.
+        after: { login_password_set: true },
+        status: 'success',
+        ip: getIp(req),
+        userAgent: getUa(req),
+      });
+    }
+  );
+  return { ok: true, agent_id: id };
+}
+
 export async function updateWalletDevice(
   req: Request,
   id: string,
@@ -324,9 +372,18 @@ export async function updateWalletDevice(
     async (client) => {
       const before = await repo.getAgent(client, id);
       if (!before) throw new NotFoundError('Wallet device not found');
+      // `enabled` is the wallet toggle: true → active (rejoins deposit /
+      // withdrawal rotation and can log in), false → inactive. When
+      // `enabled` is absent, fall back to an explicit `status` if provided.
+      const nextStatus =
+        patch.enabled === undefined
+          ? patch.status
+          : patch.enabled
+            ? 'active'
+            : 'inactive';
       const updated = await repo.updateAgent(client, id, {
         agent_name: patch.name,
-        status: patch.enabled === false ? 'inactive' : patch.status,
+        status: nextStatus,
       });
       audit({
         tenantId: before.tenant_id,

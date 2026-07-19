@@ -26,6 +26,7 @@ import {
   setApprovalThresholdSchema,
   setOperatorAssignmentsSchema,
   setOperatorPermissionsSchema,
+  setWalletPasswordSchema,
   setWalletPrioritySchema,
   switchWithdrawalWalletSchema,
   toggleSubAccountSchema,
@@ -206,6 +207,15 @@ router.post(
     const { id } = idParamSchema.parse(req.params);
     const body = updateUssdPinSchema.parse(req.body);
     return service.setWalletUssdPin(req, id, body);
+  })
+);
+
+router.post(
+  '/wallets/:id/password',
+  wrap((req) => {
+    const { id } = idParamSchema.parse(req.params);
+    const body = setWalletPasswordSchema.parse(req.body);
+    return service.setWalletLoginPassword(req, id, body);
   })
 );
 

@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OnlinePaymentPanel } from "@/components/OnlinePaymentPanel";
 import { useAuth } from "@/context/AuthContext";
 import { walletApi } from "@/lib/api";
 
@@ -49,7 +50,7 @@ function OperationSwitcher() {
 }
 
 export default function DepositPage() {
-  const { wallet } = useAuth();
+  const { wallet, refreshWallet } = useAuth();
   const [activeTab, setActiveTab] = useState("p2p");
   const [historyCount, setHistoryCount] = useState(0);
 
@@ -83,9 +84,12 @@ export default function DepositPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 mb-4 h-9" style={{ background: "var(--mezzo-bg-secondary)" }}>
+            <TabsList className="grid w-full grid-cols-3 mb-4 h-9" style={{ background: "var(--mezzo-bg-secondary)" }}>
               <TabsTrigger value="p2p" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
                 P2P Deposit
+              </TabsTrigger>
+              <TabsTrigger value="online" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
+                Online Payment
               </TabsTrigger>
               <TabsTrigger value="history" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
                 History ({historyCount})
@@ -94,6 +98,10 @@ export default function DepositPage() {
 
             <TabsContent value="p2p" className="space-y-3">
               <P2PDepositPanel />
+            </TabsContent>
+
+            <TabsContent value="online" className="space-y-3">
+              <OnlinePaymentPanel channel="deposit" refreshWallet={refreshWallet} />
             </TabsContent>
 
             <TabsContent value="history">

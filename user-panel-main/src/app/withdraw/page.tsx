@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { z } from "zod";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Betslip } from "@/components/Betslip";
@@ -9,7 +8,6 @@ import {
   Wallet,
   ArrowDownCircle,
   ArrowUpCircle,
-  CheckCircle2,
   AlertCircle,
   RefreshCw,
   Lock,
@@ -20,19 +18,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { OnlinePaymentPanel } from "@/components/OnlinePaymentPanel";
 import { useAuth } from "@/context/AuthContext";
 import { walletApi } from "@/lib/api";
-
-const withdrawalSchema = z.object({
-  // Zod v4 dropped `invalid_type_error`; use `message` instead.
-  amount: z
-    .number({ message: "Amount is required" })
-    .positive("Amount must be greater than zero")
-    .min(10, "Minimum withdrawal is 10 ETB")
-    .max(1_000_000, "Maximum withdrawal is 1,000,000 ETB"),
-  telebirrNumber: z.string().trim().min(8, "Telebirr number is required"),
-});
 
 function OperationSwitcher() {
   const pathname = usePathname();
@@ -62,15 +50,8 @@ function OperationSwitcher() {
 }
 
 export default function WithdrawPage() {
-  const { user, wallet, refreshWallet } = useAuth();
+  const { wallet, refreshWallet } = useAuth();
   const [activeTab, setActiveTab] = useState("request");
-  const [amount, setAmount] = useState("");
-  const [telebirrNumber, setTelebirrNumber] = useState(user?.phone ?? "");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [successMsg, setSuccessMsg] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
-  const [processing, setProcessing] = useState(false);
-  const [validationError, setValidationError] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
 
   const balanceLine = wallet?.summary?.[0];
@@ -79,11 +60,6 @@ export default function WithdrawPage() {
   // be withdrawn — only the withdrawable portion may leave the wallet.
   const withdrawable = Number(balanceLine?.withdrawable_balance ?? balanceLine?.balance ?? 0);
   const wageringRemaining = Number(balanceLine?.wagering_remaining ?? 0);
-  const parsedAmount = useMemo(() => Number(amount || 0), [amount]);
-
-  useEffect(() => {
-    setTelebirrNumber(user?.phone ?? "");
-  }, [user?.phone]);
 
   useEffect(() => {
     walletApi
@@ -91,49 +67,6 @@ export default function WithdrawPage() {
       .then((res) => setHistoryCount(res.total ?? 0))
       .catch(() => setHistoryCount(0));
   }, []);
-
-  const canSubmit =
-    Number.isFinite(parsedAmount) &&
-    parsedAmount > 0 &&
-    parsedAmount <= withdrawable &&
-    !!telebirrNumber.trim();
-
-  const requestWithdraw = async () => {
-    const parsed = withdrawalSchema.safeParse({
-      amount: parsedAmount,
-      telebirrNumber,
-    });
-    if (!parsed.success) {
-      setValidationError(parsed.error.issues[0]?.message ?? "Invalid withdrawal input");
-      return;
-    }
-    if (parsed.data.amount > withdrawable) {
-      setValidationError(
-        parsed.data.amount > balance
-          ? "Withdrawal exceeds available balance"
-          : `Deposited funds must be wagered before withdrawal. Withdrawable: ${withdrawable.toFixed(2)} ETB`
-      );
-      return;
-    }
-    setValidationError("");
-    setProcessing(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      const out = await walletApi.telebirrWithdrawalInitiate({
-        amount: String(parsed.data.amount),
-        telebirr_number: parsed.data.telebirrNumber,
-      });
-      setSuccessMsg(`Withdrawal request submitted (${out.request_id}).`);
-      setAmount("");
-      setConfirmOpen(false);
-      await refreshWallet();
-    } catch (err) {
-      setErrorMsg((err as Error).message || "Withdrawal request failed.");
-    } finally {
-      setProcessing(false);
-    }
-  };
 
   return (
     <div className="flex min-h-[calc(100vh-180px)]">
@@ -163,23 +96,10 @@ export default function WithdrawPage() {
             </div>
           )}
 
-          {successMsg && (
-            <div className="px-3 py-2 rounded mb-3 text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-          {errorMsg && (
-            <div className="px-3 py-2 rounded mb-3 text-sm bg-red-500/15 border border-red-500/40 text-red-400 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-4 mb-4 h-9" style={{ background: "var(--mezzo-bg-secondary)" }}>
               <TabsTrigger value="request" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
-                Telebirr
+                Online Payment
               </TabsTrigger>
               <TabsTrigger value="p2p" className="text-xs data-[state=active]:bg-[var(--mezzo-accent-green)] data-[state=active]:text-black">
                 P2P
@@ -193,44 +113,11 @@ export default function WithdrawPage() {
             </TabsList>
 
             <TabsContent value="request" className="space-y-3">
-              <div className="p-4 rounded-lg space-y-3" style={{ background: "var(--mezzo-bg-secondary)" }}>
-                <h3 className="font-semibold text-sm">Telebirr Withdrawal</h3>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Amount (ETB)</label>
-                  <Input
-                    type="number"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">
-                    Telebirr Number (from your profile)
-                  </label>
-                  <Input
-                    value={telebirrNumber}
-                    readOnly
-                    className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white opacity-80"
-                  />
-                </div>
-                <div className="text-[11px] text-gray-500 flex items-center gap-1">
-                  <Lock className="w-3 h-3" />
-                  Paid out automatically via Telebirr to your profile number.
-                </div>
-                {validationError && (
-                  <div className="text-xs text-red-400">{validationError}</div>
-                )}
-                <Button
-                  onClick={() => setConfirmOpen(true)}
-                  disabled={!canSubmit}
-                  className="w-full h-9 text-black font-semibold disabled:opacity-50"
-                  style={{ background: "var(--mezzo-accent-green)" }}
-                >
-                  Submit Request
-                </Button>
-              </div>
+              <OnlinePaymentPanel
+                channel="withdrawal"
+                balance={withdrawable}
+                refreshWallet={refreshWallet}
+              />
             </TabsContent>
 
             <TabsContent value="p2p">
@@ -252,43 +139,6 @@ export default function WithdrawPage() {
           </Tabs>
         </div>
       </div>
-
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent className="bg-black border-gray-800 text-white max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Confirm withdrawal</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 pt-2 text-sm">
-            <div className="p-3 rounded space-y-1" style={{ background: "var(--mezzo-bg-tertiary)" }}>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Amount</span>
-                <span className="font-semibold text-[var(--mezzo-accent-green)]">{parsedAmount.toFixed(2)} ETB</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">To</span>
-                <span className="font-semibold">{telebirrNumber}</span>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setConfirmOpen(false)}
-                className="flex-1 h-9 border-gray-700 bg-transparent text-white hover:bg-gray-800"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void requestWithdraw()}
-                disabled={processing}
-                className="flex-1 h-9 text-black font-semibold"
-                style={{ background: "var(--mezzo-accent-green)" }}
-              >
-                {processing ? "Submitting..." : "Confirm"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Betslip />
     </div>

@@ -29,9 +29,21 @@ export const registerWalletDeviceSchema = z.object({
   commission_rate: z.number().min(0).max(50).default(2.5),
   daily_limit: z.number().positive().default(100000),
   ussd_pin: z.string().trim().min(4).max(16).optional(),
+  // APK login password. The agent app signs in with the telebirr_number
+  // above as the username and this value as the password. Optional at
+  // registration (can be set later via the password endpoint), but until
+  // it is set the device cannot authenticate.
+  login_password: z.string().trim().min(6).max(64).optional(),
   device_id: z.string().trim().optional(),
 });
 export type RegisterWalletDeviceInput = z.infer<typeof registerWalletDeviceSchema>;
+
+export const setWalletPasswordSchema = z.object({
+  // APK login password (username = the wallet's telebirr_number). Stored as
+  // a bcrypt hash in telebirr_agents.auth_token_hash. Unrelated to the USSD PIN.
+  password: z.string().trim().min(6).max(64),
+});
+export type SetWalletPasswordInput = z.infer<typeof setWalletPasswordSchema>;
 
 export const updateWalletDeviceSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),

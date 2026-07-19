@@ -40,6 +40,7 @@ const defaultLimits: settingsApi.PaymentConfig = {
   max_withdrawal_amount: 50000,
   withdrawal_processing_hours: 24,
   require_id_verification_above: 10000,
+  allow_phone_number_editing: false,
 };
 
 type EditableForm = paymentMethodsApi.CreatePaymentMethodInput & {
@@ -590,6 +591,33 @@ export function PaymentConfiguration() {
             <NumField label="Withdrawal processing (hours)" value={limits.withdrawal_processing_hours} onChange={(v) => setLimits((p) => ({ ...p, withdrawal_processing_hours: v }))} />
             <NumField label="Require ID verification above (ETB)" value={limits.require_id_verification_above} onChange={(v) => setLimits((p) => ({ ...p, require_id_verification_above: v }))} />
           </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              Online Payment
+            </p>
+            <label className="text-sm flex items-center justify-between gap-3 border rounded-md p-3 max-w-xl">
+              <span className="text-gray-700">
+                Allow Phone Number Editing
+                <span className="block text-xs text-gray-500 font-normal">
+                  When off, the deposit/withdrawal phone is synced from the
+                  user's profile and locked. When on, users may edit it before
+                  submitting an Online Payment request.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={Boolean(limits.allow_phone_number_editing)}
+                onChange={(e) =>
+                  setLimits((p) => ({
+                    ...p,
+                    allow_phone_number_editing: e.target.checked,
+                  }))
+                }
+              />
+            </label>
+          </div>
+
           <div className="flex justify-end">
             <button
               onClick={saveLimits}

@@ -25,11 +25,13 @@ import * as tournamentsApi from './tournaments';
 import * as betsApi from './bets';
 import * as publicConfigApi from './publicConfig';
 import * as jackpotsApi from './jackpots';
+import * as gatewayApi from './gateway';
 
 export {
   authApi,
   profileApi,
   walletApi,
+  gatewayApi,
   gamesApi,
   bonusesApi,
   gamePicksApi,

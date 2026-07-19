@@ -223,6 +223,9 @@ const paymentConfigSchema = z
     max_withdrawal_amount: z.number().nonnegative().optional(),
     withdrawal_processing_hours: z.number().nonnegative().optional(),
     require_id_verification_above: z.number().nonnegative().optional(),
+    // Online Payment gateway: when true, users may edit the phone number
+    // on the deposit/withdrawal form (default false = synced from profile).
+    allow_phone_number_editing: z.boolean().optional(),
   })
   .passthrough();
 

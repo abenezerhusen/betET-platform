@@ -205,6 +205,11 @@ export interface PaymentConfig {
   max_withdrawal_amount?: number;
   withdrawal_processing_hours?: number;
   require_id_verification_above?: number;
+  /**
+   * Online Payment gateway: when true, users may edit the phone number on
+   * the deposit/withdrawal form. Default false = synced from their profile.
+   */
+  allow_phone_number_editing?: boolean;
 }
 
 export interface SecurityConfig {

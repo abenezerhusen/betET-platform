@@ -287,6 +287,29 @@ export async function setAgentUssdPin(
 }
 
 /**
+ * Set (or replace) the APK login password hash for a wallet device. The
+ * caller passes an already-computed bcrypt hash, which is stored in
+ * `auth_token_hash` — the value the agent-app login endpoint verifies.
+ * Independent from the USSD PIN.
+ */
+export async function setAgentAuthTokenHash(
+  client: PoolClient,
+  id: string,
+  authTokenHash: string
+): Promise<AgentRow | null> {
+  const res = await client.query<AgentRow>(
+    `UPDATE telebirr_agents
+        SET auth_token_hash = $2
+      WHERE id = $1
+      RETURNING id, tenant_id, agent_name, telebirr_number, device_id, device_name,
+                app_version, last_seen_at, status, balance, assigned_cashier_id,
+                last_assigned_at, created_at`,
+    [id, authTokenHash]
+  );
+  return res.rows[0] ?? null;
+}
+
+/**
  * Read the sealed USSD PIN ciphertext for an agent (by id). Returns null
  * when unset. Only used server-side to build the outbound withdraw USSD.
  */
