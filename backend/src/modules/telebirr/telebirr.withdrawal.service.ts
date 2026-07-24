@@ -41,6 +41,7 @@ import {
 import * as withdrawalRepo from './telebirr.withdrawal.repository';
 import * as telebirrRepo from './telebirr.repository';
 import * as p2pRepo from '../admin/p2p/p2p.repository';
+import { notifyWalletEvent } from '../notifications/wallet-notifications';
 
 // An agent must have sent a heartbeat within this window to be considered
 // online and eligible to receive an auto-dispatched USSD withdrawal command.
@@ -393,6 +394,17 @@ export async function initiateWithdrawal(
     { bypassRls: true }
   );
 
+  // Withdrawal lifecycle notification (SMS / Telegram). When the request
+  // was auto-routed to an agent it is already "processing" (approved);
+  // otherwise it is pending manual review.
+  void notifyWalletEvent({
+    tenantId: input.tenantId,
+    userId: input.userId,
+    event: routedAgentId ? 'withdrawal_approved' : 'withdrawal_pending',
+    amount: out.request.amount,
+    currency: out.request.currency,
+  });
+
   return {
     request_id: out.request.id,
     status: routedAgentId ? 'processing' : 'pending',
@@ -739,6 +751,14 @@ export async function completeWithdrawalAsCashier(input: {
     { bypassRls: true }
   );
 
+  void notifyWalletEvent({
+    tenantId: input.tenantId,
+    userId: out.user_id,
+    event: 'withdrawal_completed',
+    amount: out.amount,
+    currency: out.currency,
+  });
+
   return out;
 }
 
@@ -856,6 +876,15 @@ async function rejectOrCancelWithdrawal(input: {
     },
     { bypassRls: true }
   );
+
+  // Reversal returns funds to the wallet; notify the user of the outcome.
+  void notifyWalletEvent({
+    tenantId: input.tenantId,
+    userId: out.user_id,
+    event: 'withdrawal_rejected',
+    amount: out.amount,
+    currency: out.currency,
+  });
 
   return out;
 }

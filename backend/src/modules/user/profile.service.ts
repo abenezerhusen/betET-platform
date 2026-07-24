@@ -12,6 +12,7 @@ import {
   revokeAllUserRefreshTokens,
 } from '../auth/auth.repository';
 import { getIp, getUa, getUserScope } from './user-shared';
+import { notifySecurityEvent } from '../notifications/security-notifications';
 import * as repo from './user.repository';
 import type {
   BetsHistoryQuery,
@@ -231,6 +232,12 @@ export async function changePassword(req: Request, body: ChangePasswordInput) {
     ip: getIp(req),
     userAgent: getUa(req),
     status: 'success',
+  });
+
+  void notifySecurityEvent({
+    tenantId: scope.tenantId,
+    userId: scope.userId,
+    event: 'password_changed',
   });
 
   return { success: true, revoked_refresh_tokens: revokedCount };

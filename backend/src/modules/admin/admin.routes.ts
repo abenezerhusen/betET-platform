@@ -47,6 +47,9 @@ import settlementRouter from './settlement/settlement.routes';
 import logsRouter from './logs/logs.module';
 import analyticsRouter from './analytics/analytics.module';
 import notificationsAliasRouter from './notifications-alias/notifications-alias.module';
+import notificationsCenterRouter from './notifications-center/notifications-center.module';
+// Marketing — isolated phone-gateway (TextBee) bulk SMS module.
+import bulkSmsRouter from './bulk-sms/bulk-sms.module';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -100,6 +103,11 @@ router.use('/monitoring', monitoringRouter);
 router.use('/logs', logsRouter);
 router.use('/analytics', analyticsRouter);
 router.use('/notifications', notificationsAliasRouter);
+// Multi-provider bulk broadcasts + system announcements + delivery logs.
+router.use('/notifications-center', notificationsCenterRouter);
+// Marketing → Bulk SMS (phone gateway / TextBee). Gated inside the sub-router
+// by the `marketing.bulk_sms` permission — separate from the OTP SMS pipeline.
+router.use('/bulk-sms', bulkSmsRouter);
 router.use('/panel-reports', reportsPanelRouter);
 router.use('/configurations', settingsExtraRouter);
 router.use('/transactions', adminTransactionsRouter);

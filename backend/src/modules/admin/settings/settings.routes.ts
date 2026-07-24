@@ -245,6 +245,39 @@ const smsConfigAliasSchema = z
     email_events: z.array(z.string().min(1)).optional(),
     default_language: z.string().trim().max(8).optional(),
     features: z.record(z.boolean()).optional(),
+    // Multi-provider notification settings. `sms_enabled` is the master
+    // SMS toggle; `telegram` holds the (future) Telegram Gateway config;
+    // `default_provider` picks the channel when both are enabled. Telegram
+    // fields are intentionally lenient — the spec says do NOT require or
+    // validate them yet; they are just persisted for later activation.
+    sms_enabled: z.boolean().optional(),
+    default_provider: z.enum(['sms', 'telegram']).optional(),
+    telegram: z
+      .object({
+        enabled: z.boolean().optional(),
+        bot_token: z.string().trim().max(400).optional(),
+        gateway_token: z.string().trim().max(400).optional(),
+        chat_config: z.string().trim().max(2000).optional(),
+        api_url: z.string().trim().max(400).optional(),
+      })
+      .partial()
+      .optional(),
+    // OTP security policy — persisted here so a future Admin Panel screen
+    // can tune expiry, resend and verification limits without a code change.
+    // Bounds are re-clamped server-side in `resolveOtpSettings`.
+    otp: z
+      .object({
+        expiry_minutes: z.number().int().min(1).max(60).optional(),
+        code_length: z.number().int().min(4).max(8).optional(),
+        resend_cooldown_seconds: z.number().int().min(10).max(3600).optional(),
+        max_resend_per_window: z.number().int().min(1).max(20).optional(),
+        resend_window_minutes: z.number().int().min(1).max(240).optional(),
+        resend_block_minutes: z.number().int().min(1).max(1440).optional(),
+        max_verify_attempts: z.number().int().min(1).max(20).optional(),
+        verify_block_minutes: z.number().int().min(1).max(1440).optional(),
+      })
+      .partial()
+      .optional(),
   })
   .passthrough();
 

@@ -24,6 +24,12 @@ import {
   sendEmailBestEffort,
   sendSmsBestEffort,
 } from '../notifications/notifications.service';
+import {
+  requestOtp,
+  verifyOtp,
+  isOtpRequired,
+  type VerifyOtpResult,
+} from '../notifications/otp.service';
 import { loadEffectivePermissionsForUser } from './permissions.helper';
 
 /* ------------------------------------------------------------------------- *
@@ -54,6 +60,9 @@ export interface RegisterInput {
   phone?: string | null;
   password: string;
   referralCode?: string | null;
+  /** OTP verification code — required only when a notification provider
+   *  is enabled (SMS or Telegram). Ignored when both are disabled. */
+  otpCode?: string | null;
   ip: string | null;
   userAgent: string | null;
 }
@@ -473,6 +482,37 @@ export async function login(tenantId: string, input: LoginInput): Promise<TokenP
 }
 
 export async function register(tenantId: string, input: RegisterInput) {
+  // Registration OTP gate. When a provider is enabled (SMS or Telegram),
+  // the phone/email must be verified with an OTP before the account is
+  // created. When both providers are disabled, registration proceeds
+  // directly (no verification screen) — exactly the legacy behaviour.
+  const otpIdentifier = input.phone ?? input.email ?? null;
+  if (await isOtpRequired(tenantId)) {
+    const code = input.otpCode?.trim();
+    if (!code || !otpIdentifier) {
+      throw new BadRequestError('Verification code required', {
+        reason: 'otp_required',
+      });
+    }
+    const verdict = await verifyOtp({
+      tenantId,
+      purpose: 'register',
+      identifier: otpIdentifier,
+      code,
+    });
+    if (!verdict.ok) {
+      throw new BadRequestError('Invalid or expired verification code', {
+        reason: verdict.reason ?? 'otp_invalid',
+        ...(verdict.attemptsRemaining !== undefined
+          ? { attempts_remaining: verdict.attemptsRemaining }
+          : {}),
+        ...(verdict.retryAfterSeconds !== undefined
+          ? { retry_after_seconds: verdict.retryAfterSeconds }
+          : {}),
+      });
+    }
+  }
+
   const created = await withTenantClient({ tenantId }, async (client) => {
     const existing = await repo.findUserForLogin(
       client,
@@ -568,6 +608,223 @@ export async function register(tenantId: string, input: RegisterInput) {
   ]);
 
   return created;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Registration OTP request
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Sends a registration OTP to the supplied phone/email when a notification
+ * provider is enabled. Returns `{ required: false }` when both providers
+ * are disabled so the caller can register without a verification step.
+ */
+export async function requestRegistrationOtp(
+  tenantId: string,
+  email: string | null,
+  phone: string | null,
+  ip: string | null,
+  userAgent: string | null
+) {
+  const identifier = phone ?? email;
+  if (!identifier) {
+    throw new BadRequestError('Phone or email required');
+  }
+
+  // Reject duplicates up-front so users don't waste an OTP on a taken
+  // identifier (mirrors the check inside register()).
+  const existing = await withTenantClient({ tenantId }, async (client) =>
+    repo.findUserForLogin(client, tenantId, email, phone, null)
+  );
+  if (existing) {
+    throw new BadRequestError('User already exists');
+  }
+
+  return requestOtp({
+    tenantId,
+    purpose: 'register',
+    identifier,
+    ip,
+    userAgent,
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * Password reset via OTP
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Sends a password-reset OTP through the active provider. Always returns a
+ * generic result (never reveals whether the account exists). When no
+ * provider is enabled, `required` is false and the UI should hide the
+ * forgot-password entry entirely.
+ */
+export async function requestPasswordResetOtp(
+  tenantId: string,
+  email: string | null,
+  phone: string | null,
+  ip: string | null,
+  userAgent: string | null
+): Promise<{
+  required: boolean;
+  sent: boolean;
+  channel: string | null;
+  status: 'sent' | 'cooldown' | 'blocked' | 'skipped';
+  retryAfterSeconds?: number;
+  cooldownSeconds?: number;
+  devCode?: string;
+}> {
+  const required = await isOtpRequired(tenantId);
+  if (!required) {
+    return { required: false, sent: false, channel: null, status: 'skipped' };
+  }
+
+  const identifier = phone ?? email;
+  if (!identifier) {
+    return { required: true, sent: false, channel: null, status: 'sent' };
+  }
+
+  const user = await withTenantClient({ tenantId }, async (client) =>
+    repo.findUserForLogin(client, tenantId, email, phone, null)
+  );
+  if (!user) {
+    // Do not reveal non-existence; pretend a code was dispatched.
+    return { required: true, sent: false, channel: null, status: 'sent' };
+  }
+
+  const res = await requestOtp({
+    tenantId,
+    purpose: 'password_reset',
+    identifier,
+    userId: user.id,
+    ip,
+    userAgent,
+  });
+  return {
+    required: true,
+    sent: res.sent,
+    channel: res.channel,
+    status: res.status,
+    ...(res.retryAfterSeconds !== undefined
+      ? { retryAfterSeconds: res.retryAfterSeconds }
+      : {}),
+    ...(res.cooldownSeconds !== undefined
+      ? { cooldownSeconds: res.cooldownSeconds }
+      : {}),
+    ...(res.devCode ? { devCode: res.devCode } : {}),
+  };
+}
+
+/**
+ * Verifies a password-reset OTP WITHOUT consuming it. Used by the two-step
+ * reset UI: the user enters the code, we confirm it is valid (right code,
+ * not expired, not blocked), and only then reveal the new-password screen.
+ * The code stays active so `resetPasswordWithOtp` can consume it on submit.
+ */
+export async function verifyPasswordResetOtp(
+  tenantId: string,
+  email: string | null,
+  phone: string | null,
+  code: string
+): Promise<VerifyOtpResult> {
+  const identifier = phone ?? email;
+  if (!identifier) {
+    throw new BadRequestError('Phone or email required');
+  }
+  return verifyOtp({
+    tenantId,
+    purpose: 'password_reset',
+    identifier,
+    code,
+    consume: false,
+  });
+}
+
+/**
+ * Verifies a password-reset OTP and sets the new password. Revokes all
+ * sessions and clears lockout on success (same side effects as the
+ * token-based reset).
+ */
+export async function resetPasswordWithOtp(
+  tenantId: string,
+  email: string | null,
+  phone: string | null,
+  code: string,
+  newPassword: string,
+  ip: string | null,
+  userAgent: string | null
+): Promise<void> {
+  const identifier = phone ?? email;
+  if (!identifier) {
+    throw new BadRequestError('Phone or email required');
+  }
+
+  const verdict = await verifyOtp({
+    tenantId,
+    purpose: 'password_reset',
+    identifier,
+    code,
+  });
+  if (!verdict.ok) {
+    throw new UnauthorizedError('Invalid or expired verification code', {
+      reason: verdict.reason ?? 'otp_invalid',
+      ...(verdict.attemptsRemaining !== undefined
+        ? { attempts_remaining: verdict.attemptsRemaining }
+        : {}),
+      ...(verdict.retryAfterSeconds !== undefined
+        ? { retry_after_seconds: verdict.retryAfterSeconds }
+        : {}),
+    });
+  }
+
+  const outcome = await withTenantClient({ tenantId }, async (client): Promise<
+    Outcome<undefined>
+  > => {
+    const user = await repo.findUserForLogin(client, tenantId, email, phone, null);
+    if (!user) {
+      return {
+        kind: 'failure',
+        error: new UnauthorizedError('Invalid or expired verification code'),
+        audit: {
+          tenantId,
+          actorId: null,
+          actorType: 'anonymous',
+          action: 'auth.reset_password_otp',
+          resource: 'user',
+          resourceId: null,
+          payload: { reason: 'user_not_found' },
+          ip,
+          userAgent,
+          status: 'failure',
+        },
+      };
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+    await repo.updateUserPassword(client, user.id, passwordHash);
+    await repo.revokeAllUserRefreshTokens(client, user.id);
+    await repo.resetFailedAttempts(client, user.id);
+
+    return {
+      kind: 'success',
+      value: undefined,
+      audit: {
+        tenantId,
+        actorId: user.id,
+        actorType: 'user',
+        action: 'auth.reset_password_otp',
+        resource: 'user',
+        resourceId: user.id,
+        payload: { via: 'otp' },
+        ip,
+        userAgent,
+        status: 'success',
+      },
+    };
+  });
+
+  await tryAudit(tenantId, outcome.audit);
+  if (outcome.kind === 'failure') throw outcome.error;
 }
 
 /* ------------------------------------------------------------------------- *

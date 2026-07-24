@@ -21,6 +21,7 @@ import {
 import { loadTelebirrSettings } from './telebirr.settings';
 import type { ParsedSms } from './telebirr.parser';
 import { runPostDepositPromotions } from '../promotions/deposit-hooks';
+import { notifyWalletEvent } from '../notifications/wallet-notifications';
 
 /* ------------------------------------------------------------------------- */
 /* Public types                                                              */
@@ -663,6 +664,18 @@ async function creditMatch(
     currency: 'ETB',
     telebirr_ref: parsed.telebirrRef!,
     message: `ETB ${parsed.amount} has been credited to your wallet.`,
+  });
+
+  // Multi-provider deposit-success notification (SMS / Telegram). Detached
+  // and best-effort — never affects the credit outcome.
+  void notifyWalletEvent({
+    tenantId: ctx.tenantId,
+    userId: decision.userId,
+    event: 'deposit_successful',
+    amount: String(parsed.amount),
+    currency: 'ETB',
+    to: result.user_phone ?? null,
+    variables: { balance: result.wallet.balance },
   });
 
   // Promotions side-effects (bonus engine, raffle tickets, referral

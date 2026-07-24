@@ -10,7 +10,8 @@ import { debounce } from "@/lib/performance";
 import { SportsCatalog } from "@/components/SportsCatalog";
 import { useAuth } from "@/context/AuthContext";
 import type { WalletSummaryLine } from "@/lib/api/types";
-import { publicConfigApi } from "@/lib/api";
+import { publicConfigApi, authApi } from "@/lib/api";
+import type { AuthConfig } from "@/lib/api/auth";
 import type { NavbarItem as PublicNavbarItem } from "@/lib/api/publicConfig";
 import {
   Collapsible,
@@ -54,6 +55,11 @@ import {
   Menu,
   X,
   Plus,
+  Eye,
+  EyeOff,
+  Lock,
+  ArrowLeft,
+  Check,
 } from "lucide-react";
 
 const DEFAULT_MAIN_NAV_ITEMS = [
@@ -198,6 +204,33 @@ export function Header() {
   const [registerError, setRegisterError] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState("");
   const [referralCode, setReferralCode] = useState("");
+
+  // Notification/auth config drives whether OTP + forgot-password show.
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
+  // Registration OTP step ('form' → collect details, 'otp' → verify code).
+  const [registerStep, setRegisterStep] = useState<"form" | "otp">("form");
+  const [registerOtp, setRegisterOtp] = useState("");
+  const [registerBusy, setRegisterBusy] = useState(false);
+  // Resend cooldown countdowns (seconds). While > 0 the resend button is
+  // disabled — mirrors the backend OTP resend-protection policy.
+  const [registerCooldown, setRegisterCooldown] = useState(0);
+
+  // Forgot-password flow state. Three-step wizard:
+  //   phone → enter code → set new password.
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState<"phone" | "code" | "password">(
+    "phone"
+  );
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotCode, setForgotCode] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showForgotConfirm, setShowForgotConfirm] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotCooldown, setForgotCooldown] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -233,6 +266,56 @@ export function Header() {
     if (ref) setReferralCode(ref.trim());
   }, []);
 
+  // Load the public auth-config so the UI knows whether registration needs
+  // an OTP step and whether to show the Forgot Password entry.
+  useEffect(() => {
+    let cancelled = false;
+    authApi
+      .getAuthConfig()
+      .then((cfg) => {
+        if (!cancelled) setAuthConfig(cfg);
+      })
+      .catch(() => {
+        // Fail-open on an unreachable endpoint: registration proceeds
+        // without an OTP step, but we still expose Forgot Password so the
+        // user is never locked out of recovery by a transient config-read
+        // failure. It is only hidden when the backend positively reports
+        // both providers disabled (a successful 200 with the flag false).
+        if (!cancelled)
+          setAuthConfig({
+            otp_required: false,
+            otp_channel: null,
+            forgot_password_enabled: true,
+            sms_enabled: false,
+            telegram_enabled: false,
+            default_provider: null,
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Tick down both OTP resend cooldowns once per second.
+  useEffect(() => {
+    if (registerCooldown <= 0 && forgotCooldown <= 0) return;
+    const t = setInterval(() => {
+      setRegisterCooldown((s) => (s > 0 ? s - 1 : 0));
+      setForgotCooldown((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [registerCooldown, forgotCooldown]);
+
+  // Pull a server-provided retry window (429 / cooldown) out of an error.
+  const retryAfterOf = (err: unknown): number => {
+    const details = (err as { details?: unknown })?.details;
+    if (details && typeof details === "object") {
+      const v = (details as { retry_after_seconds?: unknown }).retry_after_seconds;
+      if (typeof v === "number" && Number.isFinite(v)) return Math.ceil(v);
+    }
+    return 0;
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
@@ -256,6 +339,34 @@ export function Header() {
     }
   };
 
+  const resetRegisterState = () => {
+    setRegisterFullName("");
+    setRegisterPhone("");
+    setRegisterPassword("");
+    setRegisterConfirm("");
+    setRegisterOtp("");
+    setRegisterStep("form");
+    setRegisterCooldown(0);
+  };
+
+  const completeRegister = async (parsed: {
+    fullName: string;
+    phone: string;
+    password: string;
+    referralCode?: string;
+  }, otpCode?: string) => {
+    await register({
+      full_name: parsed.fullName,
+      phone: parsed.phone,
+      password: parsed.password,
+      referral_code: parsed.referralCode || undefined,
+      otp_code: otpCode,
+    });
+    resetRegisterState();
+    setRegisterSuccess("Account created successfully");
+    setRegisterOpen(false);
+  };
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegisterError("");
@@ -272,23 +383,180 @@ export function Header() {
       return;
     }
 
+    setRegisterBusy(true);
     try {
-      await register({
-        full_name: parsed.data.fullName,
-        phone: parsed.data.phone,
-        password: parsed.data.password,
-        referral_code: parsed.data.referralCode || undefined,
-      });
-      setRegisterFullName("");
-      setRegisterPhone("");
-      setRegisterPassword("");
-      setRegisterConfirm("");
-      setRegisterSuccess("Account created successfully");
-      setRegisterOpen(false);
+      if (authConfig?.otp_required) {
+        // Ask the backend to send an OTP; it may reply that OTP is not
+        // required (both providers disabled) → register directly.
+        const res = await authApi.requestRegisterOtp({ phone: parsed.data.phone });
+        if (res.otp_required) {
+          setRegisterStep("otp");
+          setRegisterCooldown(res.cooldown_seconds ?? 60);
+          if (res.dev_code) setRegisterOtp(res.dev_code);
+          return;
+        }
+      }
+      await completeRegister(parsed.data);
     } catch (err) {
       setRegisterError(
         err instanceof Error ? err.message : "Registration failed"
       );
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const handleVerifyRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterError("");
+    const parsed = registerSchema.safeParse({
+      fullName: registerFullName,
+      phone: registerPhone,
+      password: registerPassword,
+      confirmPassword: registerConfirm,
+      referralCode: referralCode || undefined,
+    });
+    if (!parsed.success) {
+      setRegisterError(parsed.error.issues[0]?.message ?? "Invalid registration input");
+      setRegisterStep("form");
+      return;
+    }
+    if (!registerOtp.trim()) {
+      setRegisterError("Enter the verification code");
+      return;
+    }
+    setRegisterBusy(true);
+    try {
+      await completeRegister(parsed.data, registerOtp.trim());
+    } catch (err) {
+      setRegisterError(
+        err instanceof Error ? err.message : "Verification failed"
+      );
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const handleResendRegisterOtp = async () => {
+    if (registerCooldown > 0) return;
+    setRegisterError("");
+    setRegisterBusy(true);
+    try {
+      const res = await authApi.requestRegisterOtp({ phone: registerPhone });
+      setRegisterCooldown(res.cooldown_seconds ?? 60);
+      if (res.dev_code) setRegisterOtp(res.dev_code);
+    } catch (err) {
+      const wait = retryAfterOf(err);
+      if (wait > 0) setRegisterCooldown(wait);
+      setRegisterError(err instanceof Error ? err.message : "Failed to resend code");
+    } finally {
+      setRegisterBusy(false);
+    }
+  };
+
+  const openForgotPassword = () => {
+    setLoginOpen(false);
+    setForgotError("");
+    setForgotSuccess("");
+    setForgotStep("phone");
+    setForgotPhone(phone || "");
+    setForgotCode("");
+    setForgotNewPassword("");
+    setForgotConfirmPassword("");
+    setShowForgotPassword(false);
+    setShowForgotConfirm(false);
+    setForgotCooldown(0);
+    setForgotOpen(true);
+  };
+
+  // Step 1 → 2: request the reset code, then advance to the code screen.
+  const handleForgotRequest = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    setForgotError("");
+    setForgotSuccess("");
+    if (!forgotPhone.trim()) {
+      setForgotError("Enter your phone number");
+      return;
+    }
+    if (forgotCooldown > 0) return;
+    setForgotBusy(true);
+    try {
+      const res = await authApi.requestPasswordResetOtp({ phone: forgotPhone.trim() });
+      if (res.otp_required === false) {
+        setForgotError("Password reset is not available right now.");
+        return;
+      }
+      setForgotCooldown(res.cooldown_seconds ?? 60);
+      if (res.dev_code) setForgotCode(res.dev_code);
+      setForgotSuccess("If the account exists, a reset code has been sent.");
+      setForgotStep("code");
+    } catch (err) {
+      const wait = retryAfterOf(err);
+      if (wait > 0) setForgotCooldown(wait);
+      setForgotError(err instanceof Error ? err.message : "Request failed");
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  // Step 2 → 3: verify the OTP with the backend, then move to set the new
+  // password. The single-use code is validated here WITHOUT being consumed —
+  // it is only consumed when the password is actually changed on step 3.
+  const handleForgotCodeContinue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError("");
+    if (!forgotCode.trim()) {
+      setForgotError("Enter the verification code");
+      return;
+    }
+    setForgotBusy(true);
+    try {
+      await authApi.verifyPasswordResetOtp({
+        phone: forgotPhone.trim(),
+        code: forgotCode.trim(),
+      });
+      setForgotSuccess("");
+      setForgotStep("password");
+    } catch (err) {
+      setForgotError(
+        err instanceof Error ? err.message : "Invalid or expired code"
+      );
+    } finally {
+      setForgotBusy(false);
+    }
+  };
+
+  // Step 3: set the new password (verifies the code in the same request).
+  const handleForgotReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError("");
+    if (forgotNewPassword.length < 8) {
+      setForgotError("New password must be at least 8 characters.");
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError("Passwords do not match.");
+      return;
+    }
+    setForgotBusy(true);
+    try {
+      await authApi.resetPasswordWithOtp({
+        phone: forgotPhone.trim(),
+        code: forgotCode.trim(),
+        new_password: forgotNewPassword,
+      });
+      setForgotSuccess("Password reset. You can now log in.");
+      setTimeout(() => {
+        setForgotOpen(false);
+        setLoginOpen(true);
+      }, 1200);
+    } catch (err) {
+      // A bad/expired code surfaces here; send the user back to the code
+      // step so they can re-enter or resend without losing their place.
+      setForgotError(err instanceof Error ? err.message : "Reset failed");
+      setForgotStep("code");
+    } finally {
+      setForgotBusy(false);
     }
   };
 
@@ -934,6 +1202,19 @@ export function Header() {
             <div className="text-xs text-gray-500 p-2 rounded bg-gray-900">
               <p className="mb-1">Use your registered account credentials.</p>
             </div>
+            {/* Always offer password recovery from the login screen. When no
+                provider is enabled the reset request replies that recovery is
+                unavailable and the dialog surfaces a friendly message, so the
+                entry point is never a dead end. */}
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={openForgotPassword}
+                className="text-sm text-[var(--mezzo-accent-yellow)] hover:underline"
+              >
+                Forgot Password?
+              </button>
+            </div>
             <Button
               type="submit"
               className="w-full text-black font-semibold"
@@ -966,7 +1247,10 @@ export function Header() {
               Register
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleRegister} className="space-y-4 pt-4">
+          <form
+            onSubmit={registerStep === "otp" ? handleVerifyRegister : handleRegister}
+            className="space-y-4 pt-4"
+          >
             {registerError && (
               <div className="px-4 py-2 rounded bg-red-500/20 border border-red-500 text-red-400 text-sm">
                 {registerError}
@@ -977,6 +1261,8 @@ export function Header() {
                 {registerSuccess}
               </div>
             )}
+            {registerStep === "form" && (
+            <>
             <div>
               <label className="text-sm text-gray-400">Full Name</label>
               <Input
@@ -1033,12 +1319,59 @@ export function Header() {
                 required
               />
             </div>
+            </>
+            )}
+            {registerStep === "otp" && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-400">
+                  Enter the verification code sent to{" "}
+                  <span className="text-white">{registerPhone}</span>
+                  {authConfig?.otp_channel === "telegram" ? " via Telegram" : " via SMS"}.
+                </p>
+                <Input
+                  value={registerOtp}
+                  onChange={(e) => setRegisterOtp(e.target.value)}
+                  placeholder="Verification code"
+                  inputMode="numeric"
+                  className="mt-1 bg-gray-900 border-gray-700 text-white tracking-widest text-center focus-visible:ring-[var(--mezzo-accent-green)]"
+                  required
+                />
+                <div className="flex justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setRegisterStep("form")}
+                    className="text-gray-400 hover:underline"
+                  >
+                    Edit details
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleResendRegisterOtp()}
+                    disabled={registerBusy || registerCooldown > 0}
+                    className="text-[var(--mezzo-accent-yellow)] hover:underline disabled:opacity-50"
+                  >
+                    {registerCooldown > 0
+                      ? `Resend in ${registerCooldown}s`
+                      : "Resend code"}
+                  </button>
+                </div>
+              </div>
+            )}
             <Button
               type="submit"
-              className="w-full text-black font-semibold"
+              disabled={registerBusy}
+              className="w-full text-black font-semibold disabled:opacity-60"
               style={{ background: "var(--mezzo-accent-green)" }}
             >
-              Register
+              {registerStep === "otp"
+                ? registerBusy
+                  ? "Verifying…"
+                  : "Verify & Create Account"
+                : registerBusy
+                  ? "Please wait…"
+                  : authConfig?.otp_required
+                    ? "Continue"
+                    : "Register"}
             </Button>
             <p className="text-center text-sm text-gray-400">
               Already have an account?{" "}
@@ -1051,6 +1384,225 @@ export function Header() {
                 className="text-[var(--mezzo-accent-yellow)] hover:underline"
               >
                 Login
+              </button>
+            </p>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Forgot Password Dialog — 3-step wizard (phone → code → password) */}
+      <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
+        <DialogContent className="bg-black border-gray-800 text-white">
+          <DialogHeader>
+            {/* Back navigation between steps (mirrors the reference model). */}
+            {forgotStep !== "phone" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotError("");
+                  setForgotStep(forgotStep === "password" ? "code" : "phone");
+                }}
+                className="flex items-center gap-1 text-sm text-gray-400 hover:text-white w-fit"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </button>
+            )}
+            <DialogTitle className="text-xl font-bold text-[var(--mezzo-accent-green)]">
+              Reset Password
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Segmented progress bar — one filled segment per completed/active step. */}
+          <div className="flex items-center gap-2 pt-1">
+            {(["phone", "code", "password"] as const).map((step, idx) => {
+              const activeIdx =
+                forgotStep === "phone" ? 0 : forgotStep === "code" ? 1 : 2;
+              const filled = idx <= activeIdx;
+              return (
+                <div
+                  key={step}
+                  className="h-1.5 flex-1 rounded-full transition-colors"
+                  style={{
+                    background: filled
+                      ? "var(--mezzo-accent-green)"
+                      : "var(--mezzo-bg-tertiary)",
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          <form
+            onSubmit={
+              forgotStep === "phone"
+                ? handleForgotRequest
+                : forgotStep === "code"
+                  ? handleForgotCodeContinue
+                  : handleForgotReset
+            }
+            className="space-y-4 pt-4"
+          >
+            {forgotError && (
+              <div className="px-4 py-2 rounded bg-red-500/20 border border-red-500 text-red-400 text-sm">
+                {forgotError}
+              </div>
+            )}
+            {forgotSuccess && (
+              <div className="px-4 py-2 rounded bg-green-500/20 border border-green-500 text-green-400 text-sm">
+                {forgotSuccess}
+              </div>
+            )}
+
+            {/* Step 1 — phone number */}
+            {forgotStep === "phone" && (
+              <div>
+                <label className="text-sm text-gray-400">Phone Number</label>
+                <Input
+                  value={forgotPhone}
+                  onChange={(e) => setForgotPhone(e.target.value)}
+                  placeholder="0924004654"
+                  inputMode="tel"
+                  autoFocus
+                  className="mt-1 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"
+                  required
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                  We&apos;ll send a verification code to this number.
+                </p>
+              </div>
+            )}
+
+            {/* Step 2 — verification code */}
+            {forgotStep === "code" && (
+              <div className="space-y-2">
+                <label className="text-sm text-gray-400">
+                  Verification Code
+                </label>
+                <p className="text-xs text-gray-500">
+                  Enter the code sent to{" "}
+                  <span className="text-white">{forgotPhone}</span>.
+                </p>
+                <Input
+                  value={forgotCode}
+                  onChange={(e) => setForgotCode(e.target.value)}
+                  placeholder="Enter the code"
+                  inputMode="numeric"
+                  autoFocus
+                  className="mt-1 bg-gray-900 border-gray-700 text-white tracking-[0.4em] text-center text-lg focus-visible:ring-[var(--mezzo-accent-green)]"
+                  required
+                />
+                <div className="text-right text-xs">
+                  <button
+                    type="button"
+                    onClick={(e) => void handleForgotRequest(e)}
+                    disabled={forgotBusy || forgotCooldown > 0}
+                    className="text-[var(--mezzo-accent-yellow)] hover:underline disabled:opacity-50"
+                  >
+                    {forgotCooldown > 0
+                      ? `Resend in ${forgotCooldown}s`
+                      : "Resend code"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3 — new password + confirm */}
+            {forgotStep === "password" && (
+              <>
+                <div>
+                  <label className="text-sm text-gray-400">New Password</label>
+                  <div className="relative mt-1">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                    <Input
+                      type={showForgotPassword ? "text" : "password"}
+                      value={forgotNewPassword}
+                      onChange={(e) => setForgotNewPassword(e.target.value)}
+                      placeholder="Enter new password…"
+                      autoComplete="new-password"
+                      autoFocus
+                      className="pl-9 pr-10 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotPassword((v) => !v)}
+                      aria-label={showForgotPassword ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                    >
+                      {showForgotPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-400">
+                    Confirm Password
+                  </label>
+                  <div className="relative mt-1">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                    <Input
+                      type={showForgotConfirm ? "text" : "password"}
+                      value={forgotConfirmPassword}
+                      onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                      placeholder="Confirm new password…"
+                      autoComplete="new-password"
+                      className="pl-9 pr-10 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotConfirm((v) => !v)}
+                      aria-label={showForgotConfirm ? "Hide password" : "Show password"}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                    >
+                      {showForgotConfirm ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <Button
+              type="submit"
+              disabled={forgotBusy}
+              className="w-full text-black font-semibold disabled:opacity-60"
+              style={{ background: "var(--mezzo-accent-green)" }}
+            >
+              {forgotStep === "phone"
+                ? forgotBusy
+                  ? "Sending…"
+                  : "Send Reset Code"
+                : forgotStep === "code"
+                  ? forgotBusy
+                    ? "Verifying…"
+                    : "Verify Code"
+                  : forgotBusy
+                    ? "Resetting…"
+                    : (
+                        <span className="inline-flex items-center gap-2">
+                          <Check className="w-4 h-4" />
+                          Reset Password
+                        </span>
+                      )}
+            </Button>
+            <p className="text-center text-sm text-gray-400">
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotOpen(false);
+                  setLoginOpen(true);
+                }}
+                className="text-[var(--mezzo-accent-yellow)] hover:underline"
+              >
+                Back to Login
               </button>
             </p>
           </form>

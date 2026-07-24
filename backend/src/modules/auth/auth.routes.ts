@@ -7,6 +7,7 @@ import * as swagger from '../../swagger/registry';
 import {
   authRateLimiter,
   loginRateLimiter,
+  otpFlowRateLimiter,
   passwordResetRateLimiter,
   refreshRateLimiter,
 } from '../../middleware/rate-limiters';
@@ -213,6 +214,14 @@ swagger.registerPath({
 router.use(authRateLimiter);
 
 router.post('/register', requireTenant(), controller.register);
+// Registration OTP request (phone/email verification). Returns
+// { otp_required: false } when both providers are disabled.
+router.post(
+  '/register/request-otp',
+  requireTenant(),
+  otpFlowRateLimiter,
+  controller.registerRequestOtp
+);
 router.post('/login', requireTenant(), loginRateLimiter, controller.login);
 // Development-only: mint a player token so the internal game engine opens
 // for local testing without the user-panel iframe handshake. The controller
@@ -328,6 +337,28 @@ router.post(
   requireTenant(),
   passwordResetRateLimiter,
   controller.resetPassword
+);
+// OTP-based forgot-password flow (provider-delivered code). Kept separate
+// from the token-based endpoints above, which remain fully functional.
+router.post(
+  '/forgot-password/request-otp',
+  requireTenant(),
+  otpFlowRateLimiter,
+  controller.forgotPasswordRequestOtp
+);
+// Two-step reset: verify the OTP (without consuming it) before revealing the
+// new-password screen. The code is only consumed by /reset-password-otp.
+router.post(
+  '/forgot-password/verify-otp',
+  requireTenant(),
+  otpFlowRateLimiter,
+  controller.verifyResetPasswordOtp
+);
+router.post(
+  '/reset-password-otp',
+  requireTenant(),
+  otpFlowRateLimiter,
+  controller.resetPasswordOtp
 );
 
 export default router;

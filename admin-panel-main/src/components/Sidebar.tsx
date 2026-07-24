@@ -161,6 +161,7 @@ const menuItems: MenuItem[] = [
       { title: 'Error Tracking', path: '/monitoring/errors', perm: 'monitoring.errors', icon: <AlertTriangle size={16} /> },
       { title: 'Performance', path: '/monitoring/performance', perm: 'monitoring.performance', icon: <BarChart2 size={16} /> },
       { title: 'Notifications', path: '/monitoring/notifications', perm: 'monitoring.notifications', icon: <Bell size={16} /> },
+      { title: 'Bulk & System Notify', path: '/monitoring/bulk-notifications', perm: 'monitoring.notifications', icon: <Bell size={16} /> },
       { title: 'Audit Trail', path: '/monitoring/audit', perm: 'monitoring.audit', icon: <History size={16} /> },
     ],
   },

@@ -50,10 +50,49 @@ export const registerSchema = z
     phone: z.string().trim().min(8).max(32).optional(),
     password: z.string().min(4).max(128),
     referral_code: z.string().trim().min(2).max(40).optional(),
+    // Registration OTP — only enforced by the service when a provider is
+    // enabled. Optional here so legacy (both-disabled) registration works.
+    otp_code: z.string().trim().min(4).max(12).optional(),
   })
   .refine((d) => Boolean(d.email) || Boolean(d.phone), {
     message: 'Either email or phone is required',
     path: ['email'],
+  });
+
+/** Request a registration OTP (phone/email verification). */
+export const registerOtpSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().optional(),
+    phone: z.string().trim().min(8).max(32).optional(),
+  })
+  .refine((d) => Boolean(d.email) || Boolean(d.phone), {
+    message: 'Either email or phone is required',
+    path: ['phone'],
+  });
+
+/** Verify a password-reset OTP without consuming it (two-step reset UI). */
+export const verifyResetOtpSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().optional(),
+    phone: z.string().trim().min(3).max(32).optional(),
+    code: z.string().trim().min(4).max(12),
+  })
+  .refine((d) => Boolean(d.email) || Boolean(d.phone), {
+    message: 'Either email or phone is required',
+    path: ['phone'],
+  });
+
+/** Reset a password using an OTP code (provider-delivered). */
+export const resetPasswordOtpSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().optional(),
+    phone: z.string().trim().min(3).max(32).optional(),
+    code: z.string().trim().min(4).max(12),
+    new_password: z.string().min(8).max(128),
+  })
+  .refine((d) => Boolean(d.email) || Boolean(d.phone), {
+    message: 'Either email or phone is required',
+    path: ['phone'],
   });
 
 export const refreshSchema = z.object({
@@ -103,5 +142,8 @@ export type RefreshInput = z.infer<typeof refreshSchema>;
 export type LogoutInput = z.infer<typeof logoutSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type RegisterOtpInput = z.infer<typeof registerOtpSchema>;
+export type VerifyResetOtpInput = z.infer<typeof verifyResetOtpSchema>;
+export type ResetPasswordOtpInput = z.infer<typeof resetPasswordOtpSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type VerifyPasswordInput = z.infer<typeof verifyPasswordSchema>;

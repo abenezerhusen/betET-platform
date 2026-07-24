@@ -67,6 +67,28 @@ export const passwordResetRateLimiter = rateLimit({
   },
 });
 
+/**
+ * OTP flow limiter (request / verify / reset-with-code).
+ *
+ * More generous than `passwordResetRateLimiter` because a single legitimate
+ * reset now spans several calls (request the code → verify the code → set the
+ * new password), plus the occasional resend or mistyped code. The real abuse
+ * protection lives in the OTP service itself — per-identifier resend cooldown,
+ * a max number of sends per window with a temporary block, and a wrong-attempt
+ * limit that blocks verification — so this IP+tenant limiter only needs to be
+ * a coarse ceiling against multi-identifier enumeration, not a per-flow gate.
+ */
+export const otpFlowRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  ...STANDARD_HEADERS,
+  keyGenerator: tenantScopedKey('otpflow'),
+  message: {
+    error: 'too_many_requests',
+    message: 'Too many attempts. Please wait a moment and try again.',
+  },
+});
+
 export const refreshRateLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 60,

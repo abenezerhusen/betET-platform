@@ -44,6 +44,7 @@ interface AuthContextValue {
     phone?: string;
     password: string;
     referral_code?: string;
+    otp_code?: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
 }

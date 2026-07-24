@@ -29,6 +29,10 @@ import {
   isMaintenanceActive,
   loadMaintenanceConfig,
 } from '../admin/settings/maintenance-config';
+import {
+  deriveAuthConfig,
+  loadNotificationSettings,
+} from '../notifications/notification-config';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -322,6 +326,45 @@ router.get('/features', async (req, res, next) => {
       };
     });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/auth-config
+ * Public-safe notification/provider flags the user panel needs to decide
+ * the auth UX:
+ *   - otp_required: whether registration/login require an OTP step
+ *     (true when any provider — SMS or Telegram — is enabled).
+ *   - forgot_password_enabled: whether the "Forgot Password" entry should
+ *     be shown (true when a provider can deliver the reset OTP).
+ *   - sms_enabled / telegram_enabled / default_provider / otp_channel:
+ *     informational so the UI can label the delivery channel.
+ * No credentials or secrets are exposed.
+ */
+swagger.registerPath({
+  method: 'get',
+  path: '/api/public/auth-config',
+  summary: 'Public auth/notification flags (OTP + forgot-password gating)',
+  tags: ['Public'],
+  responses: { '200': { description: 'Auth config flags' } },
+});
+
+router.get('/auth-config', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const settings = await loadNotificationSettings(tenantId);
+    const cfg = deriveAuthConfig(settings);
+    res.json({
+      otp_required: cfg.otp_required,
+      otp_channel: cfg.otp_channel,
+      forgot_password_enabled: cfg.forgot_password_enabled,
+      sms_enabled: cfg.sms_enabled,
+      telegram_enabled: cfg.telegram_enabled,
+      default_provider: cfg.default_provider,
+    });
   } catch (err) {
     next(err);
   }

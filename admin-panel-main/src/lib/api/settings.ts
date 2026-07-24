@@ -224,6 +224,26 @@ export interface SecurityConfig {
   ip_allowlist?: string[];
 }
 
+export interface TelegramGatewayConfig {
+  enabled?: boolean;
+  bot_token?: string;
+  gateway_token?: string;
+  chat_config?: string;
+  api_url?: string;
+}
+
+/** OTP security policy — applies to SMS and Telegram OTPs alike. */
+export interface OtpSecurityConfig {
+  expiry_minutes?: number;
+  code_length?: number;
+  resend_cooldown_seconds?: number;
+  max_resend_per_window?: number;
+  resend_window_minutes?: number;
+  resend_block_minutes?: number;
+  max_verify_attempts?: number;
+  verify_block_minutes?: number;
+}
+
 export interface SmsAliasConfig {
   provider?: string;
   api_key?: string;
@@ -237,6 +257,14 @@ export interface SmsAliasConfig {
   smtp_password?: string;
   sms_events?: string[];
   email_events?: string[];
+  /** Master SMS on/off toggle. */
+  sms_enabled?: boolean;
+  /** Telegram Gateway provider config (second channel). */
+  telegram?: TelegramGatewayConfig;
+  /** Preferred channel when both SMS and Telegram are enabled. */
+  default_provider?: 'sms' | 'telegram';
+  /** OTP security policy (expiry, resend + verify limits). */
+  otp?: OtpSecurityConfig;
 }
 
 export const getGeneralConfig = () => http.get<GeneralConfig>('/api/admin/settings/general');

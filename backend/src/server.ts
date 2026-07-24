@@ -14,6 +14,11 @@ import { startKenoLoop, stopKenoLoop } from './workers/keno-loop';
 import { startJetxLoop, stopJetxLoop } from './workers/jetx-loop';
 import { startCashbackLoop, stopCashbackLoop } from './workers/cashback-loop';
 import { startSettlementLoop, stopSettlementLoop } from './workers/settlement-loop';
+import {
+  startNotificationLoop,
+  stopNotificationLoop,
+} from './workers/notification-loop';
+import { startBulkSmsLoop, stopBulkSmsLoop } from './workers/bulk-sms-loop';
 
 async function main(): Promise<void> {
   // Preload tenant CORS origins at boot so the first request isn't blocked.
@@ -39,6 +44,8 @@ async function main(): Promise<void> {
   startJetxLoop();
   startCashbackLoop();
   startSettlementLoop();
+  startNotificationLoop();
+  startBulkSmsLoop();
 
   startTenantOriginsRefresh();
 
@@ -51,6 +58,8 @@ async function main(): Promise<void> {
       stopJetxLoop();
       stopCashbackLoop();
       stopSettlementLoop();
+      stopNotificationLoop();
+      stopBulkSmsLoop();
       await shutdownSocketServer();
       logger.info('socket.io server closed');
     } catch (err) {

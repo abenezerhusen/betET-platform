@@ -49,6 +49,7 @@ import { UserActivityLogs } from './pages/monitoring/UserActivityLogs';
 import { ErrorTracking } from './pages/monitoring/ErrorTracking';
 import { PerformanceAnalytics } from './pages/monitoring/PerformanceAnalytics';
 import { SystemNotifications } from './pages/monitoring/SystemNotifications';
+import { BulkNotifications } from './pages/notifications/BulkNotifications';
 import { AuditTrail } from './pages/monitoring/AuditTrail';
 import { P2PDashboard } from './pages/p2p/Dashboard';
 import { P2PTransactions } from './pages/p2p/Transactions';
@@ -162,6 +163,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/monitoring/errors', perm: 'monitoring.errors', element: <ErrorTracking /> },
   { path: '/monitoring/performance', perm: 'monitoring.performance', element: <PerformanceAnalytics /> },
   { path: '/monitoring/notifications', perm: 'monitoring.notifications', element: <SystemNotifications /> },
+  { path: '/monitoring/bulk-notifications', perm: 'monitoring.notifications', element: <BulkNotifications /> },
   { path: '/monitoring/audit', perm: 'monitoring.audit', element: <AuditTrail /> },
 
   /* P2P */

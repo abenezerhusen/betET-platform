@@ -173,6 +173,12 @@ const administratorCatalog: Permission[] = [
   { id: 'settings.game_picks', name: 'Edit Game Picks', description: 'Edit game pick lists', category: 'Settings', scopes: ['Super Admin'] },
   { id: 'settings.match_stats', name: 'Edit Match Stats', description: 'Edit match stats configuration', category: 'Settings', scopes: ['Super Admin'] },
 
+  /* Marketing — Bulk SMS ---------------------------------------------------- */
+  /* Super Admin by default; can be granted to an Administrator role so a
+   * tenant admin can run the isolated phone-gateway (TextBee) bulk SMS module
+   * without touching the OTP SMS pipeline. */
+  { id: 'marketing.bulk_sms', name: 'Bulk SMS Marketing', description: 'Access the Bulk SMS marketing module: gateway settings, templates, campaigns, queue, history and reports', category: 'Marketing', scopes: adminScopes },
+
   /* Monitoring -------------------------------------------------------------- */
   { id: 'monitoring.activity', name: 'View User Activity Logs', description: 'Access user activity monitoring', category: 'Monitoring', scopes: adminScopes },
   { id: 'monitoring.errors', name: 'View Error Tracking', description: 'Access error tracking', category: 'Monitoring', scopes: adminScopes },

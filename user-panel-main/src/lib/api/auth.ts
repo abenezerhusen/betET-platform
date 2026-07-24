@@ -18,6 +18,7 @@ export interface RegisterInput {
   phone?: string;
   password: string;
   referral_code?: string;
+  otp_code?: string;
 }
 
 export interface ForgotPasswordInput {
@@ -27,6 +28,33 @@ export interface ForgotPasswordInput {
 
 export interface ResetPasswordInput {
   token: string;
+  new_password: string;
+}
+
+/** Public notification/auth flags controlling the OTP + forgot-password UX. */
+export interface AuthConfig {
+  otp_required: boolean;
+  otp_channel: 'sms' | 'telegram' | null;
+  forgot_password_enabled: boolean;
+  sms_enabled: boolean;
+  telegram_enabled: boolean;
+  default_provider: 'sms' | 'telegram' | null;
+}
+
+export interface RequestOtpResponse {
+  otp_required: boolean;
+  sent?: boolean;
+  channel?: 'sms' | 'telegram' | null;
+  expires_in_minutes?: number;
+  resend_remaining?: number;
+  cooldown_seconds?: number;
+  dev_code?: string;
+}
+
+export interface ResetPasswordOtpInput {
+  email?: string;
+  phone?: string;
+  code: string;
   new_password: string;
 }
 
@@ -60,6 +88,7 @@ export async function register(input: RegisterInput): Promise<LoginResponse> {
       email: input.email,
       password: input.password,
       referral_code: input.referral_code,
+      otp_code: input.otp_code,
     },
     skipAuth: true,
   });
@@ -67,6 +96,73 @@ export async function register(input: RegisterInput): Promise<LoginResponse> {
     phone: input.phone,
     email: input.email,
     password: input.password,
+  });
+}
+
+/** Reads the public auth-config flags (OTP requirement, forgot-password). */
+export async function getAuthConfig(): Promise<AuthConfig> {
+  return apiRequest<AuthConfig>('/api/public/auth-config', {
+    method: 'GET',
+    skipAuth: true,
+  });
+}
+
+/** Requests a registration OTP. `otp_required=false` → register directly. */
+export async function requestRegisterOtp(input: {
+  email?: string;
+  phone?: string;
+}): Promise<RequestOtpResponse> {
+  return apiRequest<RequestOtpResponse>('/api/auth/register/request-otp', {
+    method: 'POST',
+    body: input,
+    skipAuth: true,
+  });
+}
+
+/** Requests a password-reset OTP through the active provider. */
+export async function requestPasswordResetOtp(
+  input: ForgotPasswordInput
+): Promise<RequestOtpResponse & { success: boolean }> {
+  return apiRequest('/api/auth/forgot-password/request-otp', {
+    method: 'POST',
+    body: input,
+    skipAuth: true,
+  });
+}
+
+/**
+ * Verifies a password-reset OTP without consuming it (two-step reset UI).
+ * Throws on an invalid/expired/blocked code; resolves when the code is valid.
+ */
+export async function verifyPasswordResetOtp(input: {
+  email?: string;
+  phone?: string;
+  code: string;
+}): Promise<{ success: boolean; verified: boolean }> {
+  return apiRequest('/api/auth/forgot-password/verify-otp', {
+    method: 'POST',
+    body: {
+      email: input.email,
+      phone: input.phone,
+      code: input.code,
+    },
+    skipAuth: true,
+  });
+}
+
+/** Completes a password reset using an OTP code. */
+export async function resetPasswordWithOtp(
+  input: ResetPasswordOtpInput
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/auth/reset-password-otp', {
+    method: 'POST',
+    body: {
+      email: input.email,
+      phone: input.phone,
+      code: input.code,
+      new_password: input.new_password,
+    },
+    skipAuth: true,
   });
 }
 

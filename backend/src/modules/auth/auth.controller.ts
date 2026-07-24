@@ -1,6 +1,9 @@
 import type { Request, Response, NextFunction } from 'express';
 import { env } from '../../config/env';
-import { BadRequestError } from '../../http/errors/http-error';
+import {
+  BadRequestError,
+  TooManyRequestsError,
+} from '../../http/errors/http-error';
 import {
   cashierLoginSchema,
   changePasswordSchema,
@@ -8,8 +11,11 @@ import {
   loginSchema,
   logoutSchema,
   registerSchema,
+  registerOtpSchema,
   refreshSchema,
   resetPasswordSchema,
+  resetPasswordOtpSchema,
+  verifyResetOtpSchema,
   verifyPasswordSchema,
 } from './auth.dto';
 import * as service from './auth.service';
@@ -263,10 +269,64 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       phone: body.phone ?? null,
       password: body.password,
       referralCode: body.referral_code ?? null,
+      otpCode: body.otp_code ?? null,
       ip: getIp(req),
       userAgent: getUa(req),
     });
     res.status(201).json(out);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Request a registration OTP. Returns `{ otp_required: false }` when both
+ * providers are disabled so the client can skip verification and register
+ * directly. In non-production, the code is echoed as `dev_code` for QA.
+ */
+export async function registerRequestOtp(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const body = registerOtpSchema.parse(req.body);
+    const tenantId = requireTenantId(req);
+    const out = await service.requestRegistrationOtp(
+      tenantId,
+      body.email ?? null,
+      body.phone ?? null,
+      getIp(req),
+      getUa(req)
+    );
+    if (out.status === 'cooldown' || out.status === 'blocked') {
+      throw new TooManyRequestsError(
+        out.status === 'cooldown'
+          ? 'Please wait before requesting a new code.'
+          : 'Too many code requests. Please try again later.',
+        {
+          reason: out.status,
+          ...(out.retryAfterSeconds !== undefined
+            ? { retry_after_seconds: out.retryAfterSeconds }
+            : {}),
+        }
+      );
+    }
+    res.json({
+      otp_required: out.required,
+      sent: out.sent,
+      channel: out.channel,
+      expires_in_minutes: out.expiresInMinutes,
+      ...(out.resendRemaining !== undefined
+        ? { resend_remaining: out.resendRemaining }
+        : {}),
+      ...(out.cooldownSeconds !== undefined
+        ? { cooldown_seconds: out.cooldownSeconds }
+        : {}),
+      ...(env.NODE_ENV !== 'production' && out.devCode
+        ? { dev_code: out.devCode }
+        : {}),
+    });
   } catch (err) {
     next(err);
   }
@@ -330,6 +390,116 @@ export async function resetPassword(
     await service.resetPassword(
       tenantId,
       body.token,
+      body.new_password,
+      getIp(req),
+      getUa(req)
+    );
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Request a password-reset OTP through the active provider. Always returns
+ * a generic 200 (never reveals whether the account exists). When no
+ * provider is enabled, returns `{ otp_required: false }`.
+ */
+export async function forgotPasswordRequestOtp(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const body = forgotPasswordSchema.parse(req.body);
+    const tenantId = requireTenantId(req);
+    const out = await service.requestPasswordResetOtp(
+      tenantId,
+      body.email ?? null,
+      body.phone ?? null,
+      getIp(req),
+      getUa(req)
+    );
+    if (out.status === 'cooldown' || out.status === 'blocked') {
+      throw new TooManyRequestsError(
+        out.status === 'cooldown'
+          ? 'Please wait before requesting a new code.'
+          : 'Too many code requests. Please try again later.',
+        {
+          reason: out.status,
+          ...(out.retryAfterSeconds !== undefined
+            ? { retry_after_seconds: out.retryAfterSeconds }
+            : {}),
+        }
+      );
+    }
+    res.json({
+      success: true,
+      otp_required: out.required,
+      channel: out.channel,
+      ...(out.cooldownSeconds !== undefined
+        ? { cooldown_seconds: out.cooldownSeconds }
+        : {}),
+      ...(env.NODE_ENV !== 'production' && out.devCode
+        ? { dev_code: out.devCode }
+        : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Verify a password-reset OTP without consuming it. Powers the two-step
+ * reset UI: confirm the code is valid, then show the new-password screen.
+ * On an invalid/expired/blocked code returns 400 with a machine-readable
+ * reason so the client can keep the user on the code step.
+ */
+export async function verifyResetPasswordOtp(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const body = verifyResetOtpSchema.parse(req.body);
+    const tenantId = requireTenantId(req);
+    const verdict = await service.verifyPasswordResetOtp(
+      tenantId,
+      body.email ?? null,
+      body.phone ?? null,
+      body.code
+    );
+    if (!verdict.ok) {
+      throw new BadRequestError('Invalid or expired verification code', {
+        reason: verdict.reason ?? 'otp_invalid',
+        ...(verdict.attemptsRemaining !== undefined
+          ? { attempts_remaining: verdict.attemptsRemaining }
+          : {}),
+        ...(verdict.retryAfterSeconds !== undefined
+          ? { retry_after_seconds: verdict.retryAfterSeconds }
+          : {}),
+      });
+    }
+    res.json({ success: true, verified: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Reset a password using an OTP code delivered via the active provider. */
+export async function resetPasswordOtp(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const body = resetPasswordOtpSchema.parse(req.body);
+    const tenantId = requireTenantId(req);
+    await service.resetPasswordWithOtp(
+      tenantId,
+      body.email ?? null,
+      body.phone ?? null,
+      body.code,
       body.new_password,
       getIp(req),
       getUa(req)
