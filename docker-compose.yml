@@ -38,6 +38,13 @@ services:
       PORT: 4000
       FRONTEND_URL: http://localhost:3000
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Real odds/match data provider. `odds_api` activates the background sync
+      # loop (odds-sync-loop) which imports fixtures + odds from Odds-API.io.
+      # The API key itself is entered in the admin panel (sealed in the DB);
+      # ODDS_API_KEY here is only a fallback for headless boots.
+      DATA_PROVIDER: ${DATA_PROVIDER:-odds_api}
+      ODDS_API_KEY: ${ODDS_API_KEY:-}
+      ODDS_API_URL: ${ODDS_API_URL:-https://api.odds-api.io/v3}
       CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3003,http://127.0.0.1:5173"
     ports:
       - "4000:4000"

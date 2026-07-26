@@ -172,6 +172,7 @@ const administratorCatalog: Permission[] = [
   { id: 'settings.sms', name: 'Edit SMS Config', description: 'Edit SMS configuration', category: 'Settings', scopes: ['Super Admin'] },
   { id: 'settings.game_picks', name: 'Edit Game Picks', description: 'Edit game pick lists', category: 'Settings', scopes: ['Super Admin'] },
   { id: 'settings.match_stats', name: 'Edit Match Stats', description: 'Edit match stats configuration', category: 'Settings', scopes: ['Super Admin'] },
+  { id: 'settings.sports_provider', name: 'Edit Sports Data Provider', description: 'Configure the real odds/match data provider (Odds-API.io): API key, bookmaker, sports, sync and manual sync', category: 'Settings', scopes: ['Super Admin'] },
 
   /* Marketing — Bulk SMS ---------------------------------------------------- */
   /* Super Admin by default; can be granted to an Administrator role so a

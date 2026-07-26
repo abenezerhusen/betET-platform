@@ -13,8 +13,10 @@
  * of scope for the multi-provider work.
  */
 
+import nodemailer, { type Transporter } from 'nodemailer';
 import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { logger } from '../../infrastructure/logger';
+import { env } from '../../config/env';
 import * as repo from './notifications.repository';
 import { normalizeNotificationSettings } from './notification-config';
 import {
@@ -45,6 +47,33 @@ interface SendEmailParams {
   to: string | null | undefined;
   subject: string;
   body: string;
+  /** Optional HTML alternative. Falls back to a <pre> of `body` when omitted. */
+  html?: string;
+}
+
+/**
+ * Lazily-created SMTP transport. Real email is sent only when SMTP_HOST is
+ * configured; otherwise callers fall back to the dev log stub. Cached so we
+ * don't rebuild a connection pool on every send.
+ */
+let mailTransport: Transporter | null = null;
+function getMailTransport(): Transporter | null {
+  if (!env.SMTP_HOST) return null;
+  if (mailTransport) return mailTransport;
+  mailTransport = nodemailer.createTransport({
+    host: env.SMTP_HOST,
+    port: env.SMTP_PORT,
+    secure: env.SMTP_SECURE,
+    auth:
+      env.SMTP_USER && env.SMTP_PASS
+        ? { user: env.SMTP_USER, pass: env.SMTP_PASS }
+        : undefined,
+  });
+  return mailTransport;
+}
+
+function isSmtpConfigured(): boolean {
+  return Boolean(env.SMTP_HOST);
 }
 
 /** Infer a log category from the legacy SMS event/template code. */
@@ -95,23 +124,50 @@ export async function sendEmailBestEffort(params: SendEmailParams): Promise<void
   if (!to) return;
 
   try {
+    // Production path: when an SMTP server is configured, security /
+    // transactional emails (e.g. admin password reset) are always sent —
+    // independent of the tenant's marketing email toggle, since blocking a
+    // password-reset email would lock admins out of their own accounts.
+    const transport = getMailTransport();
+    if (transport) {
+      await transport.sendMail({
+        from: env.EMAIL_FROM,
+        to,
+        subject: params.subject,
+        text: params.body,
+        html:
+          params.html ??
+          `<pre style="font-family:inherit;white-space:pre-wrap">${params.body}</pre>`,
+      });
+      logger.info(
+        { tenantId: params.tenantId, to, subject: params.subject },
+        'email sent via SMTP'
+      );
+      return;
+    }
+
+    // Dev / no-SMTP fallback: respect the tenant toggle and log-only stub so
+    // local development keeps working without a mail server configured.
     const cfg = await withTenantClient({ tenantId: params.tenantId }, async (client) =>
       repo.getSmsProviderConfig(client, params.tenantId)
     );
     if (!isEmailEnabled(cfg)) {
       logger.info(
         { tenantId: params.tenantId, to, subject: params.subject },
-        'email disabled in sms.provider.config.features.email; skipped'
+        'email skipped: no SMTP configured and tenant email feature disabled'
       );
       return;
     }
-
-    // Stub transport for now; can be replaced with SMTP/provider integration.
     logger.info(
       { tenantId: params.tenantId, to, subject: params.subject, body: params.body },
-      'email dispatched (transport stub)'
+      'email dispatched (dev log stub — configure SMTP_HOST for real delivery)'
     );
   } catch (err) {
     logger.error({ err, tenantId: params.tenantId, to }, 'email dispatch failed');
   }
+}
+
+/** Whether real (SMTP) email delivery is available in this environment. */
+export function emailDeliveryConfigured(): boolean {
+  return isSmtpConfigured();
 }

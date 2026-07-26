@@ -4,6 +4,7 @@ import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { BadRequestError, NotFoundError } from '../../http/errors/http-error';
 import { authenticateToken } from '../../middleware/authenticate';
 import * as swagger from '../../swagger/registry';
+import { ensureEventOdds } from './providers/sync.service';
 
 const router = Router();
 
@@ -98,6 +99,18 @@ router.get(
         filters.push(`lower(ev.league) = lower($${i++})`);
         values.push(q.league);
       }
+      // Only surface fixtures that carry REAL odds from the provider. The
+      // 100 req/hr provider budget can price a subset of the imported
+      // events at a time, so unpriced fixtures are hidden entirely rather
+      // than shown with mock/placeholder prices. Every match the user sees
+      // therefore has live, provider-sourced 1x2 odds — no fabricated data.
+      filters.push(`EXISTS (
+        SELECT 1 FROM sports_markets m
+          JOIN sports_selections s ON s.market_id = m.id
+         WHERE m.event_id = ev.id
+           AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
+           AND s.odds_decimal IS NOT NULL
+      )`);
       const where = `WHERE ${filters.join(' AND ')}`;
       const total = await client.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM sports_events ev ${where}`,
@@ -154,6 +167,12 @@ router.get(
                             JOIN sports_selections s ON s.market_id = m.id
                             JOIN sportsbook_bet_legs bl ON bl.selection_id = s.id
                            WHERE m.event_id = ev.id), 0) AS total_bets,
+                COALESCE((SELECT COUNT(*)::int FROM sports_markets m
+                           WHERE m.event_id = ev.id), 0) AS market_count,
+                COALESCE((SELECT COUNT(*)::int
+                            FROM sports_markets m
+                            JOIN sports_selections s ON s.market_id = m.id
+                           WHERE m.event_id = ev.id), 0) AS selection_count,
                 (SELECT odds_decimal::numeric FROM mapped
                    WHERE event_id = ev.id AND pick = 'home'
                    ORDER BY created_at ASC LIMIT 1) AS home_odds,
@@ -163,6 +182,28 @@ router.get(
                 (SELECT odds_decimal::numeric FROM mapped
                    WHERE event_id = ev.id AND pick = 'away'
                    ORDER BY created_at ASC LIMIT 1) AS away_odds,
+                -- Real secondary-market prices for the MatchCard grid. Null
+                -- when that market hasn't been priced yet (card shows "—").
+                (SELECT s.odds_decimal::numeric FROM sports_markets m
+                    JOIN sports_selections s ON s.market_id = m.id
+                   WHERE m.event_id = ev.id AND m.market_type = 'double_chance'
+                     AND s.label ILIKE 'Home or Draw' LIMIT 1) AS home1x_odds,
+                (SELECT s.odds_decimal::numeric FROM sports_markets m
+                    JOIN sports_selections s ON s.market_id = m.id
+                   WHERE m.event_id = ev.id AND m.market_type = 'double_chance'
+                     AND s.label ILIKE 'Home or Away' LIMIT 1) AS draw12_odds,
+                (SELECT s.odds_decimal::numeric FROM sports_markets m
+                    JOIN sports_selections s ON s.market_id = m.id
+                   WHERE m.event_id = ev.id AND m.market_type = 'double_chance'
+                     AND s.label ILIKE 'Draw or Away' LIMIT 1) AS away2x_odds,
+                (SELECT s.odds_decimal::numeric FROM sports_markets m
+                    JOIN sports_selections s ON s.market_id = m.id
+                   WHERE m.event_id = ev.id AND m.market_type = 'btts'
+                     AND s.label ILIKE 'Yes' LIMIT 1) AS yes_score_odds,
+                (SELECT s.odds_decimal::numeric FROM sports_markets m
+                    JOIN sports_selections s ON s.market_id = m.id
+                   WHERE m.event_id = ev.id AND m.market_type = 'btts'
+                     AND s.label ILIKE 'No' LIMIT 1) AS no_score_odds,
                 (SELECT selection_id FROM mapped
                    WHERE event_id = ev.id AND pick = 'home'
                    ORDER BY created_at ASC LIMIT 1) AS home_selection_id,
@@ -181,13 +222,9 @@ router.get(
            LIMIT $${i++} OFFSET $${i++}`,
         [...values, q.limit, offset]
       );
-      // Backwards-compat: keep returning sensible odds defaults when a
-      // fixture is missing 1x2 selections (e.g. casino-only tenants).
-      for (const r of rows.rows as Record<string, unknown>[]) {
-        if (r.home_odds == null) r.home_odds = '1.50';
-        if (r.draw_odds == null) r.draw_odds = '3.00';
-        if (r.away_odds == null) r.away_odds = '2.50';
-      }
+      // No placeholder odds: the EXISTS filter above guarantees every row
+      // has real provider 1x2 prices, so we return exactly what the
+      // provider gave us (draw_odds may be null for two-way sports).
       return {
         items: rows.rows,
         total: Number(total.rows[0]?.count ?? 0),
@@ -239,6 +276,12 @@ router.get(
       const event = eventRes.rows[0];
       if (!event) throw new NotFoundError('Match not found');
 
+      // On-demand: pull this fixture's REAL markets/odds live from the provider
+      // when they're missing or stale, so an opened match always shows the same
+      // live data as the source site (no placeholder odds). Best-effort — never
+      // blocks the response on a provider hiccup.
+      await ensureEventOdds(tenantId, String(event.id));
+
       const marketsRes = await client.query(
         `SELECT m.id, m.market_type, m.label, m.status,
                 COALESCE(
@@ -256,7 +299,15 @@ router.get(
            LEFT JOIN sports_selections s ON s.market_id = m.id
           WHERE m.event_id = $1
           GROUP BY m.id, m.market_type, m.label, m.status
-          ORDER BY m.created_at`,
+          ORDER BY CASE m.market_type
+                     WHEN '1x2' THEN 0
+                     WHEN 'double_chance' THEN 1
+                     WHEN 'dnb' THEN 2
+                     WHEN 'over_under_2_5' THEN 3
+                     WHEN 'btts' THEN 4
+                     ELSE 5
+                   END,
+                   m.market_type, m.created_at`,
         [event.id]
       );
 

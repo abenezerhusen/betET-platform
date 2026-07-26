@@ -95,6 +95,42 @@ const envSchema = z.object({
   GAME_ENGINE_URL: z.string().default('http://localhost:3002'),
   // Default redirect for `return_url` when a player exits an external game.
   FRONTEND_URL: z.string().default('http://localhost:3000'),
+  // Public URL of the ADMIN PANEL. Used to build the password-reset link that
+  // is emailed to admins/superadmins (the admin reset page reads ?token=).
+  ADMIN_PANEL_URL: z.string().default('http://localhost:5173'),
+
+  /* ----------------------------------------------------------------------- */
+  /* Transactional email (SMTP) — powers admin password-reset delivery.      */
+  /* When SMTP_HOST is set, security emails (e.g. password reset) are sent    */
+  /* for real. When unset, the app falls back to the dev log-only stub so     */
+  /* local development keeps working without a mail server.                   */
+  /* ----------------------------------------------------------------------- */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  // true → implicit TLS (port 465). false → STARTTLS (port 587).
+  SMTP_SECURE: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((v) => v === true || v === 'true'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  // From header for outbound mail, e.g. "BetET <no-reply@yourdomain.com>".
+  EMAIL_FROM: z.string().default('BetET <no-reply@betet.local>'),
+
+  /* ----------------------------------------------------------------------- */
+  /* Sports data provider (Odds-API.io real odds/match integration)          */
+  /* ----------------------------------------------------------------------- */
+  // Master switch for where sportsbook fixtures/odds come from:
+  //   'mock'     → existing seed / admin-managed data (DEFAULT, unchanged).
+  //   'odds_api' → the Odds-API.io background sync feeds sports_events/markets/
+  //                selections. The sync also requires the per-tenant provider
+  //                row to be `enabled` and an API key to be present.
+  DATA_PROVIDER: z.enum(['mock', 'odds_api']).default('mock'),
+  // Odds-API.io base URL (v3). Overridable per tenant in the admin panel.
+  ODDS_API_URL: z.string().default('https://api.odds-api.io/v3'),
+  // Default Odds-API.io API key. A per-tenant key entered in the admin panel
+  // (sealed at rest) takes precedence over this env value. Never hardcode.
+  ODDS_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.parse(process.env);
@@ -153,6 +189,18 @@ export const env = {
   BACKEND_URL: parsed.BACKEND_URL,
   GAME_ENGINE_URL: parsed.GAME_ENGINE_URL,
   FRONTEND_URL: parsed.FRONTEND_URL,
+  ADMIN_PANEL_URL: parsed.ADMIN_PANEL_URL,
+
+  SMTP_HOST: parsed.SMTP_HOST,
+  SMTP_PORT: parsed.SMTP_PORT,
+  SMTP_SECURE: parsed.SMTP_SECURE,
+  SMTP_USER: parsed.SMTP_USER,
+  SMTP_PASS: parsed.SMTP_PASS,
+  EMAIL_FROM: parsed.EMAIL_FROM,
+
+  DATA_PROVIDER: parsed.DATA_PROVIDER,
+  ODDS_API_URL: parsed.ODDS_API_URL,
+  ODDS_API_KEY: parsed.ODDS_API_KEY,
 
   /**
    * 32-byte AES-256 key for sealing provider secrets at rest. In production

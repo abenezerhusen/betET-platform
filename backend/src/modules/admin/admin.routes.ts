@@ -50,6 +50,8 @@ import notificationsAliasRouter from './notifications-alias/notifications-alias.
 import notificationsCenterRouter from './notifications-center/notifications-center.module';
 // Marketing — isolated phone-gateway (TextBee) bulk SMS module.
 import bulkSmsRouter from './bulk-sms/bulk-sms.module';
+// Real odds/match data provider (Odds-API.io) admin control surface.
+import sportsProviderRouter from '../sports/providers/provider.routes';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -108,6 +110,10 @@ router.use('/notifications-center', notificationsCenterRouter);
 // Marketing → Bulk SMS (phone gateway / TextBee). Gated inside the sub-router
 // by the `marketing.bulk_sms` permission — separate from the OTP SMS pipeline.
 router.use('/bulk-sms', bulkSmsRouter);
+// Real odds/match data provider (Odds-API.io). Gated inside the sub-router by
+// `settings.sports_provider`. Config-only in mock mode; drives the background
+// sync when DATA_PROVIDER=odds_api. Never touches betting/wallet/auth.
+router.use('/sports-provider', sportsProviderRouter);
 router.use('/panel-reports', reportsPanelRouter);
 router.use('/configurations', settingsExtraRouter);
 router.use('/transactions', adminTransactionsRouter);

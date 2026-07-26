@@ -93,9 +93,15 @@ export function MatchCard({
   const matchId = `${homeTeam}-${awayTeam}-${date}-${time}`;
   const isFavorite = isFavoriteMatch(matchId);
   const kickoffMs = startsAt ? new Date(startsAt).getTime() : NaN;
+  // `Date.now()` differs between the SSR pass and client hydration, so using it
+  // directly during render causes React hydration mismatches for matches near
+  // kickoff. Keep the first client render identical to the server (live flag
+  // only), then fold in the wall-clock comparison after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const isStarted =
     Boolean(isLive) ||
-    (Number.isFinite(kickoffMs) && kickoffMs <= Date.now());
+    (mounted && Number.isFinite(kickoffMs) && kickoffMs <= Date.now());
   const oddsDisabledClass = isStarted ? "opacity-40 pointer-events-none" : "";
 
   // Deterministic live display progression (no client RNG in production).

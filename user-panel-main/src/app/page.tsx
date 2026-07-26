@@ -8,11 +8,10 @@ import { MatchCard } from "@/components/MatchCard";
 import MobileMainNavTabs from "@/components/MobileMainNavTabs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar as CalendarIcon, ChevronDown, ChevronUp } from "lucide-react";
-import { getMatchesForSportLeague, type SampleMatch } from "@/data/leagueMatches";
 import { OddsButton } from "@/components/OddsButton";
 import {
   sports as sportsCatalog,
-  getSportByKey,
+  getSportForBackendKey,
   getDefaultSport,
   type Sport,
 } from "@/data/sportsCatalog";
@@ -107,44 +106,34 @@ function filterMatchesByTime<T extends { date: string; time: string; startsAt?: 
 
 interface TopLeagueRef {
   country: string;
+  /** Exact provider league name (for the API query). */
   league: string;
+  /** Optional friendly label for display (defaults to `league`). */
+  label?: string;
   flag: string;
 }
 
+// `league` MUST match the provider's exact league name (used to query the API,
+// e.g. "Spain - LaLiga" with no space, "Portugal - Liga Portugal"). `label`
+// is the friendly display text.
 const TOP_LEAGUES: TopLeagueRef[] = [
   { country: "England", league: "Premier League", flag: "https://flagcdn.com/w40/gb-eng.png" },
-  { country: "Spain", league: "La Liga", flag: "https://flagcdn.com/w40/es.png" },
+  { country: "Spain", league: "LaLiga", label: "La Liga", flag: "https://flagcdn.com/w40/es.png" },
   { country: "Italy", league: "Serie A", flag: "https://flagcdn.com/w40/it.png" },
   { country: "Germany", league: "Bundesliga", flag: "https://flagcdn.com/w40/de.png" },
   { country: "France", league: "Ligue 1", flag: "https://flagcdn.com/w40/fr.png" },
-  { country: "Portugal", league: "Primeira Liga", flag: "https://flagcdn.com/w40/pt.png" },
+  { country: "Portugal", league: "Liga Portugal", label: "Primeira Liga", flag: "https://flagcdn.com/w40/pt.png" },
   { country: "Netherlands", league: "Eredivisie", flag: "https://flagcdn.com/w40/nl.png" },
 ];
 
 /**
- * Return a (date, time) pair `offsetMinutes` from now, formatted the same way
- * the sample data already uses (DD/MM + HH:MM). Kept local to `page.tsx` so
- * that only the main-feed schedule adapts — existing match fields and the
- * detailed view are otherwise untouched.
- */
-function scheduleFromNow(offsetMinutes: number): { date: string; time: string } {
-  const d = new Date(Date.now() + offsetMinutes * 60 * 1000);
-  const date = `${String(d.getDate()).padStart(2, "0")}/${String(
-    d.getMonth() + 1,
-  ).padStart(2, "0")}`;
-  const time = `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes(),
-  ).padStart(2, "0")}`;
-  return { date, time };
-}
-
-/**
- * Shape returned by `MatchCard`. We keep the old hardcoded snapshot below
- * as a graceful fallback when the backend isn't reachable (e.g. during
- * local development with the API offline) so the UI never renders empty.
+ * Shape returned by `MatchCard`. Every instance is sourced from the
+ * provider via `/api/sports/matches`; there is no mock fallback.
  */
 interface HomeMatch {
   id?: string;
+  /** Backend sport key (e.g. "football", "ice-hockey") when API-sourced. */
+  sport?: string;
   league: string;
   leagueFlag: string;
   homeTeam: string;
@@ -176,69 +165,6 @@ interface HomeMatch {
   eventId?: string;
   marketId?: string | null;
 }
-
-const FALLBACK_MATCHES: HomeMatch[] = [
-  {
-    league: "England - FA Cup",
-    leagueFlag: "https://ext.same-assets.com/1203561035/3447107198.png",
-    homeTeam: "Burton Albion",
-    awayTeam: "West Ham United",
-    date: "14/02",
-    time: "12:15",
-    sideBets: 567,
-    odds: { home: 6.92, draw: 4.7, away: 1.36, home1x: 2.74, draw12: 1.14, away2x: 1.06, yesScore: 1.76, noScore: 1.9 },
-  },
-  {
-    league: "Spain - La Liga",
-    leagueFlag: "https://ext.same-assets.com/1203561035/1920343590.png",
-    homeTeam: "Espanyol",
-    awayTeam: "Celta De Vigo",
-    date: "14/02",
-    time: "13:00",
-    sideBets: 764,
-    odds: { home: 2.38, draw: 3.02, away: 3, home1x: 1.33, draw12: 1.33, away2x: 1.5, yesScore: 1.91, noScore: 1.78 },
-  },
-  {
-    league: "Italy - Serie A",
-    leagueFlag: "https://ext.same-assets.com/1203561035/2221869759.png",
-    homeTeam: "Como",
-    awayTeam: "Fiorentina",
-    date: "14/02",
-    time: "14:00",
-    sideBets: 734,
-    odds: { home: 1.59, draw: 3.94, away: 5, home1x: 1.13, draw12: 1.21, away2x: 2.18, yesScore: 1.73, noScore: 1.97 },
-  },
-  {
-    league: "Germany - Bundesliga",
-    leagueFlag: "https://ext.same-assets.com/1203561035/2987763661.png",
-    homeTeam: "SV Werder Bremen",
-    awayTeam: "FC Bayern Munich",
-    date: "14/02",
-    time: "14:30",
-    sideBets: 718,
-    odds: { home: 8.11, draw: 5.71, away: 1.27, home1x: 3.27, draw12: 1.1, away2x: 1.05, yesScore: 1.56, noScore: 2.25 },
-  },
-  {
-    league: "Germany - Bundesliga",
-    leagueFlag: "https://ext.same-assets.com/1203561035/2987763661.png",
-    homeTeam: "Bayer 04 Leverkusen",
-    awayTeam: "FC Augsburg",
-    date: "14/02",
-    time: "14:30",
-    sideBets: 706,
-    odds: { home: 1.22, draw: 7.2, away: 11.5, home1x: 1.05, draw12: 1.16, away2x: 4.1, yesScore: 1.72, noScore: 1.98 },
-  },
-  {
-    league: "France - Ligue 1",
-    leagueFlag: "https://ext.same-assets.com/1203561035/3982235625.png",
-    homeTeam: "Paris Saint-Germain",
-    awayTeam: "AS Monaco",
-    date: "14/02",
-    time: "20:45",
-    sideBets: 892,
-    odds: { home: 1.45, draw: 4.8, away: 5.5, home1x: 1.12, draw12: 1.22, away2x: 2.5, yesScore: 1.65, noScore: 2.1 },
-  },
-];
 
 /**
  * Build a flag URL for a backend match row.
@@ -283,11 +209,14 @@ function backendMatchToHome(row: sportsApi.SportsMatchRow): HomeMatch {
     const n = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(n) ? n : fallback;
   };
-  const homeOdds = toNum(row.home_odds, 1.01);
-  const drawOdds = toNum(row.draw_odds, 1.01);
-  const awayOdds = toNum(row.away_odds, 1.01);
+  // Headline 1x2 is always real (the list only returns priced fixtures).
+  // Draw may be absent for two-way sports (tennis) → NaN renders as "—".
+  const homeOdds = toNum(row.home_odds, NaN);
+  const drawOdds = toNum(row.draw_odds, NaN);
+  const awayOdds = toNum(row.away_odds, NaN);
   return {
     id: row.id,
+    sport: row.sport,
     league: row.league ?? row.sport,
     leagueFlag: leagueFlagFor(row.league),
     homeTeam: row.home_team,
@@ -295,19 +224,22 @@ function backendMatchToHome(row: sportsApi.SportsMatchRow): HomeMatch {
     date,
     time,
     startsAt: row.starts_at,
-    sideBets: row.total_bets ?? 0,
+    // "+N" badge = real number of pickable outcomes (selections) across every
+    // market imported for this fixture — the real depth from the provider, no
+    // catalog placeholder count.
+    sideBets: (row.selection_count ?? 0) as number,
     odds: {
       home: homeOdds,
       draw: drawOdds,
       away: awayOdds,
-      // No double-chance / both-score odds in the list payload — derive a
-      // reasonable proxy from the headline 1x2 so the secondary slots
-      // render. The detail page always shows real values.
-      home1x: Math.max(1.05, +(homeOdds * 0.55).toFixed(2)),
-      draw12: Math.max(1.05, +((homeOdds + awayOdds) * 0.3).toFixed(2)),
-      away2x: Math.max(1.05, +(awayOdds * 0.55).toFixed(2)),
-      yesScore: 1.85,
-      noScore: 1.85,
+      // Secondary markets come straight from the provider. When a fixture
+      // hasn't been priced for a given market yet the value is NaN, which
+      // the MatchCard renders as "—" — never a fabricated proxy.
+      home1x: toNum(row.home1x_odds, NaN),
+      draw12: toNum(row.draw12_odds, NaN),
+      away2x: toNum(row.away2x_odds, NaN),
+      yesScore: toNum(row.yes_score_odds, NaN),
+      noScore: toNum(row.no_score_odds, NaN),
     },
     selectionIds: {
       home: row.home_selection_id ?? null,
@@ -373,13 +305,28 @@ function HomePageInner() {
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
   const [selectedLeague, setSelectedLeague] = useState("");
   const [selectedSport, setSelectedSport] = useState<Sport>(() => getDefaultSport());
-  const [sidebarMatches, setSidebarMatches] = useState<SampleMatch[]>([]);
+  // Real matches for the currently opened league (drill-down middle panel).
+  // Populated from `GET /api/sports/matches?league=…` so team names, kickoff
+  // times and odds are the real ones — never mock placeholders.
+  const [sidebarMatches, setSidebarMatches] = useState<HomeMatch[]>([]);
+  const [leagueLoading, setLeagueLoading] = useState(false);
   const [expandedSections, setExpandedSections] = useState<string[]>(["main", "toQualify", "matchResult", "1up", "2up"]);
+  // Real markets for the currently opened fixture (fetched from /matches/:id).
+  // Drives the detail panel's market list so the odds/markets shown match the
+  // synced provider data instead of the static catalog placeholders.
+  const [detailMarkets, setDetailMarkets] = useState<sportsApi.SportsMarket[]>([]);
 
-  // Pulled from `GET /api/sports/matches?status=upcoming`. Defaults to the
-  // hardcoded snapshot so the page never renders empty when the backend
-  // is unreachable.
-  const [matches, setMatches] = useState<HomeMatch[]>(FALLBACK_MATCHES);
+  // Pulled from `GET /api/sports/matches?status=upcoming`. Starts empty and
+  // is populated exclusively from the provider — no mock snapshot. The list
+  // endpoint only returns fixtures that carry real odds.
+  const [matches, setMatches] = useState<HomeMatch[]>([]);
+
+  // Time-based logic (scheduleFromNow / time filters) depends on `Date.now()`,
+  // which differs between the SSR pass and client hydration and would trigger
+  // React hydration mismatches. Keep the first client render identical to the
+  // server (no wall-clock rewriting/filtering) and switch it on after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   // Independent time filters for each tab so switching tabs doesn't lose
   // the user's current selection. Both tabs open on "today" because the main
@@ -390,20 +337,18 @@ function HomePageInner() {
   const [topCalendar, setTopCalendar] = useState<string>("");
 
   // Fetch upcoming matches from the backend (`status=upcoming` is a
-  // spec alias for `scheduled`). When the API is reachable we replace
-  // the fallback snapshot; otherwise the fallback keeps the screen
-  // populated so the user-panel never feels broken offline.
+  // spec alias for `scheduled`). Whatever the provider returns is exactly
+  // what renders — an empty result shows the empty state, never mock data.
   useEffect(() => {
     let cancelled = false;
     sportsApi
       .listSportsMatches({ status: "upcoming", limit: 50 })
       .then((res) => {
         if (cancelled) return;
-        const mapped = (res.items ?? []).map(backendMatchToHome);
-        if (mapped.length > 0) setMatches(mapped);
+        setMatches((res.items ?? []).map(backendMatchToHome));
       })
       .catch(() => {
-        // Keep the fallback in place — the UI still renders something.
+        if (!cancelled) setMatches([]);
       });
     return () => {
       cancelled = true;
@@ -448,53 +393,163 @@ function HomePageInner() {
   // entries so the time filters (1hr/2hr/3hr/6hr/Today/Calendar) keep
   // working even when the API is offline. Real backend rows already
   // come with the live `starts_at` so we leave them alone.
-  const upcomingMatches = useMemo(() => {
-    const offsets = [30, 90, 150, 300, 480, 600];
-    return matches.map((m, i) =>
-      m.id ? m : { ...m, ...scheduleFromNow(offsets[i % offsets.length]) },
-    );
-  }, [matches]);
+  const upcomingMatches = useMemo(() => matches, [matches]);
 
-  // All matches from top football leagues, generated via the sport-aware
-  // helper (same logic the sidebar uses, so the dataset stays consistent).
-  const topLeagueMatches = useMemo<SampleMatch[]>(() => {
-    const football = sportsCatalog[0];
-    return TOP_LEAGUES.flatMap((l) =>
-      getMatchesForSportLeague(football, `${l.country} - ${l.league}`, l.flag),
-    );
+  // Real matches for the headline "TOP LEAGUES" tab. Fetched per configured
+  // league so the tab shows the same fixtures the rest of the world sees.
+  const [topLeagueMatches, setTopLeagueMatches] = useState<HomeMatch[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(
+      TOP_LEAGUES.map((l) =>
+        sportsApi
+          .listSportsMatches({
+            league: `${l.country} - ${l.league}`,
+            status: "upcoming",
+            limit: 25,
+          })
+          .then((res) => res.items ?? [])
+          .catch(() => []),
+      ),
+    ).then((batches) => {
+      if (cancelled) return;
+      const rows = batches.flat();
+      if (rows.length > 0) {
+        const mapped = rows
+          .map(backendMatchToHome)
+          .sort(
+            (a, b) =>
+              new Date(a.startsAt ?? 0).getTime() -
+              new Date(b.startsAt ?? 0).getTime(),
+          );
+        setTopLeagueMatches(mapped);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Load the REAL market book for the opened fixture (all synced markets +
+  // odds), refreshing periodically so live prices track the provider. Cleared
+  // when no real fixture is selected so the catalog fallback can render.
+  useEffect(() => {
+    const matchId = selectedMatch?.id;
+    if (!showDetailedView || !matchId) {
+      setDetailMarkets([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () =>
+      sportsApi
+        .getSportsMatch(String(matchId))
+        .then((res) => {
+          if (!cancelled) setDetailMarkets(res.markets ?? []);
+        })
+        .catch(() => {
+          if (!cancelled) setDetailMarkets([]);
+        });
+    void load();
+    const t = setInterval(() => void load(), 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [showDetailedView, selectedMatch?.id]);
+
+  // Fetch every real fixture for a league and open the detailed drill-down
+  // view. Keeps the exact same UI — only the data source is the live API.
+  const loadLeagueMatches = async (
+    fullLeagueName: string,
+    sport: Sport,
+    preselect?: HomeMatch,
+  ) => {
+    setSelectedSport(sport);
+    setSelectedLeague(fullLeagueName);
+    setExpandedSections(["main", ...sport.bettingMarkets.map((m) => m.key)]);
+    setSidebarMatches([]);
+    // With a preselected match (side-bets click) open the detail view right
+    // away; deep-links wait for the fetch so we don't flash empty odds.
+    if (preselect) {
+      setSelectedMatch(preselect);
+      setShowDetailedView(true);
+    }
+    setLeagueLoading(true);
+    try {
+      // Pull both upcoming and any in-play fixtures for the league.
+      const [up, live] = await Promise.all([
+        sportsApi
+          .listSportsMatches({ league: fullLeagueName, status: "upcoming", limit: 100 })
+          .then((r) => r.items ?? [])
+          .catch(() => []),
+        sportsApi
+          .listSportsMatches({ league: fullLeagueName, status: "live", limit: 50 })
+          .then((r) => r.items ?? [])
+          .catch(() => []),
+      ]);
+      const mapped = [...live, ...up].map(backendMatchToHome);
+      setSidebarMatches(mapped);
+      if (mapped.length > 0) {
+        if (!preselect) setSelectedMatch(mapped[0]);
+        setShowDetailedView(true);
+      } else if (!preselect) {
+        // Empty league via deep-link — still show the frame + empty state.
+        setSelectedMatch({
+          league: fullLeagueName,
+          leagueFlag: leagueFlagFor(fullLeagueName),
+          homeTeam: "",
+          awayTeam: "",
+          date: "",
+          time: "",
+          sideBets: 0,
+          odds: {
+            home: 0, draw: 0, away: 0, home1x: 0, draw12: 0,
+            away2x: 0, yesScore: 0, noScore: 0,
+          },
+        });
+        setShowDetailedView(true);
+      }
+    } finally {
+      setLeagueLoading(false);
+    }
+  };
+
+  // Pre-mount the time filters are skipped (they call `Date.now()`); the full
+  // list renders identically on server + first client paint, then filtering
+  // applies once mounted.
   const upcomingFiltered = useMemo(
-    () => filterMatchesByTime(upcomingMatches, upcomingFilter, upcomingCalendar),
-    [upcomingFilter, upcomingCalendar, upcomingMatches],
+    () =>
+      mounted
+        ? filterMatchesByTime(upcomingMatches, upcomingFilter, upcomingCalendar)
+        : upcomingMatches,
+    [mounted, upcomingFilter, upcomingCalendar, upcomingMatches],
   );
   const topFiltered = useMemo(
-    () => filterMatchesByTime(topLeagueMatches, topFilter, topCalendar),
-    [topFilter, topCalendar, topLeagueMatches],
+    () =>
+      mounted
+        ? filterMatchesByTime(topLeagueMatches, topFilter, topCalendar)
+        : topLeagueMatches,
+    [mounted, topFilter, topCalendar, topLeagueMatches],
   );
 
-  // Deep-link: open detailed view when sidebar navigates to ?sport=..&country=..&league=..
+  // Deep-link: open detailed view when sidebar navigates to
+  // ?sport=..&country=..&league=..&l=<full league name>. The real matches
+  // for that league are fetched from the API (no mock placeholders).
   useEffect(() => {
     const sportKey = searchParams.get("sport");
     const country = searchParams.get("country");
     const league = searchParams.get("league");
-    if (!country || !league) return;
+    const full = searchParams.get("l");
+    if (!full && (!country || !league)) return;
 
-    // Resolve the sport from the URL, falling back to football so existing
-    // deep-links without a sport param keep working unchanged.
-    const sport = getSportByKey(sportKey) ?? getDefaultSport();
-    const countryMeta = sport.countries.find((c) => c.name === country);
-    const leagueFlag = countryMeta?.flag ?? "";
-    const fullLeagueName = `${country} - ${league}`;
-    const generated = getMatchesForSportLeague(sport, fullLeagueName, leagueFlag);
-    if (generated.length === 0) return;
-
-    setSelectedSport(sport);
-    setSidebarMatches(generated);
-    setSelectedLeague(fullLeagueName);
-    setSelectedMatch(generated[0]);
-    setShowDetailedView(true);
-    setExpandedSections(["main", ...sport.bettingMarkets.map((m) => m.key)]);
+    // Resolve the sport for the detail markets. The sidebar sends backend
+    // sport keys (e.g. "ice-hockey", "american-football"); map those to a
+    // catalog/synthesized Sport. Fall back to the catalog-key lookup for any
+    // legacy links, then to football.
+    const sport = sportKey ? getSportForBackendKey(sportKey) : getDefaultSport();
+    const fullLeagueName = full || `${country} - ${league}`;
+    void loadLeagueMatches(fullLeagueName, sport);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   const toggleSection = (key: string) => {
@@ -504,22 +559,18 @@ function HomePageInner() {
   };
 
   const handleSideBetsClick = (match: any) => {
-    // Clicks originating from the hardcoded home page `matches` list are
-    // always football. Inside the detailed view we keep whatever sport the
-    // deep-link effect set.
-    const sportForClick = showDetailedView ? selectedSport : sportsCatalog[0];
-    if (!showDetailedView) setSelectedSport(sportForClick);
+    // Resolve the sport from the fixture itself when it came from the API
+    // (so a baseball / ice-hockey match opens its own markets), otherwise
+    // keep the detail view's current sport or default to football.
+    const sportForClick = match?.sport
+      ? getSportForBackendKey(match.sport)
+      : showDetailedView
+        ? selectedSport
+        : sportsCatalog[0];
 
-    // Preserve the currently loaded league list when clicking a side-bets button
-    // on a match that belongs to the same league (e.g. inside the detailed
-    // view). Only clear it when switching leagues so the home-list filter can
-    // populate for the new league.
-    if (match.league !== selectedLeague) setSidebarMatches([]);
-
-    setSelectedMatch(match);
-    setSelectedLeague(match.league);
-    setShowDetailedView(true);
-    setExpandedSections(["main", ...sportForClick.bettingMarkets.map((m) => m.key)]);
+    // Load the full real fixture list for this league and open the detail
+    // view with the clicked match preselected.
+    void loadLeagueMatches(match.league, sportForClick, match as HomeMatch);
   };
 
   const handleMatchClick = (match: any) => {
@@ -565,6 +616,16 @@ function HomePageInner() {
           </div>
 
           <div className="overflow-auto max-h-[320px] md:max-h-none md:h-[calc(100vh-180px)]">
+            {leagueLoading && leagueMatches.length === 0 && (
+              <div className="px-3 py-8 text-center text-xs text-gray-400">
+                Loading matches…
+              </div>
+            )}
+            {!leagueLoading && leagueMatches.length === 0 && (
+              <div className="px-3 py-8 text-center text-xs text-gray-400">
+                No upcoming matches for this league right now.
+              </div>
+            )}
             {leagueMatches.map((match, index) => (
               <div
                 key={index}
@@ -597,6 +658,12 @@ function HomePageInner() {
                         sel.pick === "home" ? match.odds.home
                         : sel.pick === "draw" ? match.odds.draw
                         : match.odds.away;
+                      // Thread real 1x2 selection ids through so slips added
+                      // from the drill-down resolve in the cashier flow.
+                      const selId =
+                        sel.pick === "home" ? match.selectionIds?.home
+                        : sel.pick === "draw" ? match.selectionIds?.draw
+                        : match.selectionIds?.away;
                       return (
                         <OddsButton
                           key={sel.code}
@@ -608,6 +675,9 @@ function HomePageInner() {
                           market={selectedSport.mainMarketName}
                           selection={sel.code}
                           odds={value}
+                          selectionId={selId ?? undefined}
+                          eventId={match.eventId ?? match.id}
+                          marketId={match.marketId ?? undefined}
                           className="px-2.5 py-1 rounded text-xs hover:opacity-80 transition-opacity"
                           style={{ background: "var(--mezzo-bg-card)" }}
                           onClick={() => handleMatchClick(match)}
@@ -682,7 +752,13 @@ function HomePageInner() {
 
                 {expandedSections.includes("main") && (
                   <div className="px-3 pb-3 space-y-2">
-                    {selectedSport.bettingMarkets.filter(m => m.inMain).map((market) => (
+                    {/* MAIN shows only the headline match-result with REAL
+                        odds. Catalog placeholder mains (To Qualify / 1UP / 2UP)
+                        are never shown — the full real market book renders
+                        below from the provider feed. */}
+                    {selectedSport.bettingMarkets
+                      .filter(m => m.inMain && m.hasMainOdds)
+                      .map((market) => (
                       <div key={market.key}>
                         <button
                           onClick={() => toggleSection(market.key)}
@@ -712,6 +788,10 @@ function HomePageInner() {
                                     sel.pick === "home" ? selectedMatch.odds.home
                                     : sel.pick === "draw" ? selectedMatch.odds.draw
                                     : selectedMatch.odds.away;
+                                  const selId =
+                                    sel.pick === "home" ? selectedMatch.selectionIds?.home
+                                    : sel.pick === "draw" ? selectedMatch.selectionIds?.draw
+                                    : selectedMatch.selectionIds?.away;
                                   return (
                                     <OddsButton
                                       key={sel.code}
@@ -723,11 +803,14 @@ function HomePageInner() {
                                       market={market.name}
                                       selection={sel.code}
                                       odds={value}
+                                      selectionId={selId ?? undefined}
+                                      eventId={selectedMatch.eventId ?? selectedMatch.id}
+                                      marketId={selectedMatch.marketId ?? undefined}
                                       className="py-2 rounded text-center hover:opacity-80 transition-opacity"
                                       style={{ background: "var(--mezzo-bg-tertiary)" }}
                                     >
                                       <div className="text-[10px] text-gray-400">{sel.code}</div>
-                                      <div className="font-bold text-[var(--mezzo-accent-green)]">{value.toFixed(2)}</div>
+                                      <div className="font-bold text-[var(--mezzo-accent-green)]">{Number.isFinite(value) ? value.toFixed(2) : "—"}</div>
                                     </OddsButton>
                                   );
                                 })}
@@ -758,48 +841,65 @@ function HomePageInner() {
                 )}
               </div>
 
-              {/* Other Markets */}
-              {selectedSport.bettingMarkets.filter(m => !m.inMain).map((market) => (
-                <div key={market.key} className="rounded overflow-hidden" style={{ background: "var(--mezzo-bg-secondary)" }}>
-                  <button
-                    onClick={() => toggleSection(market.key)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 font-semibold text-sm"
-                  >
-                    <span>{market.name}</span>
-                    {expandedSections.includes(market.key) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                  </button>
-
-                  {expandedSections.includes(market.key) && market.options && market.options.length > 0 && (
-                    <div className="px-3 pb-3">
-                      <div className={`grid ${
-                        market.options.length === 2 ? 'grid-cols-2' :
-                        market.options.length > 10 ? 'grid-cols-4' :
-                        market.options.length > 6 ? 'grid-cols-3' :
-                        'grid-cols-3'
-                      } gap-2`}>
-                        {market.options.map((option, idx) => (
-                          <OddsButton
-                            key={idx}
-                            homeTeam={selectedMatch.homeTeam}
-                            awayTeam={selectedMatch.awayTeam}
-                            league={selectedMatch.league}
-                            date={selectedMatch.date}
-                            time={selectedMatch.time}
-                            market={market.name}
-                            selection={option.label}
-                            odds={option.odd}
-                            className="py-2 rounded text-center hover:opacity-80 transition-opacity"
-                            style={{ background: "var(--mezzo-bg-tertiary)" }}
+              {/* Other Markets — REAL synced market book when available, so the
+                  odds/markets match the provider (same as every betting site).
+                  Falls back to the catalog layout only before odds sync. */}
+              {detailMarkets.length > 0
+                ? detailMarkets
+                    // Match Result already shown in MAIN above.
+                    .filter((mk) => mk.name !== "Full Time Result" && mk.name !== "Match Result")
+                    .map((mk) => {
+                      const n = mk.selections.length;
+                      const cols = n === 2 ? "grid-cols-2" : n > 10 ? "grid-cols-4" : "grid-cols-3";
+                      return (
+                        <div key={String(mk.id)} className="rounded overflow-hidden" style={{ background: "var(--mezzo-bg-secondary)" }}>
+                          <button
+                            onClick={() => toggleSection(String(mk.id))}
+                            className="w-full flex items-center justify-between px-3 py-2.5 font-semibold text-sm"
                           >
-                            <div className="text-[10px] text-gray-400">{option.label}</div>
-                            <div className="font-bold text-[var(--mezzo-accent-green)]">{option.odd.toFixed(2)}</div>
-                          </OddsButton>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                            <span>{mk.name}</span>
+                            {expandedSections.includes(String(mk.id)) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                          </button>
+                          {expandedSections.includes(String(mk.id)) && n > 0 && (
+                            <div className="px-3 pb-3">
+                              <div className={`grid ${cols} gap-2`}>
+                                {mk.selections.map((option) => (
+                                  <OddsButton
+                                    key={String(option.id)}
+                                    homeTeam={selectedMatch.homeTeam}
+                                    awayTeam={selectedMatch.awayTeam}
+                                    league={selectedMatch.league}
+                                    date={selectedMatch.date}
+                                    time={selectedMatch.time}
+                                    market={mk.name}
+                                    selection={option.name}
+                                    odds={Number(option.odds)}
+                                    selectionId={String(option.id)}
+                                    marketId={String(mk.id)}
+                                    eventId={selectedMatch.id ? String(selectedMatch.id) : undefined}
+                                    className="py-2 rounded text-center hover:opacity-80 transition-opacity"
+                                    style={{ background: "var(--mezzo-bg-tertiary)" }}
+                                  >
+                                    <div className="text-[10px] text-gray-400">{option.name}</div>
+                                    <div className="font-bold text-[var(--mezzo-accent-green)]">{Number(option.odds).toFixed(2)}</div>
+                                  </OddsButton>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                : (
+                  // No mock fallback: the real market book is being fetched
+                  // live from the provider for this fixture.
+                  <div
+                    className="rounded px-3 py-6 text-center text-sm text-gray-400"
+                    style={{ background: "var(--mezzo-bg-secondary)" }}
+                  >
+                    Loading live markets…
+                  </div>
+                )}
             </div>
           </div>
         </div>

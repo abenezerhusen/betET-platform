@@ -1217,22 +1217,30 @@ export async function forgotPassword(
   await tryAudit(tenantId, outcome.audit);
 
   if (outcome.resetToken) {
+    const minutes = env.PASSWORD_RESET_TOKEN_TTL_MINUTES;
+    // Clickable reset link for the admin panel (its reset page reads ?token=).
+    const resetLink = `${env.ADMIN_PANEL_URL.replace(/\/+$/, '')}/reset-password?token=${outcome.resetToken}`;
     await Promise.all([
       sendSmsBestEffort({
         tenantId,
         to: outcome.phone,
         templateCode: 'auth_password_reset',
-        message: 'Password reset token: {token}. It expires in {minutes} minutes.',
-        variables: {
-          token: outcome.resetToken,
-          minutes: env.PASSWORD_RESET_TOKEN_TTL_MINUTES,
-        },
+        message: 'Password reset link: {link} (valid {minutes} min).',
+        variables: { link: resetLink, minutes },
       }),
       sendEmailBestEffort({
         tenantId,
         to: outcome.email,
-        subject: 'Password reset token',
-        body: `Your password reset token is ${outcome.resetToken}. It expires in ${env.PASSWORD_RESET_TOKEN_TTL_MINUTES} minutes.`,
+        subject: 'Reset your password',
+        body:
+          `We received a request to reset your password.\n\n` +
+          `Open this link to choose a new password (valid for ${minutes} minutes):\n${resetLink}\n\n` +
+          `If you did not request this, you can safely ignore this email.`,
+        html:
+          `<p>We received a request to reset your password.</p>` +
+          `<p><a href="${resetLink}" style="display:inline-block;padding:10px 18px;background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">Reset password</a></p>` +
+          `<p style="color:#555;font-size:13px">Or paste this link into your browser (valid for ${minutes} minutes):<br><a href="${resetLink}">${resetLink}</a></p>` +
+          `<p style="color:#888;font-size:12px">If you did not request this, you can safely ignore this email.</p>`,
       }),
     ]);
   }

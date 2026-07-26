@@ -680,6 +680,66 @@ export function getSportByKey(key: string | null | undefined): Sport | undefined
   return sports.find((s) => s.key === key);
 }
 
+/**
+ * Resolve a *backend* sport key (as stored in `sports_events.sport`, e.g.
+ * `ice-hockey`, `american-football`, `mma`) to a `Sport` definition so the
+ * existing detail view can render its markets. Sports that have a rich local
+ * catalog entry reuse it verbatim; everything else gets a minimal synthesized
+ * definition (main money-line / 1x2 only) so real odds still display without
+ * any UI changes.
+ */
+const BACKEND_TO_CATALOG: Record<string, string> = {
+  football: 'football',
+  soccer: 'football',
+  basketball: 'basketball',
+  tennis: 'tennis',
+  'table-tennis': 'tableTennis',
+  volleyball: 'volleyball',
+  'ice-hockey': 'iceHockey',
+  cricket: 'cricket',
+};
+
+const BACKEND_SPORT_META: Record<string, { name: string; draw: boolean; main: string }> = {
+  baseball: { name: 'BASEBALL', draw: false, main: 'Moneyline' },
+  'american-football': { name: 'AM. FOOTBALL', draw: false, main: 'Moneyline' },
+  rugby: { name: 'RUGBY', draw: true, main: 'Match Result' },
+  handball: { name: 'HANDBALL', draw: true, main: 'Match Result' },
+  mma: { name: 'MMA', draw: false, main: 'Fight Winner' },
+  'mixed-martial-arts': { name: 'MMA', draw: false, main: 'Fight Winner' },
+  boxing: { name: 'BOXING', draw: false, main: 'Fight Winner' },
+  esports: { name: 'ESPORTS', draw: false, main: 'Match Winner' },
+};
+
+export function getSportForBackendKey(backendKey: string | null | undefined): Sport {
+  const key = (backendKey ?? '').toLowerCase();
+  const catalogKey = BACKEND_TO_CATALOG[key];
+  if (catalogKey) {
+    const found = sports.find((s) => s.key === catalogKey);
+    if (found) return found;
+  }
+  const meta = BACKEND_SPORT_META[key] ?? {
+    name: key ? key.toUpperCase() : 'SPORT',
+    draw: false,
+    main: 'Match Winner',
+  };
+  // Minimal synthesized sport — only the headline market, driven by the real
+  // 1x2 / money-line odds carried on each fixture. Keeps the detail UI intact.
+  return {
+    key,
+    name: meta.name,
+    fullName: meta.name,
+    icon: GLOBE,
+    count: 0,
+    hasDraw: meta.draw,
+    mainSelections: meta.draw ? SEL_3WAY : SEL_2WAY,
+    mainMarketName: meta.main,
+    countries: [],
+    bettingMarkets: [
+      { name: meta.main, key: 'matchResult', inMain: true, hasMainOdds: true },
+    ],
+  };
+}
+
 export function getDefaultSport(): Sport {
   return sports[0];
 }

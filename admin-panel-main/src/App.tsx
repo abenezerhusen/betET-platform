@@ -40,6 +40,7 @@ import { SmsConfig } from './pages/settings/SmsConfig';
 import { GamePicks } from './pages/settings/GamePicks';
 import { MatchStats } from './pages/settings/MatchStats';
 import { GeneralConfig } from './pages/settings/GeneralConfig';
+import { SportsDataProvider } from './pages/settings/SportsDataProvider';
 import { MainConfiguration } from './pages/settings/MainConfiguration';
 import { PaymentConfiguration } from './pages/settings/PaymentConfiguration';
 import { SecuritySettings } from './pages/settings/SecuritySettings';
@@ -151,6 +152,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/settings/sms', perm: 'settings.sms', element: <SmsConfig /> },
   { path: '/settings/game-picks', perm: 'settings.game_picks', element: <GamePicks /> },
   { path: '/settings/match-stats', perm: 'settings.match_stats', element: <MatchStats /> },
+  { path: '/settings/sports-provider', perm: 'settings.sports_provider', element: <SportsDataProvider /> },
   { path: '/settings/general', perm: 'settings.general', element: <GeneralConfig /> },
   { path: '/settings/main', perm: 'settings.main', element: <MainConfiguration /> },
   { path: '/settings/payment', perm: 'settings.payment', element: <PaymentConfiguration /> },

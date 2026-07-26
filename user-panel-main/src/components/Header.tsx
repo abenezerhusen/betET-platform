@@ -1183,7 +1183,7 @@ export function Header() {
               <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="0924004654"
+                placeholder="0912345678"
                 className="mt-1 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"
                 required
               />
@@ -1279,7 +1279,7 @@ export function Header() {
               <Input
                 value={registerPhone}
                 onChange={(e) => setRegisterPhone(e.target.value)}
-                placeholder="0924004654"
+                placeholder="0912345678"
                 inputMode="tel"
                 autoComplete="tel"
                 className="mt-1 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"
@@ -1461,7 +1461,7 @@ export function Header() {
                 <Input
                   value={forgotPhone}
                   onChange={(e) => setForgotPhone(e.target.value)}
-                  placeholder="0924004654"
+                  placeholder="0912345678"
                   inputMode="tel"
                   autoFocus
                   className="mt-1 bg-gray-900 border-gray-700 text-white focus-visible:ring-[var(--mezzo-accent-green)]"

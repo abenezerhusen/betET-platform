@@ -12,11 +12,22 @@ export interface SportsMatchRow {
   away_score: number;
   minute: number;
   total_bets: number;
+  /** Distinct betting markets available on this fixture (real, from DB). */
+  market_count?: number;
+  /** Total pickable outcomes across all markets (drives the "+N" badge). */
+  selection_count?: number;
   // Postgres NUMERIC is serialized as a string by node-postgres. Callers
   // MUST coerce with Number(...) before doing arithmetic / .toFixed().
   home_odds: number | string;
   draw_odds: number | string;
   away_odds: number | string;
+  // Real secondary-market prices (double chance + both-teams-to-score).
+  // Null/absent when that market hasn't been priced yet → rendered as "—".
+  home1x_odds?: number | string | null;
+  draw12_odds?: number | string | null;
+  away2x_odds?: number | string | null;
+  yes_score_odds?: number | string | null;
+  no_score_odds?: number | string | null;
   // Stable selection IDs for the 1x2 market — present whenever the
   // fixture has a "Match Result" market in the DB. Used by the user
   // panel to attach `selection_id` to slip legs so the cashier panel's

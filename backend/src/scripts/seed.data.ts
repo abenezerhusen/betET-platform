@@ -6,7 +6,7 @@ interface TenantRow {
   slug: string;
 }
 
-async function ensureDefaultTenant(client: PoolClient): Promise<TenantRow> {
+export async function ensureDefaultTenant(client: PoolClient): Promise<TenantRow> {
   const existing = await client.query<TenantRow>(
     `SELECT id, slug FROM tenants WHERE slug = 'default' LIMIT 1`
   );
@@ -17,6 +17,55 @@ async function ensureDefaultTenant(client: PoolClient): Promise<TenantRow> {
      RETURNING id, slug`
   );
   return created.rows[0];
+}
+
+/**
+ * The real, permanent owner superadmin. This is the account the operator uses
+ * in every environment — local, staging, and production go-live. Credentials
+ * default to the values provided by the owner but can be overridden per
+ * environment via env vars (recommended for production hardening / rotation):
+ *
+ *   OWNER_SUPERADMIN_USERNAME   (login username)
+ *   OWNER_SUPERADMIN_PASSWORD   (login password — re-hashed on every run)
+ *   OWNER_SUPERADMIN_EMAIL      (used for "forgot password" recovery)
+ *
+ * The upsert keys on the email so re-running the seed only ever refreshes the
+ * password / role / username and never creates duplicates.
+ */
+const OWNER_SUPERADMIN = {
+  username: process.env.OWNER_SUPERADMIN_USERNAME ?? 'Abenezer@1birrbet',
+  password: process.env.OWNER_SUPERADMIN_PASSWORD ?? 'Abenezer@bet321',
+  email: process.env.OWNER_SUPERADMIN_EMAIL ?? 'abenezer.hussen.ab@gmail.com',
+  fullName: 'Abenezer',
+};
+
+export async function ensureOwnerSuperadmin(
+  client: PoolClient,
+  tenantId: string
+): Promise<void> {
+  const passwordHash = await bcrypt.hash(OWNER_SUPERADMIN.password, 12);
+  const metadata = {
+    full_name: OWNER_SUPERADMIN.fullName,
+    username: OWNER_SUPERADMIN.username,
+  };
+  await client.query(
+    `WITH updated AS (
+       UPDATE users
+          SET password_hash = $3,
+              role = 'superadmin',
+              status = 'active',
+              kyc_status = 'verified',
+              metadata = $4::jsonb,
+              updated_at = now()
+        WHERE tenant_id = $1
+          AND email = $2::citext
+        RETURNING id
+     )
+     INSERT INTO users (tenant_id, email, phone, password_hash, role, status, kyc_status, metadata)
+     SELECT $1, $2::citext, NULL, $3, 'superadmin', 'active', 'verified', $4::jsonb
+     WHERE NOT EXISTS (SELECT 1 FROM updated)`,
+    [tenantId, OWNER_SUPERADMIN.email, passwordHash, JSON.stringify(metadata)]
+  );
 }
 
 // Default Sales Operations permissions granted to the seeded cashier so the
@@ -433,6 +482,7 @@ async function seedRoles(client: PoolClient, tenantId: string): Promise<void> {
 export async function runSeed(client: PoolClient): Promise<void> {
   const tenant = await ensureDefaultTenant(client);
   await seedUsers(client, tenant.id);
+  await ensureOwnerSuperadmin(client, tenant.id);
   await seedRoles(client, tenant.id);
   await seedGames(client, tenant.id);
   await seedSports(client, tenant.id);

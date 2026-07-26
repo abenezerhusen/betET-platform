@@ -11,7 +11,11 @@ import type { AuthTokens } from './types';
  */
 function classifyIdentifier(raw: string): 'email' | 'phone' | 'username' {
   const value = raw.trim();
-  if (value.includes('@')) return 'email';
+  // Only treat as email when it's actually a valid email (local@domain.tld).
+  // A username may legitimately contain "@" (e.g. "Abenezer@1birrbet") without
+  // being an email — those must be sent as `username`, not `email`, otherwise
+  // the backend's strict email validation rejects the login.
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return 'email';
   // Treat values that look like phone numbers (digits, optional +, dashes,
   // spaces, parentheses) as phone. Everything else is a username.
   if (/^[+()\-\s\d]+$/.test(value) && /\d/.test(value)) return 'phone';

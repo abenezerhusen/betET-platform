@@ -19,6 +19,7 @@ import {
   stopNotificationLoop,
 } from './workers/notification-loop';
 import { startBulkSmsLoop, stopBulkSmsLoop } from './workers/bulk-sms-loop';
+import { startOddsSyncLoop, stopOddsSyncLoop } from './workers/odds-sync-loop';
 
 async function main(): Promise<void> {
   // Preload tenant CORS origins at boot so the first request isn't blocked.
@@ -46,6 +47,8 @@ async function main(): Promise<void> {
   startSettlementLoop();
   startNotificationLoop();
   startBulkSmsLoop();
+  // Dormant unless DATA_PROVIDER=odds_api (checked inside start/tick).
+  startOddsSyncLoop();
 
   startTenantOriginsRefresh();
 
@@ -60,6 +63,7 @@ async function main(): Promise<void> {
       stopSettlementLoop();
       stopNotificationLoop();
       stopBulkSmsLoop();
+      stopOddsSyncLoop();
       await shutdownSocketServer();
       logger.info('socket.io server closed');
     } catch (err) {

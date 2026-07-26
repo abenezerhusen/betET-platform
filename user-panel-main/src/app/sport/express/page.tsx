@@ -7,6 +7,13 @@ import { TrendingUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { sportsApi } from "@/lib/api";
 
+// All odds come straight from the provider. Missing values become NaN so the
+// MatchCard renders "—" instead of any fabricated placeholder.
+const asOdd = (v: unknown): number => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : NaN;
+};
+
 function mapMatch(m: sportsApi.SportsMatchRow) {
   const dt = new Date(m.starts_at);
   return {
@@ -16,16 +23,16 @@ function mapMatch(m: sportsApi.SportsMatchRow) {
     awayTeam: m.away_team,
     date: dt.toLocaleDateString(),
     time: dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    sideBets: m.total_bets || 0,
+    sideBets: (m.selection_count || 0) as number,
     odds: {
-      home: Number(m.home_odds || 1.5),
-      draw: Number(m.draw_odds || 3),
-      away: Number(m.away_odds || 2.5),
-      home1x: 1.2,
-      draw12: 1.35,
-      away2x: 1.6,
-      yesScore: 1.7,
-      noScore: 1.9,
+      home: asOdd(m.home_odds),
+      draw: asOdd(m.draw_odds),
+      away: asOdd(m.away_odds),
+      home1x: asOdd(m.home1x_odds),
+      draw12: asOdd(m.draw12_odds),
+      away2x: asOdd(m.away2x_odds),
+      yesScore: asOdd(m.yes_score_odds),
+      noScore: asOdd(m.no_score_odds),
     },
   };
 }

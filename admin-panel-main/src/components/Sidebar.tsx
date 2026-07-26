@@ -151,6 +151,7 @@ const menuItems: MenuItem[] = [
       { title: 'SMS Config', path: '/settings/sms', perm: 'settings.sms', icon: <ChevronRight size={16} /> },
       { title: 'Game Picks', path: '/settings/game-picks', perm: 'settings.game_picks', icon: <ChevronRight size={16} /> },
       { title: 'Match Stats', path: '/settings/match-stats', perm: 'settings.match_stats', icon: <ChevronRight size={16} /> },
+      { title: 'Sports Data Provider', path: '/settings/sports-provider', perm: 'settings.sports_provider', icon: <ChevronRight size={16} /> },
     ],
   },
   {
