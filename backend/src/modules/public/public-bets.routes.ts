@@ -34,6 +34,10 @@ import {
   loadGeneralConfig,
 } from '../admin/settings/general-config';
 import { loadBettingConfig } from '../bets/betting-config';
+import {
+  computeEffectiveStake,
+  loadSportsbookTaxConfig,
+} from '../bets/sportsbook-tax';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -693,7 +697,13 @@ router.post(
               { reason: 'stake_below_min', min: cfg.slip.online_min_stake }
             );
           }
-          const potentialPayout = round2(stake * totalOdds);
+          // Sportsbook Tax layer (additive) — mirror the online path so
+          // offline (cashier / walk-in) tickets get the same effective-stake
+          // payout maths. The printed stake/odds shown to the customer are
+          // never altered.
+          const taxCfg = await loadSportsbookTaxConfig(client, tenantId);
+          const stakeTax = computeEffectiveStake(stake, taxCfg);
+          const potentialPayout = round2(stakeTax.effective_stake * totalOdds);
           if (potentialPayout > cfg.slip.max_payout_per_slip) {
             throw new BadRequestError(
               `Potential payout ${potentialPayout} exceeds slip cap ${cfg.slip.max_payout_per_slip}`,
@@ -765,11 +775,21 @@ router.post(
             `INSERT INTO sportsbook_bets (
                tenant_id, user_id, channel, bet_type,
                stake, currency, total_odds, potential_payout, tax_amount,
-               status, cashout_available, metadata
+               status, cashout_available,
+               original_stake, bet_tax_enabled, bet_tax_percent, bet_tax_amount,
+               effective_stake, gross_payout_before_bonus,
+               compensation_bonus_enabled, compensation_bonus_percent,
+               winning_tax_enabled, winning_tax_percent,
+               metadata
              ) VALUES (
                $1, $2, 'offline', $3,
                $4, $5, $6, $7, 0,
-               'pending', false, $8::jsonb
+               'pending', false,
+               $9, $10, $11, $12,
+               $13, $14,
+               $15, $16,
+               $17, $18,
+               $8::jsonb
              )
              RETURNING id, coupon_code, ticket_code, placed_at`,
             [
@@ -787,7 +807,27 @@ router.post(
                 walk_in: true,
                 picks_count: resolved.length,
                 selections: selectionsForReceipt,
+                tax_snapshot: {
+                  betting_tax_enabled: stakeTax.bet_tax_enabled,
+                  betting_tax_percent: stakeTax.bet_tax_percent,
+                  compensation_bonus_enabled: taxCfg.compensation_bonus_enabled,
+                  compensation_bonus_percent: taxCfg.compensation_bonus_percent,
+                  winning_tax_enabled: taxCfg.winning_tax_enabled,
+                  winning_tax_percent: taxCfg.winning_tax_percent,
+                  winning_tax_threshold: taxCfg.winning_tax_threshold,
+                },
               }),
+              // $9..$18 — tax/bonus audit columns
+              stakeTax.original_stake,
+              stakeTax.bet_tax_enabled,
+              stakeTax.bet_tax_percent,
+              stakeTax.bet_tax_amount,
+              stakeTax.effective_stake,
+              potentialPayout,
+              taxCfg.compensation_bonus_enabled,
+              taxCfg.compensation_bonus_percent,
+              taxCfg.winning_tax_enabled,
+              taxCfg.winning_tax_percent,
             ]
           );
           const betId = inserted.rows[0].id;

@@ -1439,42 +1439,29 @@ export default function MultiHot5Page() {
           />
           
           <div className="relative z-10 flex items-center w-full h-full">
-            {/* Balance Section */}
+            {/* Balance Section — the large stat icon is baked into the bar
+                background image (f2…png); we render only the value so a single
+                icon shows per stat (no duplicate small SVG icon). */}
             <div className="flex-1 flex items-center justify-center gap-2 h-full border-r border-[#4a6a5a]/60">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" style={{ filter: 'drop-shadow(0 0 6px #22c55e)' }}>
-                <rect x="3" y="5" width="18" height="14" rx="2" stroke="#22c55e" strokeWidth="1.5" fill="none" />
-                <rect x="5" y="8" width="6" height="4" rx="1" fill="#22c55e" />
-              </svg>
               <div className="flex flex-col items-center">
                 <p className="text-white font-bold text-sm leading-tight">{balance.toFixed(2)}</p>
-                <p className="text-[9px] text-gray-500 tracking-wider">DMO</p>
+                <p className="text-[9px] text-gray-500 tracking-wider">ETB</p>
               </div>
             </div>
             
             {/* Win Section (Trophy) */}
             <div className="flex-1 flex items-center justify-center gap-2 h-full border-r border-[#4a6a5a]/60">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                <path d="M8 21h8" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round"/>
-                <path d="M12 17v4" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round"/>
-                <path d="M7 3h10v6a5 5 0 0 1-10 0V3Z" fill="#22d3ee"/>
-                <path d="M7 5H5a2 2 0 0 1 0-4h2" stroke="#22d3ee" strokeWidth="1.5"/>
-                <path d="M17 5h2a2 2 0 0 0 0-4h-2" stroke="#22d3ee" strokeWidth="1.5"/>
-              </svg>
               <div className="flex flex-col items-center">
                 <p className="text-white font-bold text-sm leading-tight">{lastWin.toFixed(2)}</p>
-                <p className="text-[9px] text-gray-500 tracking-wider">DMO</p>
+                <p className="text-[9px] text-gray-500 tracking-wider">ETB</p>
               </div>
             </div>
             
             {/* Bet Section (Medal/Ribbon) */}
             <div className="flex-1 flex items-center justify-center gap-2 h-full">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="5" fill="#fbbf24"/>
-                <path d="M9 12l-2 9 5-3 5 3-2-9" fill="#fbbf24"/>
-              </svg>
               <div className="flex flex-col items-center">
                 <p className="text-white font-bold text-sm leading-tight">{betAmount.toFixed(2)}</p>
-                <p className="text-[9px] text-gray-500 tracking-wider">DMO</p>
+                <p className="text-[9px] text-gray-500 tracking-wider">ETB</p>
               </div>
             </div>
           </div>
@@ -1510,23 +1497,26 @@ export default function MultiHot5Page() {
             <div className="absolute z-30 flex flex-col items-center justify-center" style={{ top: '35px', left: '50%', transform: 'translateX(-50%)' }}>
               {getAdjacentBets().higher !== null ? (
                 <>
-                  <p className="text-[#4ade80] font-bold text-lg leading-none" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>{getAdjacentBets().higher!.toFixed(2)}</p>
-                  <p className="text-[10px] text-white font-semibold mt-0.5" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>DMO</p>
+                  <p className="text-[#4ade80] font-bold text-lg leading-none" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>{(getAdjacentBets().higher! * PAYLINES.length).toFixed(2)}</p>
+                  <p className="text-[10px] text-white font-semibold mt-0.5" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>ETB</p>
                 </>
               ) : (
                 <>
                   <p className="text-[#4ade80] font-bold text-lg leading-none opacity-50" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>MAX</p>
-                  <p className="text-[10px] text-white font-semibold mt-0.5 opacity-50" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>DMO</p>
+                  <p className="text-[10px] text-white font-semibold mt-0.5 opacity-50" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>ETB</p>
                 </>
               )}
             </div>
           </div>
 
-          {/* Main Spin Button - Large pentagon (1.png) with press animation */}
+          {/* Main Spin Button - Large pentagon (1.png) with press animation.
+              Only disabled while spinning; on low balance it stays tappable
+              (faded via opacity) so tapping shows the insufficient-balance
+              toast instead of doing nothing. */}
           <button
             data-spin-btn
             onClick={spin}
-            disabled={isSpinning || balance < betAmount}
+            disabled={isSpinning}
             className={`relative z-30 transition-all duration-100 ${isButtonPressed ? 'animate-button-press' : ''}`}
             style={{
               width: '150px',
@@ -1544,9 +1534,9 @@ export default function MultiHot5Page() {
             {!isSpinning && !showInfinityAnimation && (
               <div className="absolute inset-0 flex flex-col items-center justify-center z-20 animate-fade-in">
                 <p className="text-[#fbbf24] font-bold text-2xl leading-none" style={{ textShadow: '0 0 10px rgba(251, 191, 36, 0.5)' }}>
-                  {betPerLine.toFixed(2)}
+                  {betAmount.toFixed(2)}
                 </p>
-                <p className="text-[12px] text-gray-200 font-semibold tracking-wide mt-1">DMO</p>
+                <p className="text-[12px] text-gray-200 font-semibold tracking-wide mt-1">ETB</p>
                 {/* Chevron arrow */}
                 <img 
                   src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/8-VoqRxtAPrIGUhFffMh868cs9gA815k.png" 
@@ -1620,8 +1610,8 @@ export default function MultiHot5Page() {
             {/* Lower bet amount display - only visible when scrolling */}
             {showBetScroll && getAdjacentBets().lower !== null && (
               <div className="absolute z-30 flex flex-col items-center justify-center" style={{ top: '25px', left: '50%', transform: 'translateX(-50%)' }}>
-                <p className="text-[#4ade80] font-bold text-lg leading-none" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>{getAdjacentBets().lower!.toFixed(2)}</p>
-                <p className="text-[10px] text-white font-semibold mt-0.5" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>DMO</p>
+                  <p className="text-[#4ade80] font-bold text-lg leading-none" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>{(getAdjacentBets().lower! * PAYLINES.length).toFixed(2)}</p>
+                <p className="text-[10px] text-white font-semibold mt-0.5" style={{ textShadow: '0 0 4px rgba(0,0,0,0.8)' }}>ETB</p>
               </div>
             )}
           </div>
@@ -1674,7 +1664,7 @@ export default function MultiHot5Page() {
             {/* GAMBLE AMOUNT */}
             <div className="flex flex-col items-center" style={{ minWidth: '150px' }}>
               <span className="text-sm font-bold uppercase mb-1 tracking-wider" style={{ color: '#c9a227' }}>GAMBLE AMOUNT</span>
-              <span className="text-base font-bold" style={{ color: '#e74c3c' }}>{gambleWinAmount.toFixed(2)} DMO</span>
+              <span className="text-base font-bold" style={{ color: '#e74c3c' }}>{gambleWinAmount.toFixed(2)} ETB</span>
             </div>
 
             {/* Previous Cards */}
@@ -1694,7 +1684,7 @@ export default function MultiHot5Page() {
             {/* GAMBLE TO WIN */}
             <div className="flex flex-col items-center" style={{ minWidth: '150px' }}>
               <span className="text-sm font-bold uppercase mb-1 tracking-wider" style={{ color: '#c9a227' }}>GAMBLE TO WIN</span>
-              <span className="text-base font-bold" style={{ color: '#2ecc71' }}>{gambleToWin.toFixed(2)} DMO</span>
+              <span className="text-base font-bold" style={{ color: '#2ecc71' }}>{gambleToWin.toFixed(2)} ETB</span>
             </div>
           </div>
 
@@ -1841,7 +1831,7 @@ export default function MultiHot5Page() {
               {menuActiveTab === 'rules' && (
                 <>
               {/* All Symbol wins text */}
-              <p className="text-center text-[#e74c3c] text-lg font-medium mb-4">All Symbol wins are in DMO</p>
+              <p className="text-center text-[#e74c3c] text-lg font-medium mb-4">All Symbol wins are in ETB</p>
 
               {/* Bet Amount Selector */}
               <div className="flex items-center justify-center gap-2 mb-8">
@@ -1868,7 +1858,7 @@ export default function MultiHot5Page() {
                   }}
                 >
                   <span className="text-white font-bold text-xl">{betPerLine.toFixed(2)}</span>
-                  <span className="text-white/50 text-xs">DMO</span>
+                  <span className="text-white/50 text-xs">ETB</span>
                 </div>
                 <button 
                   className="w-10 h-10 rounded-full flex items-center justify-center text-2xl font-bold"
@@ -2180,11 +2170,11 @@ export default function MultiHot5Page() {
                             </div>
                             <div className="text-center">
                               <p className="text-white font-medium">{entry.bet.toFixed(2)}</p>
-                              <p className="text-white/50 text-xs">DMO</p>
+                              <p className="text-white/50 text-xs">ETB</p>
                             </div>
                             <div className="text-center">
                               <p className={`font-medium ${entry.win > 0 ? 'text-[#22c55e]' : 'text-[#22c55e]'}`}>{entry.win.toFixed(2)}</p>
-                              <p className={`text-xs ${entry.win > 0 ? 'text-[#22c55e]' : 'text-[#22c55e]'}`}>DMO</p>
+                              <p className={`text-xs ${entry.win > 0 ? 'text-[#22c55e]' : 'text-[#22c55e]'}`}>ETB</p>
                             </div>
                             <div className="flex justify-center">
                               <button className="w-10 h-10 rounded-full border-2 border-[#2dd4bf] flex items-center justify-center hover:bg-[#2dd4bf]/20 transition-colors">
@@ -2212,11 +2202,11 @@ export default function MultiHot5Page() {
                             </div>
                             <div className="text-center">
                               <p className="text-white font-medium">{entry.bet.toFixed(2)}</p>
-                              <p className="text-white/50 text-xs">DMO</p>
+                              <p className="text-white/50 text-xs">ETB</p>
                             </div>
                             <div className="text-center">
                               <p className="text-[#22c55e] font-medium">{entry.win.toFixed(2)}</p>
-                              <p className="text-[#22c55e] text-xs">DMO</p>
+                              <p className="text-[#22c55e] text-xs">ETB</p>
                             </div>
                             <div className="flex justify-center">
                               <button className="w-10 h-10 rounded-full border-2 border-[#2dd4bf] flex items-center justify-center hover:bg-[#2dd4bf]/20 transition-colors">
@@ -2417,38 +2407,25 @@ export default function MultiHot5Page() {
             className="mhm-stats-bg"
             aria-hidden="true"
           />
+          {/* The large stat icon is baked into the mobile stats background
+              image; render only the value so a single icon shows per stat. */}
           <div className="mhm-stats-row">
             <div className="mhm-stat">
-              <svg className="mhm-stat-icon" viewBox="0 0 24 24" fill="none" style={{ filter: 'drop-shadow(0 0 6px #22c55e)' }}>
-                <rect x="3" y="5" width="18" height="14" rx="2" stroke="#22c55e" strokeWidth="1.5" fill="none" />
-                <rect x="5" y="8" width="6" height="4" rx="1" fill="#22c55e" />
-              </svg>
               <div className="mhm-stat-text">
                 <span className="mhm-stat-amt">{balance.toFixed(2)}</span>
-                <span className="mhm-stat-unit">DMO</span>
+                <span className="mhm-stat-unit">ETB</span>
               </div>
             </div>
             <div className="mhm-stat">
-              <svg className="mhm-stat-icon" viewBox="0 0 24 24" fill="none">
-                <path d="M8 21h8" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round" />
-                <path d="M12 17v4" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round" />
-                <path d="M7 3h10v6a5 5 0 0 1-10 0V3Z" fill="#22d3ee" />
-                <path d="M7 5H5a2 2 0 0 1 0-4h2" stroke="#22d3ee" strokeWidth="1.5" />
-                <path d="M17 5h2a2 2 0 0 0 0-4h-2" stroke="#22d3ee" strokeWidth="1.5" />
-              </svg>
               <div className="mhm-stat-text">
                 <span className="mhm-stat-amt">{lastWin.toFixed(2)}</span>
-                <span className="mhm-stat-unit">DMO</span>
+                <span className="mhm-stat-unit">ETB</span>
               </div>
             </div>
             <div className="mhm-stat">
-              <svg className="mhm-stat-icon" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="5" fill="#fbbf24" />
-                <path d="M9 12l-2 9 5-3 5 3-2-9" fill="#fbbf24" />
-              </svg>
               <div className="mhm-stat-text">
                 <span className="mhm-stat-amt">{betAmount.toFixed(2)}</span>
-                <span className="mhm-stat-unit">DMO</span>
+                <span className="mhm-stat-unit">ETB</span>
               </div>
             </div>
           </div>
@@ -2547,35 +2524,39 @@ export default function MultiHot5Page() {
               <div className="mhm-bet-text">
                 {getAdjacentBets().lower !== null ? (
                   <>
-                    <span className="amt">{getAdjacentBets().lower!.toFixed(2)}</span>
-                    <span className="unit">DMO</span>
+                    <span className="amt">{(getAdjacentBets().lower! * PAYLINES.length).toFixed(2)}</span>
+                    <span className="unit">ETB</span>
                   </>
                 ) : (
                   <>
                     <span className="amt faded">MIN</span>
-                    <span className="unit faded">DMO</span>
+                    <span className="unit faded">ETB</span>
                   </>
                 )}
               </div>
             )}
           </div>
 
-          {/* Centre shield button — uses shield.png with all desktop states */}
+          {/* Centre shield button — uses shield.png with all desktop states.
+              Only disabled while spinning; on low balance it stays tappable
+              (faded via opacity) so tapping shows the insufficient-balance
+              toast instead of doing nothing. */}
           <button
             data-spin-btn
             type="button"
             className={`mhm-bet-shield ${isButtonPressed ? 'animate-button-press' : ''}`}
             onClick={spin}
-            disabled={isSpinning || balance < betAmount}
+            disabled={isSpinning}
+            style={{ opacity: balance < betAmount ? 0.5 : undefined }}
             aria-label="Spin"
           >
             <img src="/mobile-bet/shield.png" alt="" className="mhm-shield-bg" aria-hidden="true" />
 
-            {/* Default state: per-line bet + DMO + chevron (matches desktop) */}
+            {/* Default state: total bet + ETB + chevron (matches desktop + footer) */}
             {!isSpinning && !showInfinityAnimation && (
               <div className="mhm-shield-text animate-fade-in">
-                <span className="mhm-shield-amt">{betPerLine.toFixed(2)}</span>
-                <span className="mhm-shield-unit">DMO</span>
+                <span className="mhm-shield-amt">{betAmount.toFixed(2)}</span>
+                <span className="mhm-shield-unit">ETB</span>
                 <svg className="mhm-shield-chev" viewBox="0 0 22 9" fill="none" aria-hidden="true">
                   <path d="M2 2 L11 7 L20 2" stroke="#fbbf24" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -2623,13 +2604,13 @@ export default function MultiHot5Page() {
             <div className="mhm-bet-text">
               {getAdjacentBets().higher !== null ? (
                 <>
-                  <span className="amt">{getAdjacentBets().higher!.toFixed(2)}</span>
-                  <span className="unit">DMO</span>
+                  <span className="amt">{(getAdjacentBets().higher! * PAYLINES.length).toFixed(2)}</span>
+                  <span className="unit">ETB</span>
                 </>
               ) : (
                 <>
                   <span className="amt faded">MAX</span>
-                  <span className="unit faded">DMO</span>
+                  <span className="unit faded">ETB</span>
                 </>
               )}
             </div>
@@ -2649,27 +2630,39 @@ export default function MultiHot5Page() {
       </div>
 
       {/* Big Win Overlay - outside scaled wrapper for correct fixed positioning.
-          The new badge image (178×105 cropped) has the gold coin at the top-left
-          and a purple banner across the bottom. The win amount is positioned
-          over the centre of the purple banner (~66% from the top of the box). */}
+          The "BIG WIN" gold text sits on top; below it a gold-framed purple
+          banner holds the winning amount, centred over the purple panel
+          (~68% from the top of the banner image, matching the asset). */}
       {showBigWin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-          <div className="text-center animate-bounce relative" style={{ width: '360px', height: '216px' }}>
-            <img 
-              src="/big-win-badge.png"
-              alt="Big Win Badge"
-              className="w-full h-full object-contain"
-              style={{ filter: 'drop-shadow(0 0 30px rgba(255, 215, 0, 0.8))' }}
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/70 gap-1">
+          <img
+            src="/big-win-text.webp"
+            alt="Big Win"
+            className="animate-bounce"
+            style={{
+              width: '340px',
+              maxWidth: '70vw',
+              height: 'auto',
+              filter: 'drop-shadow(0 0 30px rgba(255, 180, 0, 0.85))',
+            }}
+          />
+          <div className="relative" style={{ width: '360px', maxWidth: '78vw' }}>
+            <img
+              src="/big-win-banner.webp"
+              alt=""
+              aria-hidden="true"
+              className="w-full h-auto"
+              style={{ filter: 'drop-shadow(0 0 26px rgba(255, 215, 0, 0.7))' }}
             />
             <div
               className="absolute"
-              style={{ top: '66%', left: '52%', transform: 'translate(-50%, -50%)' }}
+              style={{ top: '68%', left: '50%', transform: 'translate(-50%, -50%)' }}
             >
               <p
-                className="text-2xl font-bold text-white whitespace-nowrap"
-                style={{ textShadow: '0 0 10px rgba(0,0,0,0.8)' }}
+                className="font-bold text-white whitespace-nowrap"
+                style={{ fontSize: '2rem', textShadow: '0 0 10px rgba(0,0,0,0.85)' }}
               >
-                WIN {lastWin.toFixed(2)}
+                {lastWin.toFixed(2)}
               </p>
             </div>
           </div>
@@ -2739,7 +2732,7 @@ export default function MultiHot5Page() {
                         placeholder=""
                         className="bg-transparent text-white w-20 outline-none text-right"
                       />
-                      <span className="text-white/50 ml-2">|DMO</span>
+                      <span className="text-white/50 ml-2">|ETB</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -2752,7 +2745,7 @@ export default function MultiHot5Page() {
                         placeholder=""
                         className="bg-transparent text-white w-20 outline-none text-right"
                       />
-                      <span className="text-white/50 ml-2">|DMO</span>
+                      <span className="text-white/50 ml-2">|ETB</span>
                     </div>
                   </div>
                 </div>

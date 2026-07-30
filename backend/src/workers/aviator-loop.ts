@@ -1,17 +1,45 @@
 import { withTenantClient } from '../infrastructure/db/tenant-client';
 import { gameRngService } from '../services/game-rng.service';
-import { emitToTenant, emitToUser } from '../realtime/socket';
+import { emitToTenant, emitToUser, getTenantOnlineCount } from '../realtime/socket';
 import { logger } from '../infrastructure/logger';
 import { sendSmsBestEffort } from '../modules/notifications/notifications.service';
 
 const TICK_MS = 200;
 
+// "Players online" baseline. The displayed figure is this base plus the real
+// number of *additional* live socket connections in the tenant, so the counter
+// starts at 100 when a single player is present and rises with real traffic.
+const ONLINE_BASE = 100;
+const ONLINE_EMIT_INTERVAL_MS = 5000;
+
 let timer: NodeJS.Timeout | null = null;
 let inFlight = false;
+// Throttle the online-count broadcast per tenant (the loop ticks every 200ms).
+const lastOnlineEmit = new Map<string, number>();
+
+/** Base 100 + real extra players currently connected to this tenant. */
+function onlinePlayers(tenantId: string): number {
+  const live = getTenantOnlineCount(tenantId);
+  return ONLINE_BASE + Math.max(0, live - 1);
+}
+
+/** Broadcast the live player count, throttled to once every few seconds. */
+function emitOnlineCount(tenantId: string): void {
+  const now = Date.now();
+  const last = lastOnlineEmit.get(tenantId) ?? 0;
+  if (now - last < ONLINE_EMIT_INTERVAL_MS) return;
+  lastOnlineEmit.set(tenantId, now);
+  emitToTenant(tenantId, 'aviator:online', { online: onlinePlayers(tenantId) });
+}
 
 function multiplierAt(elapsedMs: number): number {
-  // Smooth exponential growth curve.
-  return Number((Math.exp(elapsedMs / 18_000) * 1).toFixed(2));
+  // Smooth exponential growth curve. The divisor sets the flight pace: a
+  // smaller value climbs faster (shorter rounds → more rounds per hour).
+  // Tuned from 18_000 → 10_000 for a moderately faster, more engaging flight
+  // (~6.9s to 2x, ~23s to 10x) without making it feel frantic. This only
+  // changes how quickly the multiplier reaches the crash point — the crash
+  // point itself (and therefore RTP/fairness) is unchanged.
+  return Number((Math.exp(elapsedMs / 10_000) * 1).toFixed(2));
 }
 
 async function settleRound(tenantId: string, roundId: string, crashPoint: number) {
@@ -98,6 +126,9 @@ async function rotateRound(tenantId: string) {
 }
 
 async function tickTenant(tenantId: string) {
+  // Broadcast the live "players online" figure (base 100 + real connections).
+  emitOnlineCount(tenantId);
+
   const round = await withTenantClient({ tenantId }, async (client) => {
     const r = await client.query<{
       id: string;

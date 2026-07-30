@@ -134,6 +134,21 @@ export function getSocketServer(): IoServer | null {
   return io;
 }
 
+/**
+ * Number of live socket connections currently in a tenant. Every connected
+ * client (players + staff) joins `tenant:<id>`, so the room size is a real
+ * count of who is online right now. Used by the Fast Keno loop to broadcast an
+ * honest "players online" figure instead of a hard-coded number.
+ */
+export function getTenantOnlineCount(tenantId: string): number {
+  if (!io) return 0;
+  try {
+    return io.sockets.adapter.rooms.get(tenantRoomName(tenantId))?.size ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function shutdownSocketServer(): Promise<void> {
   if (!io) return;
   await new Promise<void>((resolve) => io!.close(() => resolve()));

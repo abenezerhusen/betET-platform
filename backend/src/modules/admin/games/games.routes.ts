@@ -9,6 +9,7 @@ import {
 } from './games.dto';
 import * as swagger from '../../../swagger/registry';
 import rtpRouter from '../rtp/rtp.routes';
+import gameSettingsRouter from './game-settings.routes';
 
 const router = Router();
 
@@ -17,6 +18,10 @@ const router = Router();
 // /api/admin/games/:id/rtp    → patch
 // /api/admin/games/:id/status → patch
 router.use(rtpRouter);
+
+// Rain Bonus config (fast-keno & aviator) + Fast Keno countdown. Registered
+// before the `/:id` catch-all so the two-segment paths resolve correctly.
+router.use(gameSettingsRouter);
 
 swagger.registerPath({
   method: 'get',

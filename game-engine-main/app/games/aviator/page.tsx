@@ -11,15 +11,21 @@ import {
   placeAviatorBet,
   cashoutAviator,
   getAviatorRound,
+  getAviatorBets,
+  getAviatorTop,
   readBalance,
   onWalletUpdated,
   listenEmbeddedWalletInit,
   type AviatorRoundCrashedEvent,
   type AviatorRoundFlyingEvent,
   type AviatorRoundStartEvent,
+  type AviatorBetRow,
+  type AviatorTopPlayer,
+  type AviatorTopRound,
 } from "@/lib/game-engine"
 import { goBackToParent } from "@/lib/embed-nav"
 import { useBalanceToast } from "@/components/balance-toast"
+import { RainClaimPopup } from "@/components/rain-claim-popup"
 
 // SVG URLs for plane animation frames
 const PLANE_FRAMES = [
@@ -52,6 +58,25 @@ const AVATAR_IMAGES = [
   "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/av-69-B2oINhqD-oJvXcPjzdNWwOg02UX3kewWGEo0PFm.png",
   "https://hebbkx1anhila5yf.public.blob.vercel-storage.com/av-70-CGn2aaWE-RFzgtIVwdWbdNWsveVcme6CsplMU4q.png",
 ]
+
+/** Format an ISO/date value as `DD.MM.YY` for the sidebar leaderboards. */
+function fmtDate(d: string | number | Date): string {
+  const dt = new Date(d)
+  if (Number.isNaN(dt.getTime())) return ""
+  const dd = String(dt.getDate()).padStart(2, "0")
+  const mm = String(dt.getMonth() + 1).padStart(2, "0")
+  const yy = String(dt.getFullYear()).slice(-2)
+  return `${dd}.${mm}.${yy}`
+}
+
+/** Format an ISO/date value as `DD.MM.YY HH:mm`. */
+function fmtDateTime(d: string | number | Date): string {
+  const dt = new Date(d)
+  if (Number.isNaN(dt.getTime())) return ""
+  const hh = String(dt.getHours()).padStart(2, "0")
+  const mi = String(dt.getMinutes()).padStart(2, "0")
+  return `${fmtDate(d)} ${hh}:${mi}`
+}
 
 export default function AviatorPage() {
   const router = useRouter()
@@ -164,59 +189,23 @@ export default function AviatorPage() {
   const [historyExpanded, setHistoryExpanded] = useState(false)
   const [showSinglePanel, setShowSinglePanel] = useState(false)
 
-  // Top players data
-  const [topPlayers] = useState([
-    { user: "u***x", date: "12.03.26", betETB: 2000.00, winETB: 11673.92, result: 5.84, roundMax: 16.25 },
-    { user: "k***w", date: "12.03.26", betETB: 484.00, winETB: 2346.44, result: 4.85, roundMax: 27.49 },
-    { user: "v***a", date: "12.03.26", betETB: 414.00, winETB: 1947.57, result: 4.70, roundMax: 5.81 },
-    { user: "a***s", date: "12.03.26", betETB: 4000.00, winETB: 15117.82, result: 3.78, roundMax: 4.08 },
-    { user: "o***j", date: "12.03.26", betETB: 4.00, winETB: 13.42, result: 3.36, roundMax: 6.65 },
-    { user: "u***x", date: "12.03.26", betETB: 2000.00, winETB: 6696.78, result: 3.35, roundMax: 4.58 },
-  ])
+  // Top players data — populated from the backend (real cashed-out bets).
+  const [topPlayers, setTopPlayers] = useState<AviatorTopPlayer[]>([])
 
-  // Rounds data for Rounds sub-tab
-  const [roundsData] = useState([
-    { dateTime: "12.03.26 10:35", multiplier: 4504.08 },
-    { dateTime: "12.03.26 11:19", multiplier: 2990.84 },
-    { dateTime: "12.03.26 03:26", multiplier: 2943.69 },
-    { dateTime: "12.03.26 10:02", multiplier: 781.16 },
-    { dateTime: "12.03.26 07:25", multiplier: 279.88 },
-    { dateTime: "12.03.26 03:38", multiplier: 217.83 },
-    { dateTime: "12.03.26 05:05", multiplier: 137.32 },
-    { dateTime: "12.03.26 08:53", multiplier: 134.32 },
-    { dateTime: "12.03.26 06:40", multiplier: 111.56 },
-    { dateTime: "12.03.26 03:20", multiplier: 103.50 },
-    { dateTime: "12.03.26 04:04", multiplier: 94.69 },
-    { dateTime: "12.03.26 06:45", multiplier: 94.24 },
-    { dateTime: "12.03.26 05:29", multiplier: 75.56 },
-    { dateTime: "12.03.26 03:04", multiplier: 75.08 },
-    { dateTime: "12.03.26 05:47", multiplier: 71.41 },
-  ])
+  // Rounds data for Rounds sub-tab — populated from the backend (real crash points).
+  const [roundsData, setRoundsData] = useState<AviatorTopRound[]>([])
 
-  // Recent multipliers history
-  const [recentMultipliers, setRecentMultipliers] = useState([
-    { value: 1.23 },
-    { value: 5.67 },
-    { value: 2.34 },
-    { value: 12.45 },
-    { value: 1.05 },
-    { value: 3.21 },
-    { value: 8.90 },
-    { value: 1.87 },
-    { value: 45.23 },
-    { value: 2.11 },
-    { value: 1.56 },
-    { value: 3.89 },
-  ])
+  // Recent multipliers history — seeded from the backend crash-point strip and
+  // then prepended live on every crash event.
+  const [recentMultipliers, setRecentMultipliers] = useState<{ value: number }[]>([])
 
-  // All bets data
-  const [allBets] = useState([
-    { user: "d***v", bet: 50.00, multiplier: null, won: null },
-    { user: "a***m", bet: 100.00, multiplier: 2.35, won: 235.00 },
-    { user: "s***k", bet: 25.00, multiplier: null, won: null },
-    { user: "j***n", bet: 200.00, multiplier: 1.85, won: 370.00 },
-    { user: "m***r", bet: 75.00, multiplier: null, won: null },
-  ])
+  // Live bets for the current round + previous round (real data).
+  const [allBets, setAllBets] = useState<AviatorBetRow[]>([])
+  const [previousBets, setPreviousBets] = useState<AviatorBetRow[]>([])
+
+  // Real "players online" count — base 100 + live socket connections, pushed
+  // from the backend via `aviator:online`.
+  const [onlineCount, setOnlineCount] = useState(100)
 
   // Chat messages
   const [chatMessages, setChatMessages] = useState<Array<{
@@ -461,6 +450,10 @@ export default function AviatorPage() {
         })
     }
 
+    const onOnline = (ev: { online?: number }) => {
+      if (typeof ev?.online === "number") setOnlineCount(ev.online)
+    }
+
     const onPlayerCashout = () => {
       // Auto-cashout is settled in the worker; pull fresh wallet state.
       fetchPlayerMe()
@@ -512,6 +505,7 @@ export default function AviatorPage() {
       socket.on("aviator:round_flying", onFlying)
       socket.on("aviator:round_crashed", onCrashed)
       socket.on("aviator:player_cashout", onPlayerCashout)
+      socket.on("aviator:online", onOnline)
     })()
 
     return () => {
@@ -521,6 +515,7 @@ export default function AviatorPage() {
         socket.off("aviator:round_flying", onFlying)
         socket.off("aviator:round_crashed", onCrashed)
         socket.off("aviator:player_cashout", onPlayerCashout)
+        socket.off("aviator:online", onOnline)
       }
     }
     // Mount-only — listeners use refs/setters which are stable.
@@ -541,6 +536,65 @@ export default function AviatorPage() {
         .catch(() => { /* ignore */ })
     })
   }, [])
+
+  // ── Left-sidebar real data ──────────────────────────────────────────────
+  // Live "All Bets" (current round) + "Previous" (last round) feed and the
+  // recent crash-point strip. Everything below is server-sourced — no mocks.
+  const refreshBets = useCallback(() => {
+    getAviatorBets()
+      .then((data) => {
+        setAllBets(data.current ?? [])
+        setPreviousBets(data.previous ?? [])
+        if (Array.isArray(data.recent_multipliers) && data.recent_multipliers.length > 0) {
+          setRecentMultipliers(data.recent_multipliers.map((v) => ({ value: v })))
+        }
+      })
+      .catch(() => { /* ignore transient fetch failures */ })
+  }, [])
+
+  const refreshTop = useCallback(
+    (metric: "x" | "win" | "rounds", period: "day" | "month" | "year") => {
+      getAviatorTop(metric, period)
+        .then((data) => {
+          if (metric === "rounds") {
+            setRoundsData(
+              (data.items as AviatorTopRound[]).map((r) => ({
+                dateTime: fmtDateTime(r.dateTime),
+                multiplier: r.multiplier,
+              }))
+            )
+          } else {
+            setTopPlayers(
+              (data.items as AviatorTopPlayer[]).map((p) => ({
+                ...p,
+                date: fmtDate(p.date),
+              }))
+            )
+          }
+        })
+        .catch(() => { /* ignore transient fetch failures */ })
+    },
+    []
+  )
+
+  // Poll the live feed so bets placed by other players appear in near real time.
+  useEffect(() => {
+    refreshBets()
+    const id = setInterval(refreshBets, 3000)
+    return () => clearInterval(id)
+  }, [refreshBets])
+
+  // Refresh immediately on every round phase change (new round / crash) so the
+  // feed and previous-round list flip over promptly.
+  useEffect(() => {
+    refreshBets()
+  }, [gamePhase, refreshBets])
+
+  // Top leaderboards — (re)fetch whenever the Top tab, sub-tab or period changes.
+  useEffect(() => {
+    if (activeTab !== "top") return
+    refreshTop(topSubTab, topTimeFilter)
+  }, [activeTab, topSubTab, topTimeFilter, refreshTop])
 
   // Visual waiting-timer countdown — purely cosmetic; the authoritative
   // "is the round still in waiting?" answer is the socket event.
@@ -745,6 +799,14 @@ export default function AviatorPage() {
         fontFamily: "'Inter', 'Roboto', sans-serif"
       }}
     >
+      <RainClaimPopup
+        game="aviator"
+        onClaimed={() => {
+          fetchPlayerMe()
+            .then((me) => setBalance(readBalance(me)))
+            .catch(() => {});
+        }}
+      />
       {balanceToast}
       {/* CSS Animations */}
       <style jsx global>{`
@@ -1210,6 +1272,51 @@ export default function AviatorPage() {
             {activeTab === "all" && allBets.length > 0 ? (
               <div>
                 {allBets.map((bet, idx) => (
+                  <div 
+                    key={idx} 
+                    className="flex items-center justify-between"
+                    style={{ 
+                      padding: '6px 10px',
+                      borderRadius: '12px',
+                      marginBottom: '4px',
+                      backgroundColor: bet.won ? 'rgba(81, 181, 121, 0.15)' : '#252527',
+                      fontSize: '11px'
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div 
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold overflow-hidden"
+                        style={{ backgroundColor: '#8b5cf6' }}
+                      >
+                        <img 
+                          src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${bet.user}`}
+                          alt={bet.user}
+                          className="w-full h-full"
+                        />
+                      </div>
+                      <span style={{ color: '#9ca3af', fontSize: '11px' }}>{bet.user}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span style={{ color: '#fff', fontSize: '11px' }}>
+                        {bet.bet.toFixed(2)}
+                      </span>
+                      {bet.multiplier && (
+                        <span style={{ color: '#a855f7', fontSize: '11px' }}>
+                          {bet.multiplier.toFixed(2)}x
+                        </span>
+                      )}
+                      {bet.won && (
+                        <span style={{ color: '#51b579', fontSize: '11px' }}>
+                          {(bet.bet * (bet.multiplier || 1)).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : activeTab === "previous" && previousBets.length > 0 ? (
+              <div>
+                {previousBets.map((bet, idx) => (
                   <div 
                     key={idx} 
                     className="flex items-center justify-between"
@@ -2220,7 +2327,7 @@ export default function AviatorPage() {
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: '#22c55e' }}
                 />
-                <span className="text-white font-medium">402</span>
+                <span className="text-white font-medium">{onlineCount}</span>
               </div>
               <button 
                 onClick={() => setChatPanelOpen(false)}

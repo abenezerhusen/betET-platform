@@ -43,6 +43,8 @@ const menuItems: MenuItem[] = [
       { title: 'Bonus Engine', path: '/promotions/bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
       { title: 'Affiliates', path: '/promotions/affiliates', perm: 'promotions.affiliates.view', icon: <ChevronRight size={16} /> },
       { title: 'Cash Out Boost', path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
+      { title: 'Registration Bonus', path: '/promotions/registration-bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
+      { title: 'Rain Bonus', path: '/promotions/rain-bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
     ],
   },
   {
@@ -75,6 +77,7 @@ const menuItems: MenuItem[] = [
       { title: 'Super Jackpots', path: '/bets/jackpots', perm: 'bets.jackpots.view', icon: <ChevronRight size={16} /> },
       { title: 'BetForMe', path: '/bets/bet-for-me', perm: 'bets.bet_for_me.view', icon: <ChevronRight size={16} /> },
       { title: 'Manual Settlement', path: '/bets/settlement', perm: 'bets.settlement.view', icon: <AlertTriangle size={16} /> },
+      { title: 'Tax & Bonus', path: '/bets/tax-bonus', perm: 'bets.settlement.view', icon: <ChevronRight size={16} /> },
     ],
   },
   {

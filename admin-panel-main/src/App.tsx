@@ -17,6 +17,9 @@ import { Raffles } from './pages/promotions/Raffles';
 import { BonusEngine } from './pages/promotions/BonusEngine';
 import { Affiliates } from './pages/promotions/Affiliates';
 import CashoutPromotion from './pages/promotions/CashoutPromotion';
+import RegistrationBonus from './pages/promotions/RegistrationBonus';
+import RainBonus from './pages/promotions/RainBonus';
+import TaxBonus from './pages/bets/TaxBonus';
 import { SuperAdmin } from './pages/users/SuperAdmin';
 import { Administrators } from './pages/users/Administrators';
 import { Agents } from './pages/users/Agents';
@@ -116,6 +119,8 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/promotions/bonus', perm: 'promotions.bonus.view', element: <BonusEngine /> },
   { path: '/promotions/affiliates', perm: 'promotions.affiliates.view', element: <Affiliates /> },
   { path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', element: <CashoutPromotion /> },
+  { path: '/promotions/registration-bonus', perm: 'promotions.bonus.view', element: <RegistrationBonus /> },
+  { path: '/promotions/rain-bonus', perm: 'promotions.bonus.view', element: <RainBonus /> },
 
   /* Users */
   { path: '/users/super-admin', perm: 'users.super_admin.view', element: <SuperAdmin /> },
@@ -136,6 +141,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/bets/jackpots', perm: 'bets.jackpots.view', element: <SuperJackpots /> },
   { path: '/bets/bet-for-me', perm: 'bets.bet_for_me.view', element: <BetForMe /> },
   { path: '/bets/settlement', perm: 'bets.settlement.view', element: <ManualSettlement /> },
+  { path: '/bets/tax-bonus', perm: 'bets.settlement.view', element: <TaxBonus /> },
 
   /* Tournaments */
   { path: '/tournaments/view', perm: 'tournaments.view', element: <ViewTournaments /> },

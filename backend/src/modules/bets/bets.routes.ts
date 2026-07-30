@@ -46,7 +46,12 @@ import {
   getUa,
   getUserScope,
 } from '../user/user-shared';
-import { applyWinningTax, loadBettingConfig } from './betting-config';
+import { loadBettingConfig } from './betting-config';
+import {
+  computeEffectiveStake,
+  computeWinBreakdown,
+  loadSportsbookTaxConfig,
+} from './sportsbook-tax';
 import {
   isWithinOperationHours,
   loadGeneralConfig,
@@ -316,7 +321,12 @@ async function placeSlip(
           { reason: 'stake_below_min', min: cfg.slip.online_min_stake }
         );
       }
-      const potentialWin = round2(stake * totalOdds);
+      // Sportsbook Tax layer (additive): the mandatory betting tax reduces the
+      // internal *effective* stake used for payout maths. The customer still
+      // pays — and sees — the full stake; the tax is never surfaced to them.
+      const taxCfg = await loadSportsbookTaxConfig(client, scope.tenantId);
+      const stakeTax = computeEffectiveStake(stake, taxCfg);
+      const potentialWin = round2(stakeTax.effective_stake * totalOdds);
       if (potentialWin > cfg.slip.max_payout_per_slip) {
         throw new BadRequestError(
           `Potential payout ${potentialWin} exceeds slip cap ${cfg.slip.max_payout_per_slip}`,
@@ -420,17 +430,33 @@ async function placeSlip(
       );
 
       // 8. Insert sportsbook_bet + legs.
-      const tax = applyWinningTax(potentialWin, cfg.tax);
+      // Estimate the final payout through the full tax/bonus pipeline so the
+      // stored estimate reflects what will actually be credited on a win.
+      const estimate = computeWinBreakdown(
+        stakeTax.effective_stake,
+        totalOdds,
+        taxCfg
+      );
       const betType = resolved.length === 1 ? 'single' : body.bet_type;
       const inserted = await client.query<{ id: string; coupon_code: string }>(
         `INSERT INTO sportsbook_bets (
              tenant_id, user_id, channel, bet_type,
              stake, currency, total_odds, potential_payout, tax_amount,
-             idempotency_key, status, cashout_available, metadata
+             idempotency_key, status, cashout_available,
+             original_stake, bet_tax_enabled, bet_tax_percent, bet_tax_amount,
+             effective_stake, gross_payout_before_bonus,
+             compensation_bonus_enabled, compensation_bonus_percent,
+             winning_tax_enabled, winning_tax_percent,
+             metadata
            ) VALUES (
              $1, $2, 'online', $3,
              $4, $5, $6, $7, 0,
-             $8, 'pending', $9, $10::jsonb
+             $8, 'pending', $9,
+             $11, $12, $13, $14,
+             $15, $16,
+             $17, $18,
+             $19, $20,
+             $10::jsonb
            )
            RETURNING id, coupon_code`,
         [
@@ -446,10 +472,33 @@ async function placeSlip(
           JSON.stringify({
             ...(body.metadata ?? {}),
             placed_via: 'user_panel',
-            estimated_tax: tax.tax_amount,
-            estimated_net_pay: tax.final_payout,
+            estimated_tax: estimate.winning_tax_amount,
+            estimated_net_pay: estimate.final_payout,
             min_individual_odd: cfg.slip.min_individual_odd,
+            // Snapshot of the tax/bonus rules at placement time. Settlement
+            // uses this snapshot so a later admin change never retroactively
+            // alters an already-placed ticket. threshold isn't a column.
+            tax_snapshot: {
+              betting_tax_enabled: stakeTax.bet_tax_enabled,
+              betting_tax_percent: stakeTax.bet_tax_percent,
+              compensation_bonus_enabled: taxCfg.compensation_bonus_enabled,
+              compensation_bonus_percent: taxCfg.compensation_bonus_percent,
+              winning_tax_enabled: taxCfg.winning_tax_enabled,
+              winning_tax_percent: taxCfg.winning_tax_percent,
+              winning_tax_threshold: taxCfg.winning_tax_threshold,
+            },
           }),
+          // $11..$20 — tax/bonus audit columns
+          stakeTax.original_stake,
+          stakeTax.bet_tax_enabled,
+          stakeTax.bet_tax_percent,
+          stakeTax.bet_tax_amount,
+          stakeTax.effective_stake,
+          potentialWin,
+          taxCfg.compensation_bonus_enabled,
+          taxCfg.compensation_bonus_percent,
+          taxCfg.winning_tax_enabled,
+          taxCfg.winning_tax_percent,
         ]
       );
       const betId = inserted.rows[0].id;
@@ -542,6 +591,11 @@ async function placeSlip(
         betId,
         stake,
         odds: totalOdds,
+        selections: resolved.length,
+        minSelectionOdds: resolved.length
+          ? Math.min(...resolved.map((r) => Number(r.selection_odds)))
+          : totalOdds,
+        product: 'sportsbook',
       });
 
       return outcome;

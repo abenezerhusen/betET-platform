@@ -56,7 +56,7 @@ function EmbedInner() {
         className="px-6 py-2 rounded-lg bg-emerald-500 text-black font-semibold hover:bg-emerald-400"
         onClick={sendEnd}
       >
-        Close game (demo)
+        Close game
       </button>
     </div>
   );

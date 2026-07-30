@@ -175,3 +175,60 @@ export function setMatchResult(matchId: string, input: MatchResultInput) {
     input
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* Sportsbook Tax & Compensation Bonus management                             */
+/* -------------------------------------------------------------------------- */
+
+export interface SportsbookTaxConfig {
+  betting_tax_enabled: boolean;
+  betting_tax_percent: number;
+  compensation_bonus_enabled: boolean;
+  compensation_bonus_percent: number;
+  winning_tax_enabled: boolean;
+  winning_tax_percent: number;
+  winning_tax_threshold: number;
+}
+
+export const DEFAULT_SPORTSBOOK_TAX: SportsbookTaxConfig = {
+  betting_tax_enabled: true,
+  betting_tax_percent: 15,
+  compensation_bonus_enabled: false,
+  compensation_bonus_percent: 0,
+  winning_tax_enabled: true,
+  winning_tax_percent: 15,
+  winning_tax_threshold: 1000,
+};
+
+export function getSportsbookTaxConfig() {
+  return http.get<SportsbookTaxConfig>('/api/admin/sportsbook/tax-config');
+}
+
+export function updateSportsbookTaxConfig(input: SportsbookTaxConfig) {
+  return http.put<SportsbookTaxConfig>('/api/admin/sportsbook/tax-config', input);
+}
+
+export interface SportsbookTaxReport {
+  total_tickets: number;
+  total_original_stakes: number;
+  total_betting_tax_collected: number;
+  total_effective_stakes: number;
+  total_compensation_bonus_paid: number;
+  total_winning_tax_collected: number;
+  total_final_payout: number;
+  net_sportsbook_revenue: number;
+}
+
+export function getSportsbookTaxReport(query: {
+  from?: string;
+  to?: string;
+  sport?: string;
+  league?: string;
+  branch_id?: string;
+  cashier_id?: string;
+  user_id?: string;
+} = {}) {
+  return http.get<SportsbookTaxReport>('/api/admin/sportsbook/tax-report', {
+    query,
+  });
+}

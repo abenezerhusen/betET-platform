@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { LeftSidebarSports } from "@/components/LeftSidebarSports";
 import { Betslip } from "@/components/Betslip";
 import { MatchCard } from "@/components/MatchCard";
@@ -300,6 +300,14 @@ export default function HomePage() {
 function HomePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname() ?? "/";
+  // Drives the URL-based open/close of the drill-down so any "HOME" link
+  // (which points at "/") reliably returns to the feed. `pendingPreselect`
+  // carries the exact match tapped from the feed so the detail opens on it
+  // after the URL round-trip; `loadedLeagueKey` de-dupes the load effect so
+  // switching matches doesn't refetch the same league twice.
+  const pendingPreselectRef = useRef<HomeMatch | null>(null);
+  const loadedLeagueKeyRef = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState("upcoming");
   const [showDetailedView, setShowDetailedView] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
@@ -463,6 +471,7 @@ function HomePageInner() {
     fullLeagueName: string,
     sport: Sport,
     preselect?: HomeMatch,
+    preselectId?: string,
   ) => {
     setSelectedSport(sport);
     setSelectedLeague(fullLeagueName);
@@ -490,7 +499,13 @@ function HomePageInner() {
       const mapped = [...live, ...up].map(backendMatchToHome);
       setSidebarMatches(mapped);
       if (mapped.length > 0) {
-        if (!preselect) setSelectedMatch(mapped[0]);
+        if (!preselect) {
+          // Prefer the exact fixture from the URL (?m=), else the first row.
+          const target = preselectId
+            ? mapped.find((m) => String(m.id) === preselectId)
+            : undefined;
+          setSelectedMatch(target ?? mapped[0]);
+        }
         setShowDetailedView(true);
       } else if (!preselect) {
         // Empty league via deep-link — still show the frame + empty state.
@@ -532,23 +547,50 @@ function HomePageInner() {
     [mounted, topFilter, topCalendar, topLeagueMatches],
   );
 
-  // Deep-link: open detailed view when sidebar navigates to
-  // ?sport=..&country=..&league=..&l=<full league name>. The real matches
-  // for that league are fetched from the API (no mock placeholders).
+  // URL <-> drill-down sync. The detail view's open state lives in the URL
+  // query (?sport=&country=&league=&l=&m=) so that any "HOME" link (href="/")
+  // closes it: clearing the query makes this effect reset the view. Opening a
+  // league (sidebar or a feed "+N" tap) sets the query, which this effect then
+  // loads. A ref de-dupes so re-renders don't refetch the same league.
   useEffect(() => {
     const sportKey = searchParams.get("sport");
     const country = searchParams.get("country");
     const league = searchParams.get("league");
     const full = searchParams.get("l");
-    if (!full && (!country || !league)) return;
+    const matchId = searchParams.get("m");
+    const hasParams = Boolean(full || (country && league));
+
+    if (!hasParams) {
+      // Navigated back to a bare "/" (HOME / logo / back) — close the drill
+      // down and return to the feed.
+      loadedLeagueKeyRef.current = null;
+      pendingPreselectRef.current = null;
+      setShowDetailedView(false);
+      setSelectedMatch(null);
+      setSidebarMatches([]);
+      setSelectedLeague("");
+      return;
+    }
+
+    const fullLeagueName = full || `${country} - ${league}`;
+    const key = `${sportKey ?? ""}|${fullLeagueName}|${matchId ?? ""}`;
+    if (loadedLeagueKeyRef.current === key) return; // already showing this
+    loadedLeagueKeyRef.current = key;
 
     // Resolve the sport for the detail markets. The sidebar sends backend
     // sport keys (e.g. "ice-hockey", "american-football"); map those to a
     // catalog/synthesized Sport. Fall back to the catalog-key lookup for any
     // legacy links, then to football.
     const sport = sportKey ? getSportForBackendKey(sportKey) : getDefaultSport();
-    const fullLeagueName = full || `${country} - ${league}`;
-    void loadLeagueMatches(fullLeagueName, sport);
+    // A feed tap stashes the exact fixture so it opens instantly; sidebar
+    // links have none and fall back to matching ?m= then the first row.
+    const preselect =
+      pendingPreselectRef.current &&
+      String(pendingPreselectRef.current.id ?? "") === (matchId ?? "")
+        ? pendingPreselectRef.current
+        : undefined;
+    pendingPreselectRef.current = null;
+    void loadLeagueMatches(fullLeagueName, sport, preselect, matchId ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -559,18 +601,15 @@ function HomePageInner() {
   };
 
   const handleSideBetsClick = (match: any) => {
-    // Resolve the sport from the fixture itself when it came from the API
-    // (so a baseball / ice-hockey match opens its own markets), otherwise
-    // keep the detail view's current sport or default to football.
-    const sportForClick = match?.sport
-      ? getSportForBackendKey(match.sport)
-      : showDetailedView
-        ? selectedSport
-        : sportsCatalog[0];
-
-    // Load the full real fixture list for this league and open the detail
-    // view with the clicked match preselected.
-    void loadLeagueMatches(match.league, sportForClick, match as HomeMatch);
+    // Encode the open state in the URL so HOME/back returns to the feed.
+    // Stash the tapped fixture so the load effect opens on it immediately.
+    pendingPreselectRef.current = match as HomeMatch;
+    const params = new URLSearchParams();
+    if (match?.sport) params.set("sport", String(match.sport));
+    if (match?.league) params.set("l", String(match.league));
+    const mid = match?.id ?? match?.eventId;
+    if (mid) params.set("m", String(mid));
+    router.push(`${pathname}?${params.toString()}`);
   };
 
   const handleMatchClick = (match: any) => {
@@ -605,9 +644,16 @@ function HomePageInner() {
             <h2 className="text-sm font-bold text-[var(--mezzo-accent-green)] truncate pr-2">{selectedLeague}</h2>
             <button
               onClick={() => {
-                setShowDetailedView(false);
-                setSidebarMatches([]);
-                if (searchParams.get("league")) router.replace("/");
+                // Clearing the query closes the drill-down via the URL sync
+                // effect (keeps HOME / back / this button all consistent).
+                loadedLeagueKeyRef.current = null;
+                if (searchParams.toString()) router.replace(pathname);
+                else {
+                  setShowDetailedView(false);
+                  setSidebarMatches([]);
+                  setSelectedMatch(null);
+                  setSelectedLeague("");
+                }
               }}
               className="text-xs text-gray-400 hover:text-white shrink-0"
             >

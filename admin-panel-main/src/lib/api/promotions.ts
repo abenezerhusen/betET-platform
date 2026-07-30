@@ -398,3 +398,145 @@ export function getCashoutBoostConfig(): Promise<CashoutBoostConfig> {
 export function updateCashoutBoostConfig(config: CashoutBoostConfig): Promise<CashoutBoostConfig> {
   return http.put<CashoutBoostConfig>('/api/admin/promotions/cashout-boost', config);
 }
+
+/* ─────────────────────── Registration (Signup) Bonus ────────────────────── */
+
+/** Products the signup bonus may be used on (checkboxes). */
+export interface RegistrationBonusProducts {
+  sportsbook: boolean;
+  football: boolean;
+  virtual: boolean;
+  casino: boolean;
+}
+
+/** "International model" sportsbook usage rules for the bonus. */
+export interface RegistrationBonusSportsbookRules {
+  /** Minimum number of matches/selections in a qualifying bet. */
+  min_selections: number;
+  /** Minimum odds each selection must be priced at. */
+  min_odds: number;
+}
+
+export interface RegistrationBonusConfig {
+  /** Master on/off switch for the new-user signup bonus. */
+  is_enabled: boolean;
+  /** Non-withdrawable bonus amount credited to each new account (ETB). */
+  amount: number;
+  /** Which products the bonus can be wagered on. */
+  products: RegistrationBonusProducts;
+  /** Sportsbook-specific wagering conditions. */
+  sportsbook_rules: RegistrationBonusSportsbookRules;
+  /** Turnover requirement (amount × multiplier) before conversion to cash. */
+  wagering_multiplier: number;
+  /** Bonus validity window in days (0 = never expires). */
+  expires_in_days: number;
+}
+
+const DEFAULT_REGISTRATION_BONUS: RegistrationBonusConfig = {
+  is_enabled: false,
+  amount: 0,
+  products: {
+    sportsbook: true,
+    football: false,
+    virtual: false,
+    casino: false,
+  },
+  sportsbook_rules: {
+    min_selections: 0,
+    min_odds: 0,
+  },
+  wagering_multiplier: 0,
+  expires_in_days: 0,
+};
+
+export function getRegistrationBonusConfig(): Promise<RegistrationBonusConfig> {
+  return http
+    .get<RegistrationBonusConfig>('/api/admin/promotions/registration-bonus')
+    .then((r) => ({
+      ...DEFAULT_REGISTRATION_BONUS,
+      ...r,
+      products: { ...DEFAULT_REGISTRATION_BONUS.products, ...(r?.products ?? {}) },
+      sportsbook_rules: {
+        ...DEFAULT_REGISTRATION_BONUS.sportsbook_rules,
+        ...(r?.sportsbook_rules ?? {}),
+      },
+    }));
+}
+
+export function updateRegistrationBonusConfig(
+  config: RegistrationBonusConfig
+): Promise<RegistrationBonusConfig> {
+  return http.put<RegistrationBonusConfig>('/api/admin/promotions/registration-bonus', config);
+}
+
+/* ───────────────────────── Rain Bonus (game drops) ───────────────────────── */
+
+export type RainGameId = 'fast-keno' | 'aviator';
+
+export interface RainConfig {
+  /** Master on/off for this game's rain. */
+  is_enabled: boolean;
+  /** Total pool distributed per rain event (ETB). */
+  pool_amount: number;
+  /** Fixed amount each claimer gets (equal mode). 0 → pool_amount ÷ max_claims. */
+  per_claim_amount: number;
+  /** How the pool is split between claimers. */
+  distribution: 'equal' | 'random';
+  /** Max players that can claim a single rain. */
+  max_claims: number;
+  /** Rain events fired per day. */
+  rains_per_day: number;
+  /** Daily UTC window "HH:MM"; empty ⇒ all day. */
+  window_start: string;
+  window_end: string;
+  /** Seconds a rain stays claimable. */
+  claim_deadline_seconds: number;
+  /** Where the reward lands. */
+  credit_target: 'bonus' | 'main';
+  /** Eligibility gates (0 disables). */
+  min_balance: number;
+  min_wager_today: number;
+  min_account_age_days: number;
+  currency: string;
+}
+
+export const DEFAULT_RAIN_CONFIG: RainConfig = {
+  is_enabled: false,
+  pool_amount: 500,
+  per_claim_amount: 5,
+  distribution: 'equal',
+  max_claims: 10,
+  rains_per_day: 20,
+  window_start: '',
+  window_end: '',
+  claim_deadline_seconds: 600,
+  credit_target: 'bonus',
+  min_balance: 0,
+  min_wager_today: 0,
+  min_account_age_days: 0,
+  currency: 'ETB',
+};
+
+export function getRainConfig(game: RainGameId): Promise<RainConfig> {
+  return http
+    .get<RainConfig>(`/api/admin/games/rain/${game}`)
+    .then((r) => ({ ...DEFAULT_RAIN_CONFIG, ...r }));
+}
+
+export function updateRainConfig(game: RainGameId, config: RainConfig): Promise<RainConfig> {
+  return http.put<RainConfig>(`/api/admin/games/rain/${game}`, config);
+}
+
+export interface KenoCountdownConfig {
+  betting_seconds: number;
+}
+
+export function getKenoCountdown(): Promise<KenoCountdownConfig> {
+  return http
+    .get<KenoCountdownConfig>('/api/admin/games/countdown/fast-keno')
+    .then((r) => ({ betting_seconds: 30, ...r }));
+}
+
+export function updateKenoCountdown(config: KenoCountdownConfig): Promise<KenoCountdownConfig> {
+  return http.put<KenoCountdownConfig>('/api/admin/games/countdown/fast-keno', config);
+}

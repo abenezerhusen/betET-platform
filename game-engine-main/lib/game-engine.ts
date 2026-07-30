@@ -209,9 +209,72 @@ export function listenEmbeddedWalletInit(
 /* Authenticated fetch                                                      */
 /* ------------------------------------------------------------------------ */
 
+/**
+ * When embedded in the user panel the game holds only a short-lived access
+ * token (handed over via `?token=`). Once it expires every REST call 401s.
+ * The parent panel keeps the refresh token, so we ask it to mint a fresh
+ * access token and post it back (`TOKEN_REFRESH` / `WALLET_INIT`). Running
+ * standalone on a local host we fall back to a dev token instead.
+ *
+ * Concurrent callers share a single in-flight request so an expired token
+ * only triggers one refresh handshake.
+ */
+let pendingTokenRefresh: Promise<string | null> | null = null;
+
+function requestParentTokenRefresh(): Promise<string | null> {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  // Standalone (not in an iframe) — no parent to ask; try a dev token locally.
+  if (window.self === window.top) {
+    return isLocalHost() ? fetchDevGameToken() : Promise.resolve(null);
+  }
+  if (pendingTokenRefresh) return pendingTokenRefresh;
+
+  pendingTokenRefresh = new Promise<string | null>((resolve) => {
+    const parentOrigin = process.env.NEXT_PUBLIC_PARENT_ORIGIN?.trim();
+    let settled = false;
+    const finish = (tok: string | null) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", onMsg);
+      clearTimeout(timer);
+      pendingTokenRefresh = null;
+      resolve(tok);
+    };
+    const onMsg = (ev: MessageEvent) => {
+      if (parentOrigin && parentOrigin !== "*" && ev.origin !== parentOrigin) {
+        return;
+      }
+      const d = ev.data as { type?: string; token?: unknown } | null;
+      if (!d || typeof d !== "object") return;
+      if (d.type !== "TOKEN_REFRESH" && d.type !== "WALLET_INIT") return;
+      if (typeof d.token === "string" && d.token.trim()) {
+        const tok = d.token.trim();
+        try {
+          window.sessionStorage.setItem(TOKEN_KEY, tok);
+        } catch {
+          /* ignore */
+        }
+        finish(tok);
+      }
+    };
+    window.addEventListener("message", onMsg);
+    const timer = setTimeout(() => finish(null), 8000);
+    try {
+      window.parent.postMessage(
+        { type: "GAME_TOKEN_REFRESH_REQUEST", source: "game", ts: Date.now() },
+        parentOrigin || "*"
+      );
+    } catch {
+      finish(null);
+    }
+  });
+  return pendingTokenRefresh;
+}
+
 async function authedRequest<T>(
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  retryOnAuthError = true
 ): Promise<T> {
   const token = readGameToken();
   const headers = new Headers(init.headers);
@@ -227,6 +290,14 @@ async function authedRequest<T>(
   const text = await res.text();
   const body: unknown = text ? safeJson(text) : null;
   if (!res.ok) {
+    // Access token expired mid-session: ask the parent panel for a fresh
+    // token and replay the request once before surfacing an error.
+    if (res.status === 401 && retryOnAuthError) {
+      const fresh = await requestParentTokenRefresh();
+      if (fresh) {
+        return authedRequest<T>(path, init, false);
+      }
+    }
     const msg =
       (body &&
         typeof body === "object" &&
@@ -350,12 +421,69 @@ export async function cashoutAviator(input: {
   });
 }
 
+/* ---- Aviator sidebar stats (real data) --------------------------------- */
+
+/** One row in the All Bets / Previous feed. `multiplier`/`won` are null while
+ *  the bet is still active or was lost. */
+export interface AviatorBetRow {
+  user: string; // masked, e.g. "d***v"
+  bet: number;
+  multiplier: number | null;
+  won: number | null;
+}
+
+export interface AviatorBetsResponse {
+  current: AviatorBetRow[];
+  previous: AviatorBetRow[];
+  recent_multipliers: number[];
+}
+
+/** Live + previous round bets plus the recent crash-point strip. */
+export async function getAviatorBets(): Promise<AviatorBetsResponse> {
+  return authedRequest<AviatorBetsResponse>("/api/games/aviator/bets");
+}
+
+export type AviatorTopMetric = "x" | "win" | "rounds";
+export type AviatorTopPeriod = "day" | "month" | "year";
+
+export interface AviatorTopPlayer {
+  user: string;
+  date: string;
+  betETB: number;
+  winETB: number;
+  result: number;
+  roundMax: number;
+}
+
+export interface AviatorTopRound {
+  dateTime: string;
+  multiplier: number;
+}
+
+export interface AviatorTopResponse {
+  metric: AviatorTopMetric;
+  period: AviatorTopPeriod;
+  items: AviatorTopPlayer[] | AviatorTopRound[];
+}
+
+/** "Top" tab: biggest multipliers / wins / round crash-points for a period. */
+export async function getAviatorTop(
+  metric: AviatorTopMetric,
+  period: AviatorTopPeriod
+): Promise<AviatorTopResponse> {
+  return authedRequest<AviatorTopResponse>(
+    `/api/games/aviator/top?metric=${metric}&period=${period}`
+  );
+}
+
 /* ------------------------------------------------------------------------ */
 /* Fast Keno                                                                */
 /* ------------------------------------------------------------------------ */
 
 export interface KenoRoundSnapshot {
   round_id: string | null;
+  /** 8-digit human-readable round Game ID (game_rounds.game_code). */
+  game_code?: string | null;
   phase: "betting" | "drawing" | "complete" | string;
   numbers_drawn: number[];
   time_remaining: number;
@@ -388,6 +516,7 @@ export async function placeKenoBet(input: {
 
 export interface SlotsSpinResponse {
   round_id: string;
+  game_code?: string; // 8-digit human-readable Game ID for this round
   reels: string[][]; // outer = reel index, inner = symbols (length 3 per reel)
   win_lines: number[];
   multiplier: number; // multiplier reel value (1–5) chosen server-side
@@ -406,6 +535,69 @@ export async function spinSlots(input: {
   return authedRequest<SlotsSpinResponse>("/api/games/slots/spin", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+/* ------------------------------------------------------------------------ */
+/* Rain Bonus                                                               */
+/* ------------------------------------------------------------------------ */
+
+export type RainGameId = "fast-keno" | "aviator";
+
+/** A live rain event as advertised to players. */
+export interface RainActive {
+  id: string;
+  game: RainGameId;
+  currency: string;
+  /** Advertised per-claim amount (equal) or the remaining pool (random). */
+  amount: number;
+  distribution: "equal" | "random";
+  remaining_claims: number;
+  total_claims: number;
+  closes_at: number;
+  seconds_left: number;
+}
+
+/** Broadcast when a new rain opens (payload matches RainActive). */
+export type RainOpenEvent = RainActive;
+
+/** Broadcast when a rain closes. */
+export interface RainClosedEvent {
+  id: string;
+  game: RainGameId;
+  reason: "expired" | "depleted" | "disabled";
+}
+
+/** Emitted to a specific player after they successfully claim. */
+export interface RainClaimedEvent {
+  rain_id: string;
+  game: RainGameId;
+  amount: number;
+  currency: string;
+}
+
+export interface RainClaimResponse {
+  ok: boolean;
+  amount: number;
+  currency: string;
+  credit_target: "bonus" | "main";
+  balance_after: number;
+  rain_id: string;
+}
+
+/** Fetch the currently claimable rain for a game (null when none). */
+export async function getActiveRain(game: RainGameId): Promise<RainActive | null> {
+  const res = await authedRequest<{ active: RainActive | null }>(
+    `/api/games/rain/active?game=${encodeURIComponent(game)}`
+  );
+  return res.active ?? null;
+}
+
+/** Claim the live rain for a game. Throws ApiError on ineligibility. */
+export async function claimRain(game: RainGameId): Promise<RainClaimResponse> {
+  return authedRequest<RainClaimResponse>("/api/games/rain/claim", {
+    method: "POST",
+    body: JSON.stringify({ game }),
   });
 }
 
@@ -429,14 +621,15 @@ export function connectGameSocket(room?: "aviator" | "keno" | "live_betting"): S
   const token = readGameToken();
   if (!token) return null;
 
-  if (sharedSocket && sharedSocket.connected) {
-    if (room) sharedSocket.emit("join", room);
-    return sharedSocket;
-  }
-
+  // Reuse the existing shared socket whether it is already connected OR still
+  // handshaking. Multiple consumers (e.g. the game page + the Rain popup) call
+  // this concurrently on mount; tearing a connecting socket down here would
+  // orphan the first caller's listeners and stall the game. Socket.io
+  // auto-reconnects (reconnectionAttempts: Infinity), so a temporarily
+  // disconnected shared socket recovers on its own — never recreate it.
   if (sharedSocket) {
-    sharedSocket.disconnect();
-    sharedSocket = null;
+    if (room && sharedSocket.connected) sharedSocket.emit("join", room);
+    return sharedSocket;
   }
 
   const socket = io(API_BASE_URL, {
@@ -487,7 +680,15 @@ export interface AviatorRoundCrashedEvent {
 
 export interface KenoRoundStartEvent {
   round_id: string;
+  /** 8-digit human-readable round Game ID. */
+  game_code?: string;
   betting_seconds: number;
+  /** Live players online (base 100 + real extra connections). */
+  online?: number;
+}
+
+export interface KenoOnlineEvent {
+  online: number;
 }
 
 export interface KenoNumberDrawnEvent {
@@ -498,6 +699,8 @@ export interface KenoNumberDrawnEvent {
 
 export interface KenoRoundCompleteEvent {
   round_id: string;
+  /** 8-digit human-readable round Game ID. */
+  game_code?: string;
   all_numbers: number[];
   server_seed: string | null;
 }

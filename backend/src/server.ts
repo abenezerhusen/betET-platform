@@ -20,6 +20,11 @@ import {
 } from './workers/notification-loop';
 import { startBulkSmsLoop, stopBulkSmsLoop } from './workers/bulk-sms-loop';
 import { startOddsSyncLoop, stopOddsSyncLoop } from './workers/odds-sync-loop';
+import {
+  startGameRetentionLoop,
+  stopGameRetentionLoop,
+} from './workers/game-retention-loop';
+import { startRainLoop, stopRainLoop } from './workers/rain-loop';
 
 async function main(): Promise<void> {
   // Preload tenant CORS origins at boot so the first request isn't blocked.
@@ -49,6 +54,10 @@ async function main(): Promise<void> {
   startBulkSmsLoop();
   // Dormant unless DATA_PROVIDER=odds_api (checked inside start/tick).
   startOddsSyncLoop();
+  // Prune game history (rounds + bets) older than 45 days once per day.
+  startGameRetentionLoop();
+  // Schedule admin-configured Rain Bonus drops for Fast Keno & Aviator.
+  startRainLoop();
 
   startTenantOriginsRefresh();
 
@@ -64,6 +73,8 @@ async function main(): Promise<void> {
       stopNotificationLoop();
       stopBulkSmsLoop();
       stopOddsSyncLoop();
+      stopGameRetentionLoop();
+      stopRainLoop();
       await shutdownSocketServer();
       logger.info('socket.io server closed');
     } catch (err) {

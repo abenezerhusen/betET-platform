@@ -481,6 +481,180 @@ export async function login(tenantId: string, input: LoginInput): Promise<TokenP
   return outcome.value;
 }
 
+/**
+ * Registration bonus — best-effort credit of a non-withdrawable signup bonus
+ * into a brand-new user's wallet. Controlled from Admin Panel → Promotions →
+ * Registration Bonus (settings key `promotions.registration_bonus`, shape
+ * `{ is_enabled, amount }`).
+ *
+ * Design notes:
+ *  - Runs in its OWN transaction AFTER the account is already committed, and
+ *    swallows any error, so a bonus problem can never block registration.
+ *  - The amount is credited to `bonus_balance` (never `balance` /
+ *    `withdrawable_balance`), so it is NOT directly withdrawable — it follows
+ *    the platform's existing bonus-money rules (must be wagered before it can
+ *    convert to cash, and withdrawal logic never touches bonus_balance).
+ *  - Idempotent via the unique-per-account transaction reference.
+ */
+async function grantRegistrationBonusBestEffort(
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  try {
+    await withTenantClient({ tenantId }, async (client) => {
+      const cfgRow = await client.query<{
+        value: {
+          is_enabled?: boolean;
+          amount?: number;
+          products?: Record<string, boolean>;
+          sportsbook_rules?: { min_selections?: number; min_odds?: number };
+          wagering_multiplier?: number;
+          expires_in_days?: number;
+        } | null;
+      }>(
+        `SELECT value FROM settings
+          WHERE tenant_id = $1 AND key = 'promotions.registration_bonus'`,
+        [tenantId]
+      );
+      const cfg = cfgRow.rows[0]?.value ?? null;
+      const amount = Number(cfg?.amount ?? 0);
+      if (!cfg?.is_enabled || !(amount > 0)) return;
+
+      const wageringMultiplier = Number(cfg?.wagering_multiplier ?? 0);
+      const expiresInDays = Number(cfg?.expires_in_days ?? 0);
+      const minSelections = Number(cfg?.sportsbook_rules?.min_selections ?? 0);
+      const minSelectionOdds = Number(cfg?.sportsbook_rules?.min_odds ?? 0);
+      const products = cfg?.products ?? {};
+
+      // The bonus lives in the shared wagering engine so the usage rules are
+      // actually enforced by bet-hooks. We keep a single per-tenant "managed"
+      // signup rule (is_active=false so it never appears in the claimable /
+      // public bonus lists) whose config carries the current rules. Its config
+      // is refreshed here so admin edits always take effect for new signups.
+      const ruleConfig = {
+        amount,
+        wagering_multiplier: wageringMultiplier,
+        expires_in_days: expiresInDays,
+        min_selections: minSelections,
+        min_selection_odds: minSelectionOdds,
+        products,
+        source: 'registration_bonus',
+      };
+      const ruleRes = await client.query<{ id: string }>(
+        `INSERT INTO bonus_rules (tenant_id, name, type, config, is_active, status, priority)
+         VALUES ($1, 'Registration Bonus (auto)', 'signup', $2::jsonb, false, 'disabled', 0)
+         ON CONFLICT (tenant_id, name)
+           DO UPDATE SET config = EXCLUDED.config, updated_at = now()
+         RETURNING id`,
+        [tenantId, JSON.stringify(ruleConfig)]
+      );
+      const ruleId = ruleRes.rows[0]?.id;
+      if (!ruleId) return;
+
+      // Idempotency: one registration bonus per account.
+      const existing = await client.query(
+        `SELECT 1 FROM bonus_assignments
+          WHERE tenant_id = $1 AND bonus_rule_id = $2 AND user_id = $3 LIMIT 1`,
+        [tenantId, ruleId, userId]
+      );
+      if ((existing.rowCount ?? 0) > 0) return;
+
+      const wageringRequired = Number((amount * wageringMultiplier).toFixed(4));
+      const expiresAt =
+        expiresInDays > 0
+          ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
+          : null;
+
+      const assignmentRes = await client.query<{ id: string }>(
+        `INSERT INTO bonus_assignments
+           (tenant_id, bonus_rule_id, user_id, awarded_by, awarded_amount,
+            wagering_required, expires_at, metadata)
+         VALUES ($1,$2,$3,NULL,$4::numeric,$5::numeric,$6,$7::jsonb)
+         RETURNING id`,
+        [
+          tenantId,
+          ruleId,
+          userId,
+          amount,
+          wageringRequired,
+          expiresAt,
+          JSON.stringify({ source: 'registration_bonus' }),
+        ]
+      );
+      const assignmentId = assignmentRes.rows[0]?.id;
+
+      const currency = 'ETB';
+      // Lazily create the wallet (users have none until their first financial
+      // event) then lock it for the credit.
+      await client.query(
+        `INSERT INTO wallets (tenant_id, user_id, currency, balance)
+         VALUES ($1, $2, $3, 0)
+         ON CONFLICT ON CONSTRAINT wallets_user_currency_unique DO NOTHING`,
+        [tenantId, userId, currency]
+      );
+      const walletQ = await client.query<{ id: string; bonus_balance: string }>(
+        `SELECT id, bonus_balance::text
+           FROM wallets
+          WHERE tenant_id = $1 AND user_id = $2 AND currency = $3
+          FOR UPDATE`,
+        [tenantId, userId, currency]
+      );
+      const wallet = walletQ.rows[0];
+      if (!wallet) return;
+
+      const before = Number(wallet.bonus_balance);
+      const after = before + amount;
+      // Credit the NON-withdrawable bonus balance. It converts to cash only
+      // after the wagering rules above are met (handled by bet-hooks).
+      await client.query(
+        `UPDATE wallets
+            SET bonus_balance = bonus_balance + $2::numeric,
+                version = version + 1,
+                updated_at = now()
+          WHERE id = $1`,
+        [wallet.id, amount]
+      );
+      await client.query(
+        `INSERT INTO transactions
+           (tenant_id, wallet_id, user_id, type, amount, before_balance,
+            after_balance, currency, reference, status, metadata)
+         VALUES ($1,$2,$3,'bonus_credit',$4::numeric,$5::numeric,$6::numeric,
+                 $7,$8,'completed',$9::jsonb)`,
+        [
+          tenantId,
+          wallet.id,
+          userId,
+          amount,
+          before,
+          after,
+          currency,
+          assignmentId ? `bonus:${assignmentId}` : `registration_bonus:${userId}`,
+          JSON.stringify({
+            source: 'registration_bonus',
+            non_withdrawable: true,
+            bonus_assignment_id: assignmentId ?? null,
+            wagering_required: wageringRequired,
+            rules: {
+              products,
+              min_selections: minSelections,
+              min_selection_odds: minSelectionOdds,
+            },
+          }),
+        ]
+      );
+      logger.info(
+        { tenantId, userId, amount, wageringRequired, minSelections, minSelectionOdds },
+        'registration bonus granted'
+      );
+    });
+  } catch (err) {
+    logger.error(
+      { err, tenantId, userId },
+      'registration bonus grant failed (non-fatal)'
+    );
+  }
+}
+
 export async function register(tenantId: string, input: RegisterInput) {
   // Registration OTP gate. When a provider is enabled (SMS or Telegram),
   // the phone/email must be verified with an OTP before the account is
@@ -587,6 +761,10 @@ export async function register(tenantId: string, input: RegisterInput) {
     userAgent: input.userAgent,
     status: 'success',
   });
+
+  // Grant the admin-configured signup bonus (non-withdrawable). Best-effort:
+  // never blocks or reverses a successful registration.
+  await grantRegistrationBonusBestEffort(tenantId, created.id);
 
   const fullName =
     (created.metadata as { full_name?: string } | null)?.full_name ??

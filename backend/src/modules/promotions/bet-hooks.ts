@@ -35,6 +35,12 @@ export async function applyBetWageringProgress(params: {
   betId: string;
   stake: number;
   odds: number;
+  /** Number of selections/matches in the bet (for min_selections rules). */
+  selections?: number;
+  /** Lowest per-selection odds in the bet (for min_selection_odds rules). */
+  minSelectionOdds?: number;
+  /** Product the bet belongs to, e.g. 'sportsbook' (for product rules). */
+  product?: string;
 }): Promise<void> {
   if (!Number.isFinite(params.stake) || params.stake <= 0) return;
 
@@ -70,6 +76,35 @@ export async function applyBetWageringProgress(params: {
           const cfg = (a.config ?? {}) as Record<string, unknown>;
           const minOdds = Number(cfg.min_odds ?? 0);
           if (minOdds > 0 && params.odds < minOdds) continue;
+
+          // --- Additive usage rules (only active when the rule sets them, so
+          // existing bonuses are unaffected). Used by the registration bonus. ---
+
+          // Product eligibility: skip when the bet's product isn't allowed.
+          const products = cfg.products as Record<string, boolean> | undefined;
+          if (
+            products &&
+            typeof products === 'object' &&
+            params.product &&
+            products[params.product] === false
+          ) {
+            continue;
+          }
+
+          // Minimum number of matches/selections in the bet.
+          const minSelections = Number(cfg.min_selections ?? 0);
+          if (minSelections > 0 && Number(params.selections ?? 0) < minSelections) {
+            continue;
+          }
+
+          // Minimum odds per selection (each match must be priced at/above this).
+          const minSelectionOdds = Number(cfg.min_selection_odds ?? 0);
+          if (
+            minSelectionOdds > 0 &&
+            Number(params.minSelectionOdds ?? 0) < minSelectionOdds
+          ) {
+            continue;
+          }
 
           const currentProgress = Number(a.wagering_progress ?? 0);
           const remaining = Math.max(0, required - currentProgress);

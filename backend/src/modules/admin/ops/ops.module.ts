@@ -172,6 +172,78 @@ router.put(
   })
 );
 
+/* ---------------------- Registration Bonus configuration ------------------- */
+// New-user signup bonus. The credited amount lands in the wallet's
+// bonus_balance (non-withdrawable) at registration time — see
+// grantRegistrationBonusBestEffort() in auth.service.ts. Stored as a single
+// settings row so it follows the same pattern as referral-config /
+// cashout-boost and requires no schema migration.
+
+const registrationBonusSchema = z.object({
+  is_enabled: z.boolean().default(false),
+  amount: z.coerce.number().nonnegative().max(1_000_000).default(0),
+  // Which products this signup bonus may be used on (checkboxes).
+  products: z
+    .object({
+      sportsbook: z.boolean().default(true),
+      football: z.boolean().default(false),
+      virtual: z.boolean().default(false),
+      casino: z.boolean().default(false),
+    })
+    .default({}),
+  // "International model" usage rules for the sportsbook product: to clear the
+  // bonus the user must wager it on bets with at least `min_selections`
+  // matches, each priced at `min_odds` or higher.
+  sportsbook_rules: z
+    .object({
+      min_selections: z.coerce.number().int().min(0).max(100).default(0),
+      min_odds: z.coerce.number().min(0).max(1000).default(0),
+    })
+    .default({}),
+  // Turnover requirement: bonus must be wagered `amount × wagering_multiplier`
+  // before it converts from bonus_balance to withdrawable cash. 0 = none.
+  wagering_multiplier: z.coerce.number().min(0).max(100).default(0),
+  // Bonus validity window in days (0 = never expires).
+  expires_in_days: z.coerce.number().int().min(0).max(3650).default(0),
+});
+
+export type RegistrationBonusConfig = z.infer<typeof registrationBonusSchema>;
+
+const DEFAULT_REGISTRATION_BONUS: RegistrationBonusConfig = registrationBonusSchema.parse({});
+
+router.get(
+  '/promotions/registration-bonus',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const row = await client.query<{ value: Record<string, unknown> }>(
+        `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'promotions.registration_bonus'`,
+        [tenantId]
+      );
+      return { ...DEFAULT_REGISTRATION_BONUS, ...(row.rows[0]?.value ?? {}) };
+    });
+  })
+);
+
+router.put(
+  '/promotions/registration-bonus',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = registrationBonusSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      await client.query(
+        `INSERT INTO settings (tenant_id, key, value)
+         VALUES ($1,'promotions.registration_bonus',$2::jsonb)
+         ON CONFLICT (tenant_id,key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [tenantId, JSON.stringify(body)]
+      );
+      return body;
+    });
+  })
+);
+
 /* ------------------------------- Match stats ------------------------------- */
 
 router.get(

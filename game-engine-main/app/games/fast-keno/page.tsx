@@ -16,10 +16,12 @@ import {
   type KenoNumberDrawnEvent,
   type KenoRoundCompleteEvent,
   type KenoRoundStartEvent,
+  type KenoOnlineEvent,
 } from "@/lib/game-engine"
-import { goBackToParent } from "@/lib/embed-nav"
+import { goBackToParent, goToDeposit } from "@/lib/embed-nav"
 import { useBalanceToast } from "@/components/balance-toast"
 import { useStageScale } from "@/hooks/use-stage-scale"
+import { RainClaimPopup } from "@/components/rain-claim-popup"
 
 // Bet type
 interface Bet {
@@ -39,6 +41,8 @@ interface Bet {
 // Game round history
 interface GameRound {
   id: number | string
+  // Short 8-digit Game ID for display (falls back to id when absent).
+  code?: string
   drawnNumbers: number[]
   timestamp: Date
 }
@@ -58,13 +62,15 @@ export default function FastKenoPage() {
   const [betAmount, setBetAmount] = useState(2.00)
   const [balance, setBalance] = useState(0)
   const [roundTimer, setRoundTimer] = useState(30) // 30-second betting window
+  // roundId stays the backend UUID (required to place bets); roundCode is the
+  // short 8-digit human-readable Game ID shown to the player.
   const [roundId, setRoundId] = useState<string>("")
+  const [roundCode, setRoundCode] = useState<string>("")
   // Track in-flight bets so we can correlate server `round_complete` events
   // back to the player's slips.
   const myBetsRef = useRef<Bet[]>([])
   
   // Header state
-  const [practiceMode, setPracticeMode] = useState(true)
   const [isFavorite, setIsFavorite] = useState(false)
   
   // Sidebar state
@@ -86,8 +92,9 @@ export default function FastKenoPage() {
     { id: 999, drawnNumbers: [2, 8, 11, 17, 23, 27, 33, 39, 45, 48, 51, 56, 62, 65, 69, 72, 74, 76, 78, 80], timestamp: new Date() },
   ])
   
-  // Chat state
-  const [onlineCount, setOnlineCount] = useState(401)
+  // Chat state. Live player count starts at the 100 baseline and is updated by
+  // the backend `keno:online` broadcast (base 100 + real extra connections).
+  const [onlineCount, setOnlineCount] = useState(100)
   const [chatMessage, setChatMessage] = useState("")
   const [chatMessages, setChatMessages] = useState([
     { id: 1, user: "d***v", message: "Rain operator", likes: 1, avatar: "blue" },
@@ -160,6 +167,14 @@ export default function FastKenoPage() {
     myBetsRef.current = myBets
   }, [myBets])
 
+  // Live refs for the resilience watchdog (avoid stale closures).
+  const roundIdRef = useRef<string>("")
+  // Timestamp of the last socket event received. The watchdog only steps in
+  // when this goes stale, so normal play (smooth one-by-one draws) is never
+  // touched.
+  const lastEventRef = useRef<number>(Date.now())
+  useEffect(() => { roundIdRef.current = roundId }, [roundId])
+
   // ============================================================
   // Backend integration — Section 17 spec
   // ============================================================
@@ -168,7 +183,11 @@ export default function FastKenoPage() {
     let socket: ReturnType<typeof connectGameSocket> = null
 
     const onStart = (ev: KenoRoundStartEvent) => {
+      lastEventRef.current = Date.now()
+      roundIdRef.current = ev.round_id
       setRoundId(ev.round_id)
+      if (ev.game_code) setRoundCode(ev.game_code)
+      if (typeof ev.online === "number") setOnlineCount(ev.online)
       setGamePhase("betting")
       setSelectedNumbers([])
       setDrawnNumbers([])
@@ -180,7 +199,13 @@ export default function FastKenoPage() {
       setAllBets([])
     }
 
+    const onOnline = (ev: KenoOnlineEvent) => {
+      lastEventRef.current = Date.now()
+      if (typeof ev.online === "number") setOnlineCount(ev.online)
+    }
+
     const onNumberDrawn = (ev: KenoNumberDrawnEvent) => {
+      lastEventRef.current = Date.now()
       setGamePhase("drawing")
       setDrawnNumbers((prev) => {
         if (prev.includes(ev.number)) return prev
@@ -190,6 +215,7 @@ export default function FastKenoPage() {
     }
 
     const onComplete = (ev: KenoRoundCompleteEvent) => {
+      lastEventRef.current = Date.now()
       setDrawnNumbers(ev.all_numbers)
       setCurrentDrawIndex(ev.all_numbers.length)
       setGamePhase("result")
@@ -216,7 +242,12 @@ export default function FastKenoPage() {
         ),
       )
       setGameHistory((prev) => [
-        { id: ev.round_id, drawnNumbers: ev.all_numbers, timestamp: new Date() },
+        {
+          id: ev.round_id,
+          code: ev.game_code,
+          drawnNumbers: ev.all_numbers,
+          timestamp: new Date(),
+        },
         ...prev.slice(0, 9),
       ])
       setHotNumbers(ev.all_numbers.slice(0, 4))
@@ -253,6 +284,7 @@ export default function FastKenoPage() {
         .then((snap) => {
           if (cancelled) return
           if (snap.round_id) setRoundId(snap.round_id)
+          if (snap.game_code) setRoundCode(snap.game_code)
           if (snap.phase === "betting" || snap.phase === "drawing" || snap.phase === "complete") {
             setGamePhase(snap.phase === "complete" ? "result" : snap.phase)
           }
@@ -261,7 +293,9 @@ export default function FastKenoPage() {
             setCurrentDrawIndex(snap.numbers_drawn.length)
           }
           if (typeof snap.time_remaining === "number") {
-            setRoundTimer(Math.max(0, Math.min(30, snap.time_remaining)))
+            // Honor the server's authoritative countdown (admin-configurable —
+            // may be more or less than the historical 30s default).
+            setRoundTimer(Math.max(0, snap.time_remaining))
           }
         })
         .catch(() => {
@@ -273,6 +307,7 @@ export default function FastKenoPage() {
       socket.on("keno:round_start", onStart)
       socket.on("keno:number_drawn", onNumberDrawn)
       socket.on("keno:round_complete", onComplete)
+      socket.on("keno:online", onOnline)
     })()
 
     return () => {
@@ -281,6 +316,7 @@ export default function FastKenoPage() {
         socket.off("keno:round_start", onStart)
         socket.off("keno:number_drawn", onNumberDrawn)
         socket.off("keno:round_complete", onComplete)
+        socket.off("keno:online", onOnline)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -310,6 +346,57 @@ export default function FastKenoPage() {
     }, 1000)
     return () => clearInterval(interval)
   }, [gamePhase])
+
+  // Resilience watchdog — a real-time game can otherwise freeze on an old
+  // round if the socket connection drops. This ONLY steps in when the socket
+  // has been completely silent for a while (a genuine stall); during normal
+  // play the smooth one-by-one draw is driven purely by socket events and is
+  // never touched here. Healthy sessions get an event at least every ~5s
+  // (draws, online count, round start/complete), so STALL_MS is a safe margin.
+  useEffect(() => {
+    const STALL_MS = 12000
+    let cancelled = false
+    const interval = setInterval(() => {
+      const stalled = Date.now() - lastEventRef.current >= STALL_MS
+      // Recover fast if we never loaded a round at all (e.g. the initial
+      // snapshot failed); otherwise only step in when the socket has gone
+      // silent. Either way we leave a live, animating round untouched.
+      const neverLoaded = roundIdRef.current === ""
+      if (!stalled && !neverLoaded) return
+      getKenoRound()
+        .then((snap) => {
+          if (cancelled || !snap.round_id) return
+          // Only recover when we're stuck on a *different* (stale) round.
+          // Never bulk-fill draws for the current round — that would jump the
+          // ball animation. A stalled current round heals on the next round.
+          if (snap.round_id === roundIdRef.current) return
+          const drawn = Array.isArray(snap.numbers_drawn) ? snap.numbers_drawn : []
+          const phase =
+            snap.phase === "complete"
+              ? "result"
+              : snap.phase === "betting" || snap.phase === "drawing"
+              ? snap.phase
+              : null
+          roundIdRef.current = snap.round_id
+          setRoundId(snap.round_id)
+          if (snap.game_code) setRoundCode(snap.game_code)
+          setSelectedNumbers([])
+          setMyBets([])
+          setAllBets([])
+          setDrawnNumbers(drawn)
+          setCurrentDrawIndex(drawn.length)
+          if (phase) setGamePhase(phase)
+          if (typeof snap.time_remaining === "number") {
+            setRoundTimer(Math.max(0, snap.time_remaining))
+          }
+        })
+        .catch(() => { /* transient — try again next tick */ })
+    }, 4000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
 
   // Disconnect socket on page unmount so we don't leak listeners.
   useEffect(() => {
@@ -362,6 +449,12 @@ export default function FastKenoPage() {
 
   const placeBet = async () => {
     if (selectedNumbers.length === 0 || gamePhase !== "betting") return
+    // The betting window has effectively closed on the client — don't fire a
+    // request the server will reject with "Round is not accepting bets".
+    if (roundTimer <= 0) {
+      notifyBalance("Betting closed — wait for the next round")
+      return
+    }
     if (balance < betAmount) {
       notifyBalance("Insufficient balance — please deposit")
       return
@@ -388,9 +481,17 @@ export default function FastKenoPage() {
       setAllBets((prev) => [...prev, { ...newBet, user: "p***n" }])
       setSelectedNumbers([])
     } catch (err) {
-      console.error("Keno bet failed", err)
+      // Expected, benign races (round just closed / insufficient funds) are
+      // surfaced as a toast — never as a console.error (which trips the
+      // Next.js dev error overlay) and never crashes the game.
       const msg = err instanceof Error ? err.message : ""
-      notifyBalance(/insufficient/i.test(msg) ? "Insufficient balance — please deposit" : "Bet failed")
+      if (/insufficient/i.test(msg)) {
+        notifyBalance("Insufficient balance — please deposit")
+      } else if (/not accepting bets|round not found/i.test(msg)) {
+        notifyBalance("Betting closed — wait for the next round")
+      } else {
+        notifyBalance("Bet failed — please try again")
+      }
     }
   }
 
@@ -442,16 +543,22 @@ export default function FastKenoPage() {
     return allBets
   }
 
-  // Simulate online count changes
+  // Live online count is driven by the backend `keno:online` broadcast (real
+  // connections, base 100). No client-side simulation.
   useEffect(() => {
-    const interval = setInterval(() => {
-      setOnlineCount(prev => prev + Math.floor(Math.random() * 5) - 2)
-    }, 5000)
-    return () => clearInterval(interval)
+    return
   }, [])
 
   return (
     <div className="fk-stage-wrapper">
+    <RainClaimPopup
+      game="fast-keno"
+      onClaimed={() => {
+        fetchPlayerMe()
+          .then((me) => setBalance(readBalance(me)))
+          .catch(() => {});
+      }}
+    />
     <div 
       className="fk-page min-h-screen text-white overflow-hidden"
       data-show-mobile-chat={showMobileChat ? "true" : undefined}
@@ -477,28 +584,11 @@ export default function FastKenoPage() {
           
           {/* Center - Round Info */}
           <div className="text-xs text-slate-400" data-fk-section="round-info">
-            Round #{roundId}
+            Round #{roundCode || roundId}
           </div>
           
           {/* Right - Controls */}
           <div className="flex items-center gap-2">
-            {/* Practice Toggle */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPracticeMode(!practiceMode)}
-                className={`relative w-10 h-5 rounded-full transition-colors ${
-                  practiceMode ? "bg-pink-500" : "bg-slate-600"
-                }`}
-              >
-                <div 
-                  className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
-                    practiceMode ? "translate-x-5" : "translate-x-0.5"
-                  }`}
-                />
-              </button>
-              <span className="text-xs font-medium text-white">PRACTICE</span>
-            </div>
-            
             {/* Favorite */}
             <button 
               onClick={() => setIsFavorite(!isFavorite)}
@@ -529,14 +619,14 @@ export default function FastKenoPage() {
               <Maximize2 className="w-4 h-4 text-slate-400" />
             </button>
 
-            {/* Deposit Button */}
-            <button className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 rounded text-xs font-medium transition-colors">
+            {/* Deposit Button — redirects the player to the deposit page
+                (parent user panel when embedded). */}
+            <button
+              type="button"
+              onClick={() => goToDeposit()}
+              className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 rounded text-xs font-medium transition-colors"
+            >
               Deposit
-            </button>
-            
-            {/* Settings */}
-            <button className="p-1.5 bg-pink-500 hover:bg-pink-600 rounded-full transition-colors">
-              <Settings className="w-4 h-4 text-white" />
             </button>
           </div>
         </div>
@@ -586,7 +676,10 @@ export default function FastKenoPage() {
               </span>
             </div>
             
-            {/* Player ID */}
+            {/* Round Game ID — the unique 8-digit code for the CURRENT round
+                (same value recorded in the admin Game History). Changes every
+                round; falls back to the placeholder until the first round
+                snapshot/event arrives. */}
             <span style={{
               color: '#fff',
               fontFamily: "system-ui, -apple-system, sans-serif",
@@ -595,7 +688,7 @@ export default function FastKenoPage() {
               lineHeight: '2rem',
               cursor: 'pointer'
             }}>
-              ID: <span style={{ color: '#fff' }}>{playerId}</span>
+              ID: <span style={{ color: '#fff' }}>{roundCode || playerId}</span>
             </span>
             
             {/* Menu */}
@@ -756,7 +849,7 @@ export default function FastKenoPage() {
             
             {activeTab === "history" && gameHistory.map((round) => (
               <div key={round.id} className="mb-3 bg-slate-800/50 rounded p-2">
-                <div className="text-slate-400 text-xs mb-1">Round #{round.id}</div>
+                <div className="text-slate-400 text-xs mb-1">Round #{round.code || round.id}</div>
                 <div className="flex flex-wrap gap-1">
                   {round.drawnNumbers.map(n => (
                     <div key={n} className="w-6 h-6 bg-emerald-500/80 rounded flex items-center justify-center text-xs font-medium">

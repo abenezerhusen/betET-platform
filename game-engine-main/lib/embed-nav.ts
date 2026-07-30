@@ -14,6 +14,7 @@
  */
 
 const BACK_MESSAGE_TYPE = "GAME_BACK" as const;
+const DEPOSIT_MESSAGE_TYPE = "GAME_DEPOSIT" as const;
 
 /** True when this document is rendered inside another window (an iframe). */
 export function isEmbedded(): boolean {
@@ -64,4 +65,35 @@ export function goBackToParent(onStandalone?: () => void): void {
     return;
   }
   if (typeof window !== "undefined") window.location.assign("/");
+}
+
+/**
+ * Ask the parent (user panel) to navigate the player to its deposit page.
+ * Mirrors {@link notifyParentBack} — the deposit page lives in the user panel,
+ * not the game engine, so when embedded we hand off to the parent. When opened
+ * standalone we fall back to the parent origin's `/deposit` (if configured).
+ */
+export function goToDeposit(): void {
+  if (typeof window === "undefined") return;
+  if (isEmbedded()) {
+    const parentOrigin = process.env.NEXT_PUBLIC_PARENT_ORIGIN?.trim() || "*";
+    try {
+      window.parent.postMessage(
+        {
+          type: DEPOSIT_MESSAGE_TYPE,
+          source: "game",
+          payload: { reason: "user_deposit" },
+          ts: Date.now(),
+        },
+        parentOrigin,
+      );
+    } catch {
+      /* ignore — parent unreachable */
+    }
+    return;
+  }
+  // Standalone (direct engine access): go to the configured parent deposit
+  // page when known, otherwise a local `/deposit` path.
+  const base = process.env.NEXT_PUBLIC_PARENT_ORIGIN?.trim();
+  window.location.assign(base ? `${base.replace(/\/$/, "")}/deposit` : "/deposit");
 }

@@ -148,6 +148,9 @@ export function Header() {
     ) ??
     wallet?.summary?.[0];
   const userBalance = walletLine ? Number(walletLine.balance) : 0;
+  // Non-withdrawable bonus funds (e.g. registration bonus). Shown next to the
+  // cash balance so users can see promo money credited to their account.
+  const userBonus = walletLine ? Number(walletLine.bonus_balance ?? 0) : 0;
 
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [platformName, setPlatformName] = useState<string>("");
@@ -702,6 +705,18 @@ export function Header() {
                 <span className="text-xs sm:text-sm font-bold text-white">
                   {walletLoading ? "…" : userBalance.toFixed(2)}
                 </span>
+                {!walletLoading && userBonus > 0 && (
+                  <span
+                    className="text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded leading-none"
+                    style={{
+                      background: "var(--mezzo-accent-yellow)",
+                      color: "#000",
+                    }}
+                    title="Bonus balance (non-withdrawable)"
+                  >
+                    +{userBonus.toFixed(2)}
+                  </span>
+                )}
                 <Link
                   href="/deposit"
                   aria-label="Deposit"

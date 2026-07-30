@@ -11,7 +11,9 @@ import { http } from './client';
 export interface GameActivityQuery {
   from?: string;
   to?: string;
-  game_id?: 'aviator' | 'jetx' | 'fast-keno' | 'multi-hot-5';
+  game_id?: string;
+  /** 8-digit human-readable round Game ID (game_rounds.game_code). */
+  code?: string;
   status?: 'active' | 'cashed_out' | 'lost' | 'won';
   result?: 'win' | 'loss' | 'pending';
   user_id?: string;
@@ -28,6 +30,8 @@ export interface GameBetRow {
   id: string;
   tenant_id: string;
   round_id: string;
+  /** 8-digit human-readable round Game ID. */
+  game_code: string | null;
   user_id: string | null;
   game_id: string;
   amount: string | number;
@@ -36,6 +40,8 @@ export interface GameBetRow {
   multiplier: string | number | null;
   auto_cashout: string | number | null;
   selected_numbers: number[] | null;
+  /** Fast Keno: the 20 numbers drawn in this round. */
+  drawn_numbers: number[] | null;
   lines: number | null;
   status: string;
   result: 'win' | 'loss' | 'pending';

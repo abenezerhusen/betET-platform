@@ -55,6 +55,10 @@ import {
   applyWinningTax,
   loadBettingConfig,
 } from '../../bets/betting-config';
+import {
+  computeWinBreakdownFromGross,
+  snapshotToConfig,
+} from '../../bets/sportsbook-tax';
 
 /* -------------------------------------------------------------------------- */
 /* DTOs                                                                       */
@@ -468,6 +472,8 @@ async function setMatchResult(
         any_void: boolean;
         total_legs: number;
         wallet_id: string | null;
+        effective_stake: string | null;
+        metadata: Record<string, unknown> | null;
       }>(
         `WITH touched AS (
             SELECT DISTINCT l.bet_id
@@ -491,6 +497,8 @@ async function setMatchResult(
                  b.currency,
                  b.potential_payout::text AS potential_payout,
                  b.total_odds::text       AS total_odds,
+                 b.effective_stake::text  AS effective_stake,
+                 b.metadata               AS metadata,
                  COALESCE((b.metadata->>'balance_source') = 'bonus', false) AS bonus_funded,
                  s.any_lost,
                  s.any_void,
@@ -524,6 +532,10 @@ async function setMatchResult(
         let netPay = 0;
         let taxAmt = 0;
         let credit = 0;
+        // Sportsbook Tax audit values (only meaningful on a win).
+        let grossBeforeBonus = 0;
+        let bonusAmount = 0;
+        let finalPayout = 0;
 
         if (r.any_lost) {
           status = 'lost';
@@ -548,24 +560,54 @@ async function setMatchResult(
               (acc, w) => acc * Number(w.odds),
               1
             );
-            const gross = Math.round(stake * effOdds * 100) / 100;
-            const taxed = applyWinningTax(gross, cfg.tax);
-            netPay = taxed.final_payout;
-            taxAmt = taxed.tax_amount;
+            // Sportsbook Tax layer: new tickets carry a snapshot → run the
+            // full effective-stake + compensation-bonus + winning-tax
+            // pipeline. Legacy tickets (no snapshot) keep the prior behaviour
+            // (full stake gross + legacy winning tax).
+            const snapCfg = snapshotToConfig(r.metadata);
+            if (snapCfg) {
+              const effStake =
+                r.effective_stake != null ? Number(r.effective_stake) : stake;
+              const gross = Math.round(effStake * effOdds * 100) / 100;
+              const bd = computeWinBreakdownFromGross(gross, snapCfg);
+              grossBeforeBonus = bd.gross_payout_before_bonus;
+              bonusAmount = bd.compensation_bonus_amount;
+              taxAmt = bd.winning_tax_amount;
+              netPay = bd.final_payout;
+              finalPayout = bd.final_payout;
+              credit = netPay;
+            } else {
+              const gross = Math.round(stake * effOdds * 100) / 100;
+              const taxed = applyWinningTax(gross, cfg.tax);
+              netPay = taxed.final_payout;
+              taxAmt = taxed.tax_amount;
+              credit = netPay;
+            }
             status = 'won';
-            credit = netPay;
           }
         }
 
-        // Persist bet status.
+        // Persist bet status (+ tax/bonus audit values for wins).
         await client.query(
           `UPDATE sportsbook_bets
               SET status = $1,
                   actual_payout = $2,
                   tax_amount = $3,
+                  gross_payout_before_bonus = $5,
+                  compensation_bonus_amount = $6,
+                  winning_tax_amount = $3,
+                  final_payout = $7,
                   settled_at = now()
             WHERE id = $4`,
-          [status, credit, taxAmt, r.bet_id]
+          [
+            status,
+            credit,
+            taxAmt,
+            r.bet_id,
+            status === 'won' ? grossBeforeBonus : null,
+            status === 'won' ? bonusAmount : null,
+            status === 'won' ? finalPayout : null,
+          ]
         );
 
         // Credit wallet & write ledger entry.

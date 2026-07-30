@@ -1,16 +1,72 @@
 import { withTenantClient } from '../infrastructure/db/tenant-client';
 import { gameRngService } from '../services/game-rng.service';
-import { emitToTenant, emitToUser } from '../realtime/socket';
+import {
+  emitToTenant,
+  emitToUser,
+  getTenantOnlineCount,
+} from '../realtime/socket';
 import { logger } from '../infrastructure/logger';
 import { sendSmsBestEffort } from '../modules/notifications/notifications.service';
 
 const TICK_MS = 500;
-const BETTING_SECONDS = 30;
+const BETTING_SECONDS = 30; // default; admin-overridable per tenant
 const DRAW_INTERVAL_MS = 1500;
 const COMPLETE_HOLD_MS = 5000;
 
+// Admin-configurable betting countdown (settings key `games.countdown.fast-keno`).
+// Cached per tenant and refreshed when each new round is created, so the value
+// stays consistent for the lifetime of any given round.
+const bettingSecondsByTenant = new Map<string, number>();
+
+function getBettingSeconds(tenantId: string): number {
+  return bettingSecondsByTenant.get(tenantId) ?? BETTING_SECONDS;
+}
+
+async function refreshBettingSeconds(tenantId: string): Promise<number> {
+  try {
+    const secs = await withTenantClient(
+      { tenantId, bypassRls: true },
+      async (client) => {
+        const r = await client.query<{ value: { betting_seconds?: number } }>(
+          `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'games.countdown.fast-keno'`,
+          [tenantId]
+        );
+        const v = Number(r.rows[0]?.value?.betting_seconds);
+        return Number.isFinite(v) && v >= 5 && v <= 300 ? Math.floor(v) : BETTING_SECONDS;
+      }
+    );
+    bettingSecondsByTenant.set(tenantId, secs);
+    return secs;
+  } catch {
+    return getBettingSeconds(tenantId);
+  }
+}
+
+// "Players online" baseline. The displayed figure is this base plus the real
+// number of *additional* live socket connections in the tenant, so the counter
+// starts at 100 when a single player is present and rises with real traffic.
+const ONLINE_BASE = 100;
+const ONLINE_EMIT_INTERVAL_MS = 5000;
+
 let timer: NodeJS.Timeout | null = null;
 let inFlight = false;
+// Throttle the online-count broadcast per tenant (the loop ticks every 500ms).
+const lastOnlineEmit = new Map<string, number>();
+
+/** Base 100 + real extra players currently connected to this tenant. */
+function onlinePlayers(tenantId: string): number {
+  const live = getTenantOnlineCount(tenantId);
+  return ONLINE_BASE + Math.max(0, live - 1);
+}
+
+/** Broadcast the live player count, throttled to once every few seconds. */
+function emitOnlineCount(tenantId: string): void {
+  const now = Date.now();
+  const last = lastOnlineEmit.get(tenantId) ?? 0;
+  if (now - last < ONLINE_EMIT_INTERVAL_MS) return;
+  lastOnlineEmit.set(tenantId, now);
+  emitToTenant(tenantId, 'keno:online', { online: onlinePlayers(tenantId) });
+}
 
 function kenoMultiplier(spots: number, hits: number): number {
   const table: Record<number, Record<number, number>> = {
@@ -28,26 +84,102 @@ function kenoMultiplier(spots: number, hits: number): number {
   return table[spots]?.[hits] ?? 0;
 }
 
+/**
+ * Binomial coefficient as a double (exact-integer precision isn't needed for
+ * an RTP calibration; doubles comfortably hold C(80,20) ≈ 3.5e18).
+ */
+function choose(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  let r = 1;
+  for (let i = 0; i < k; i += 1) r = (r * (n - i)) / (i + 1);
+  return r;
+}
+
+/**
+ * Inherent return of the keno paytable for a given spot count under a fair
+ * 20-of-80 draw: Σ_h P(hits=h)·payTable[spots][h], where P is the
+ * hypergeometric probability. Precomputed once so `settleRound` can rescale
+ * every payout to hit the admin-configured RTP exactly (each spot bucket has
+ * a different natural return, so we normalise per spot count).
+ */
+const KENO_TOTAL = choose(80, 20);
+const KENO_BASE_RTP: Record<number, number> = (() => {
+  const out: Record<number, number> = {};
+  for (let spots = 1; spots <= 10; spots += 1) {
+    let expected = 0;
+    for (let hits = 0; hits <= spots; hits += 1) {
+      const p = (choose(spots, hits) * choose(80 - spots, 20 - hits)) / KENO_TOTAL;
+      expected += p * kenoMultiplier(spots, hits);
+    }
+    out[spots] = expected > 0 ? expected : 1;
+  }
+  return out;
+})();
+
+/**
+ * Look up the effective RTP for Fast Keno, honouring the per-tenant override
+ * (keyed on the tenant slug as client_id) exactly like the Aviator/JetX
+ * workers. Returns `null` when the game row is missing.
+ *
+ * Fast Keno's paytable above is tuned to be roughly fair (≈100% return); the
+ * admin RTP then scales every payout so the realised return matches the
+ * configured percentage — identical to how Multi Hot 5 (slot) and the crash
+ * games apply their RTP. Without this the admin RTP knob had NO effect on
+ * Keno outcomes.
+ */
+async function readGameStatusAndRtp(
+  tenantId: string
+): Promise<{ status: 'Active' | 'Disabled'; rtp: number } | null> {
+  return withTenantClient({ tenantId, bypassRls: true }, async (client) => {
+    const g = await client.query<{ status: string; default_rtp: string }>(
+      `SELECT status, default_rtp::text FROM internal_games WHERE id = 'fast-keno'`
+    );
+    if (!g.rows[0]) return null;
+    if (g.rows[0].status === 'Disabled') {
+      return { status: 'Disabled', rtp: Number(g.rows[0].default_rtp) };
+    }
+    const slug = await client.query<{ slug: string | null }>(
+      `SELECT slug FROM tenants WHERE id = $1`,
+      [tenantId]
+    );
+    const clientId = slug.rows[0]?.slug ?? '';
+    let rtp = Number(g.rows[0].default_rtp);
+    if (clientId) {
+      const o = await client.query<{ rtp: string }>(
+        `SELECT rtp::text FROM game_rtp_overrides WHERE game_id = 'fast-keno' AND client_id = $1`,
+        [clientId]
+      );
+      if (o.rows[0]) rtp = Number(o.rows[0].rtp);
+    }
+    return { status: 'Active', rtp };
+  });
+}
+
 async function createRound(tenantId: string): Promise<void> {
+  const bettingSeconds = await refreshBettingSeconds(tenantId);
   await withTenantClient({ tenantId }, async (client) => {
     const seed = gameRngService.generateRoundSeed();
     const clientSeed = gameRngService.createClientSeed();
-    const r = await client.query<{ id: string }>(
+    // `game_code` is filled by the column DEFAULT (8-digit sequence) — read it
+    // back so the client can show a short, human-readable round Game ID.
+    const r = await client.query<{ id: string; game_code: string }>(
       `INSERT INTO game_rounds
        (tenant_id, game_id, server_seed, server_seed_hash, client_seed, phase, started_at, reel_outcome)
        VALUES ($1,'fast-keno',$2,$3,$4,'betting',now(),$5::jsonb)
-       RETURNING id`,
+       RETURNING id, game_code`,
       [
         tenantId,
         seed.serverSeed,
         seed.serverSeedHash,
         clientSeed,
-        JSON.stringify({ revealed_numbers: [], time_remaining: BETTING_SECONDS }),
+        JSON.stringify({ revealed_numbers: [], time_remaining: bettingSeconds }),
       ]
     );
     emitToTenant(tenantId, 'keno:round_start', {
       round_id: r.rows[0].id,
-      betting_seconds: BETTING_SECONDS,
+      game_code: r.rows[0].game_code,
+      betting_seconds: bettingSeconds,
+      online: onlinePlayers(tenantId),
     });
   });
 }
@@ -93,7 +225,12 @@ async function startDrawing(tenantId: string, roundId: string): Promise<void> {
   });
 }
 
-async function settleRound(tenantId: string, roundId: string, allNumbers: number[]) {
+async function settleRound(
+  tenantId: string,
+  roundId: string,
+  allNumbers: number[],
+  rtpMultiplier: number
+) {
   await withTenantClient({ tenantId }, async (client) => {
     const betsQ = await client.query<{
       id: string;
@@ -115,7 +252,14 @@ async function settleRound(tenantId: string, roundId: string, allNumbers: number
       const selected = Array.isArray(bet.selected_numbers) ? bet.selected_numbers : [];
       const hits = selected.filter((n) => allNumbers.includes(n)).length;
       const multiplier = kenoMultiplier(selected.length, hits);
-      const payout = Number((Number(bet.amount) * multiplier).toFixed(2));
+      // Rescale so the realised return matches the admin-configured RTP
+      // exactly (same guarantee as Multi Hot 5 / crash games). The paytable's
+      // natural return per spot count is divided out, then the target
+      // rtpMultiplier (rtp% / 100) is applied: payout = stake · payMult ·
+      // (targetRtp / baseRtp[spots]).
+      const baseRtp = KENO_BASE_RTP[selected.length] ?? 1;
+      const scale = rtpMultiplier / baseRtp;
+      const payout = Number((Number(bet.amount) * multiplier * scale).toFixed(2));
       const status = payout > 0 ? 'won' : 'lost';
 
       await client.query(
@@ -174,11 +318,15 @@ async function settleRound(tenantId: string, roundId: string, allNumbers: number
       }
     }
 
-    const seedQ = await client.query<{ server_seed: string | null }>(
-      `SELECT server_seed FROM game_rounds WHERE id = $1 LIMIT 1`,
+    const seedQ = await client.query<{
+      server_seed: string | null;
+      game_code: string | null;
+    }>(
+      `SELECT server_seed, game_code FROM game_rounds WHERE id = $1 LIMIT 1`,
       [roundId]
     );
     const serverSeed = seedQ.rows[0]?.server_seed ?? null;
+    const gameCode = seedQ.rows[0]?.game_code ?? null;
     await client.query(
       `UPDATE game_rounds
           SET phase = 'complete',
@@ -190,6 +338,7 @@ async function settleRound(tenantId: string, roundId: string, allNumbers: number
     );
     emitToTenant(tenantId, 'keno:round_complete', {
       round_id: roundId,
+      game_code: gameCode,
       all_numbers: allNumbers,
       server_seed: serverSeed,
     });
@@ -216,7 +365,17 @@ async function tickTenant(tenantId: string): Promise<void> {
     return q.rows[0] ?? null;
   });
 
+  // Honour admin-controlled Active/Disabled + effective RTP. When Disabled we
+  // stop opening new rounds (existing rounds finish naturally); the /keno/bet
+  // route already refuses new bets while Disabled.
+  const gameInfo = await readGameStatusAndRtp(tenantId);
+  const rtpMultiplier = gameRngService.slotPayoutMultiplier(gameInfo?.rtp ?? null);
+
+  // Keep the "players online" figure fresh between round boundaries.
+  emitOnlineCount(tenantId);
+
   if (!round) {
+    if (gameInfo?.status === 'Disabled') return;
     await createRound(tenantId);
     return;
   }
@@ -226,7 +385,7 @@ async function tickTenant(tenantId: string): Promise<void> {
 
   if (round.phase === 'betting') {
     const elapsedSec = Math.floor((now - startedMs) / 1000);
-    const timeRemaining = Math.max(0, BETTING_SECONDS - elapsedSec);
+    const timeRemaining = Math.max(0, getBettingSeconds(tenantId) - elapsedSec);
     await withTenantClient({ tenantId }, async (client) => {
       await client.query(
         `UPDATE game_rounds
@@ -269,14 +428,14 @@ async function tickTenant(tenantId: string): Promise<void> {
       });
     }
     if (targetIndex >= 20) {
-      await settleRound(tenantId, round.id, allNumbers);
+      await settleRound(tenantId, round.id, allNumbers, rtpMultiplier);
     }
     return;
   }
 
   if (round.phase === 'complete') {
     const ended = round.ended_at ? new Date(round.ended_at).getTime() : startedMs;
-    if (now - ended >= COMPLETE_HOLD_MS) {
+    if (now - ended >= COMPLETE_HOLD_MS && gameInfo?.status !== 'Disabled') {
       await createRound(tenantId);
     }
   }

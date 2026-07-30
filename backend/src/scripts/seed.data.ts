@@ -485,7 +485,13 @@ export async function runSeed(client: PoolClient): Promise<void> {
   await ensureOwnerSuperadmin(client, tenant.id);
   await seedRoles(client, tenant.id);
   await seedGames(client, tenant.id);
-  await seedSports(client, tenant.id);
+  // Only seed the mock fixture catalog in pure `mock` mode. When the real
+  // odds provider is active (DATA_PROVIDER=odds_api) the background sync owns
+  // sports_events, so seeding mock fixtures here would reintroduce fake
+  // matches into the live feed.
+  if ((process.env.DATA_PROVIDER ?? 'mock') !== 'odds_api') {
+    await seedSports(client, tenant.id);
+  }
   await seedTelebirrAgent(client, tenant.id);
   await seedSecuritySettings(client, tenant.id);
   await seedP2pDevice(client, tenant.id);

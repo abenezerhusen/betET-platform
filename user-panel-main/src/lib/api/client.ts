@@ -126,6 +126,19 @@ function refreshOnce(): Promise<boolean> {
   return refreshPromise;
 }
 
+/**
+ * Force a session refresh on demand and return the resulting access token.
+ *
+ * Used when an embedded surface (e.g. the game engine iframe) reports that
+ * its copy of the access token has expired: the parent panel holds the
+ * refresh token, mints a fresh access token, and hands it back so the game
+ * can keep playing without interrupting the session.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  const ok = await refreshOnce();
+  return ok ? getAccessToken() : null;
+}
+
 function redirectToSessionExpired(): void {
   if (typeof window === 'undefined' || sessionExpiredRedirecting) return;
   sessionExpiredRedirecting = true;

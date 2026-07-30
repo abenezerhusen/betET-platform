@@ -723,7 +723,7 @@
 .mhm-bet-plus:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Trough halves — each rendered at natural aspect ratio at the bar's height.
-   The text overlay (amount + DMO) sits centred over the half. */
+   The text overlay (amount + ETB) sits centred over the half. */
 .mhm-bet-half {
   flex-shrink: 0;
   position: relative;

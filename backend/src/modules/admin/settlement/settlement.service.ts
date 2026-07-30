@@ -15,6 +15,12 @@ import type { PoolClient } from 'pg';
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { emitToUser, emitWalletUpdated } from '../../../realtime/socket';
 import { logger } from '../../../infrastructure/logger';
+import {
+  computeWinBreakdownFromGross,
+  passthroughBreakdown,
+  snapshotToConfig,
+  type PayoutBreakdown,
+} from '../../bets/sportsbook-tax';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -60,6 +66,27 @@ export interface SettlementBet {
   postpone_wait_hours: number;
   review_required: boolean;
   bet_type: string;
+  effective_stake: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sportsbook Tax & Bonus — resolve the payout breakdown for a win.    */
+/*                                                                      */
+/* Uses the tax/bonus snapshot captured on the ticket at placement so a */
+/* later admin config change never retroactively alters an open ticket. */
+/* Tickets placed before this feature (no snapshot) settle exactly as   */
+/* before: full gross, no compensation bonus, no winning-tax deduction. */
+/* ------------------------------------------------------------------ */
+
+function resolveWinBreakdown(
+  bet: SettlementBet,
+  gross: number
+): PayoutBreakdown {
+  const cfg = snapshotToConfig(bet.metadata);
+  // Legacy tickets (no snapshot) preserve the prior behaviour: credit full
+  // gross with no compensation bonus and no winning-tax deduction.
+  return cfg ? computeWinBreakdownFromGross(gross, cfg) : passthroughBreakdown(gross);
 }
 
 export interface SettlementLeg {
@@ -314,7 +341,8 @@ export async function settleBetFromLegs(
     `SELECT id, tenant_id, user_id, stake::text, currency,
             total_odds, original_odds, potential_payout::text,
             actual_payout, status, settlement_status,
-            postponed_at, postpone_wait_hours, review_required, bet_type
+            postponed_at, postpone_wait_hours, review_required, bet_type,
+            effective_stake::text, metadata
        FROM sportsbook_bets WHERE id = $1 FOR UPDATE`,
     [params.betId]
   );
@@ -358,6 +386,11 @@ export async function settleBetFromLegs(
   let newStatus: string;
   let settlementStatus: SettlementStatus;
   let credit = 0;
+  // Tax/bonus audit values — populated on a win, 0 otherwise.
+  let grossBeforeBonus = 0;
+  let bonusAmount = 0;
+  let winTaxAmount = 0;
+  let finalPayout = 0;
 
   if (anyLost) {
     newStatus = 'lost';
@@ -388,8 +421,20 @@ export async function settleBetFromLegs(
       return acc * (isVoid ? 1.0 : Number(l.settled_odds ?? l.odds_at_placement));
     }, 1);
 
-    const gross = Math.round(stake * effectiveOdds * 100) / 100;
-    credit = gross;
+    // Sportsbook Tax layer: gross is computed from the EFFECTIVE stake
+    // (stake minus betting tax, captured at placement). For legacy tickets
+    // effective_stake is NULL, so we fall back to the full stake — identical
+    // to the previous behaviour.
+    const effStake =
+      bet.effective_stake != null ? Number(bet.effective_stake) : stake;
+    const gross = Math.round(effStake * effectiveOdds * 100) / 100;
+
+    const breakdown = resolveWinBreakdown(bet, gross);
+    grossBeforeBonus = breakdown.gross_payout_before_bonus;
+    bonusAmount = breakdown.compensation_bonus_amount;
+    winTaxAmount = breakdown.winning_tax_amount;
+    credit = breakdown.final_payout;
+    finalPayout = credit;
     newStatus = 'won';
     settlementStatus =
       legs.rows.some(
@@ -419,6 +464,11 @@ export async function settleBetFromLegs(
             settled_at = now(),
             settled_by = $5,
             settlement_reason = $6,
+            gross_payout_before_bonus = $8,
+            compensation_bonus_amount = $9,
+            winning_tax_amount = $10,
+            final_payout = $11,
+            tax_amount = $10,
             updated_at = now()
       WHERE id = $7`,
     [
@@ -429,6 +479,10 @@ export async function settleBetFromLegs(
       params.actorId,
       params.reason,
       params.betId,
+      newStatus === 'won' ? grossBeforeBonus : null,
+      newStatus === 'won' ? bonusAmount : null,
+      newStatus === 'won' ? winTaxAmount : null,
+      newStatus === 'won' ? finalPayout : null,
     ]
   );
 

@@ -69,6 +69,10 @@ function GamePlayInner() {
       if (ev.origin !== iframeOrigin) return;
       const d = ev.data as { type?: string } | null;
       if (!d || typeof d !== "object") return;
+      if (d.type === "GAME_DEPOSIT") {
+        router.push("/deposit");
+        return;
+      }
       if (d.type === "SESSION_END" && sessionIdRef.current) {
         try {
           await gamesApi.endGameSession(sessionIdRef.current);

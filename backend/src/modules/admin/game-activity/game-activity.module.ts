@@ -27,7 +27,9 @@ const querySchema = z
   .object({
     from: z.coerce.date().optional(),
     to: z.coerce.date().optional(),
-    game_id: z.enum(['aviator', 'jetx', 'fast-keno', 'multi-hot-5']).optional(),
+    game_id: z.string().trim().min(1).max(40).optional(),
+    /** 8-digit human-readable round Game ID (game_rounds.game_code). */
+    code: z.string().trim().min(1).max(20).optional(),
     /** Raw bet status from the table. */
     status: z.enum(['active', 'cashed_out', 'lost', 'won']).optional(),
     /** Convenience outcome filter: win (cashed_out/won), loss, or pending. */
@@ -58,6 +60,10 @@ async function listGameBets(req: Request, query: z.infer<typeof querySchema>) {
       if (query.game_id) {
         filters.push(`b.game_id = $${i++}`);
         values.push(query.game_id);
+      }
+      if (query.code) {
+        filters.push(`gr.game_code ILIKE $${i++}`);
+        values.push(`%${query.code}%`);
       }
       if (query.status) {
         filters.push(`b.status = $${i++}`);
@@ -109,6 +115,7 @@ async function listGameBets(req: Request, query: z.infer<typeof querySchema>) {
         `SELECT COUNT(*)::text AS count
            FROM game_bets b
            LEFT JOIN users u ON u.id = b.user_id
+           LEFT JOIN game_rounds gr ON gr.id = b.round_id
            ${where}`,
         values
       );
@@ -131,6 +138,8 @@ async function listGameBets(req: Request, query: z.infer<typeof querySchema>) {
                 b.metadata,
                 b.created_at,
                 b.updated_at,
+                gr.game_code                                        AS game_code,
+                gr.drawn_numbers                                    AS drawn_numbers,
                 gr.crash_point::numeric                             AS crash_point,
                 gr.server_seed_hash                                 AS server_seed_hash,
                 u.email                                             AS user_email,
@@ -167,6 +176,7 @@ async function listGameBets(req: Request, query: z.infer<typeof querySchema>) {
             COUNT(DISTINCT b.user_id)::text                                                      AS player_count
            FROM game_bets b
            LEFT JOIN users u ON u.id = b.user_id
+           LEFT JOIN game_rounds gr ON gr.id = b.round_id
            ${where}`,
         values
       );

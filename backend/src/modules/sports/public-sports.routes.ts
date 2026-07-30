@@ -4,9 +4,17 @@ import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { BadRequestError, NotFoundError } from '../../http/errors/http-error';
 import { authenticateToken } from '../../middleware/authenticate';
 import * as swagger from '../../swagger/registry';
+import { env } from '../../config/env';
 import { ensureEventOdds } from './providers/sync.service';
 
 const router = Router();
+
+// When running on the real odds provider, only surface fixtures imported from
+// that provider (they carry metadata.provider_event_id). This hides any legacy
+// seed/mock fixtures from the public feed without deleting them (bet history on
+// old mock events stays intact). In pure `mock` mode this is a no-op so seeded
+// fixtures still render.
+const PROVIDER_ONLY = env.DATA_PROVIDER === 'odds_api';
 
 const listQuery = z.object({
   type: z.enum(['express']).optional(),
@@ -111,6 +119,10 @@ router.get(
            AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
            AND s.odds_decimal IS NOT NULL
       )`);
+      // Real-data mode: exclude any non-provider (seed/mock) fixtures.
+      if (PROVIDER_ONLY) {
+        filters.push(`ev.metadata ? 'provider_event_id'`);
+      }
       const where = `WHERE ${filters.join(' AND ')}`;
       const total = await client.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM sports_events ev ${where}`,
@@ -366,6 +378,7 @@ router.get(
            FROM sports_events
           WHERE tenant_id = $1
             AND status IN ('live','scheduled')
+            ${PROVIDER_ONLY ? `AND (metadata ? 'provider_event_id')` : ''}
           GROUP BY lower(sport), league`,
         [tenantId]
       );

@@ -13,6 +13,7 @@ import {
 import * as gamesApi from "@/lib/api/games";
 import type { GameSummary } from "@/lib/api/types";
 import { getAccessToken } from "@/lib/auth/session";
+import { refreshAccessToken } from "@/lib/api/client";
 import { useAuth } from "@/context/AuthContext";
 import { publicConfigApi } from "@/lib/api";
 import type { GameThumbnailOverride } from "@/lib/api/publicConfig";
@@ -382,6 +383,32 @@ export default function GamesPage() {
       if (engineOrigin && event.origin !== engineOrigin) return;
       const data = event.data as { type?: string } | null;
       if (!data || typeof data !== "object") return;
+      if (data.type === "GAME_DEPOSIT") {
+        setExternalLaunch(null);
+        router.push("/deposit");
+        return;
+      }
+      // The embedded game's access token expired — mint a fresh one from the
+      // refresh token held here and hand it back so play continues seamlessly.
+      if (data.type === "GAME_TOKEN_REFRESH_REQUEST") {
+        void (async () => {
+          const fresh = await refreshAccessToken();
+          const iframe = iframeRef.current;
+          if (!iframe?.contentWindow) return;
+          let engineOrigin = "*";
+          try {
+            engineOrigin = new URL(GAME_ENGINE_URL).origin;
+          } catch {
+            /* ignore */
+          }
+          const token = (fresh ?? getAccessToken() ?? "").trim();
+          iframe.contentWindow.postMessage(
+            { type: "TOKEN_REFRESH", token: token || undefined },
+            engineOrigin
+          );
+        })();
+        return;
+      }
       if (data.type === "GAME_BACK" || data.type === "SESSION_END") {
         setExternalLaunch(null);
         void refreshWallet();
@@ -389,7 +416,7 @@ export default function GamesPage() {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [refreshWallet]);
+  }, [refreshWallet, router]);
 
   useEffect(() => {
     if (externalLaunch) postWalletToIframe();

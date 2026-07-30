@@ -10,6 +10,7 @@ import { BadRequestError, NotFoundError } from '../../http/errors/http-error';
 import { gameRngService } from '../../services/game-rng.service';
 import { emitToUser, emitWalletUpdated } from '../../realtime/socket';
 import { sendSmsBestEffort } from '../notifications/notifications.service';
+import { claimRain, getActiveRain, RainClaimError } from '../../services/rain.service';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -267,7 +268,7 @@ async function currentRound(
 ) {
   return withTenantClient({ tenantId }, async (client) => {
     const r = await client.query(
-      `SELECT id, phase, server_seed_hash, client_seed, started_at, ended_at, crash_point, drawn_numbers, reel_outcome
+      `SELECT id, game_code, phase, server_seed_hash, client_seed, started_at, ended_at, crash_point, drawn_numbers, reel_outcome
          FROM game_rounds
         WHERE tenant_id = $1 AND game_id = $2
         ORDER BY created_at DESC
@@ -276,6 +277,20 @@ async function currentRound(
     );
     return r.rows[0] ?? null;
   });
+}
+
+/**
+ * Mask a player identifier for public leaderboards / bet feeds: keep the first
+ * and last visible character, hide the middle (e.g. `abebe` → `a***e`).
+ */
+function maskPlayer(raw: string | null | undefined): string {
+  const s = (raw ?? '').trim();
+  if (!s) return 'p***r';
+  // For emails, mask only the local part before '@'.
+  const local = s.includes('@') ? s.slice(0, s.indexOf('@')) : s;
+  if (local.length <= 1) return `${local}***`;
+  if (local.length === 2) return `${local[0]}***${local[1]}`;
+  return `${local[0]}***${local[local.length - 1]}`;
 }
 
 async function getUserPhone(tenantId: string, userId: string): Promise<string | null> {
@@ -290,7 +305,12 @@ async function getUserPhone(tenantId: string, userId: string): Promise<string | 
 
 // secure internal rounds/bets surface
 router.use((req, res, next) => {
-  if (req.path.endsWith('/round/current') || req.path === '/slots/history') {
+  if (
+    req.path.endsWith('/round/current') ||
+    req.path === '/slots/history' ||
+    req.path === '/aviator/bets' ||
+    req.path === '/aviator/top'
+  ) {
     return authenticateGameLaunchToken()(req, res, next);
   }
   return authenticateToken()(req, res, next);
@@ -314,6 +334,153 @@ router.get('/aviator/round/current', async (req, res, next) => {
           : null,
       crash_point: round.phase === 'crashed' ? Number(round.crash_point) : null,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Live + previous round bets and the recent crash-point history that power the
+ * Aviator left sidebar ("All Bets" / "Previous" tabs and the multiplier strip).
+ * All player identities are masked (`d***v`) — only aggregate/anonymised data
+ * leaves the server.
+ */
+router.get('/aviator/bets', async (req, res, next) => {
+  try {
+    const user = ensureUser(req);
+    const data = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
+      const roundsQ = await client.query<{ id: string; phase: string }>(
+        `SELECT id, phase
+           FROM game_rounds
+          WHERE tenant_id = $1 AND game_id = 'aviator'
+          ORDER BY created_at DESC
+          LIMIT 2`,
+        [user.tenantId]
+      );
+      const currentId = roundsQ.rows[0]?.id ?? null;
+      const previousId = roundsQ.rows[1]?.id ?? null;
+
+      const betsForRound = async (roundId: string | null) => {
+        if (!roundId) return [];
+        const q = await client.query<{
+          amount: string;
+          status: string;
+          payout: string | null;
+          multiplier_at_cashout: string | null;
+          uname: string | null;
+        }>(
+          `SELECT b.amount::text,
+                  b.status,
+                  b.payout::text,
+                  b.multiplier_at_cashout::text,
+                  COALESCE(u.metadata->>'username', u.phone, u.email) AS uname
+             FROM game_bets b
+             LEFT JOIN users u ON u.id = b.user_id
+            WHERE b.round_id = $1
+            ORDER BY b.amount DESC
+            LIMIT 100`,
+          [roundId]
+        );
+        return q.rows.map((r) => {
+          const cashed = r.status === 'cashed_out';
+          return {
+            user: maskPlayer(r.uname),
+            bet: Number(r.amount),
+            multiplier: cashed && r.multiplier_at_cashout ? Number(r.multiplier_at_cashout) : null,
+            won: cashed && r.payout ? Number(r.payout) : null,
+          };
+        });
+      };
+
+      const recentQ = await client.query<{ crash_point: string }>(
+        `SELECT (reel_outcome->>'crash_point') AS crash_point
+           FROM game_rounds
+          WHERE tenant_id = $1 AND game_id = 'aviator'
+            AND phase = 'crashed' AND reel_outcome->>'crash_point' IS NOT NULL
+          ORDER BY created_at DESC
+          LIMIT 20`,
+        [user.tenantId]
+      );
+
+      return {
+        current: await betsForRound(currentId),
+        previous: await betsForRound(previousId),
+        recent_multipliers: recentQ.rows.map((r) => Number(r.crash_point)),
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * "Top" tab data: biggest multipliers (x), biggest wins (win) or biggest round
+ * crash points (rounds) over a rolling day / month / year window.
+ */
+router.get('/aviator/top', async (req, res, next) => {
+  try {
+    const user = ensureUser(req);
+    const metric = ['x', 'win', 'rounds'].includes(String(req.query.metric))
+      ? String(req.query.metric)
+      : 'x';
+    const period = ['day', 'month', 'year'].includes(String(req.query.period))
+      ? String(req.query.period)
+      : 'day';
+    const interval = period === 'day' ? '1 day' : period === 'month' ? '30 days' : '365 days';
+
+    const rows = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
+      if (metric === 'rounds') {
+        const q = await client.query<{ crash_point: string; created_at: Date }>(
+          `SELECT (reel_outcome->>'crash_point') AS crash_point, created_at
+             FROM game_rounds
+            WHERE tenant_id = $1 AND game_id = 'aviator'
+              AND phase = 'crashed' AND reel_outcome->>'crash_point' IS NOT NULL
+              AND created_at >= now() - $2::interval
+            ORDER BY (reel_outcome->>'crash_point')::numeric DESC
+            LIMIT 20`,
+          [user.tenantId, interval]
+        );
+        return q.rows.map((r) => ({
+          dateTime: r.created_at,
+          multiplier: Number(r.crash_point),
+        }));
+      }
+      const orderCol = metric === 'win' ? 'b.payout' : 'b.multiplier_at_cashout';
+      const q = await client.query<{
+        amount: string;
+        payout: string | null;
+        multiplier_at_cashout: string | null;
+        created_at: Date;
+        round_max: string | null;
+        uname: string | null;
+      }>(
+        `SELECT b.amount::text,
+                b.payout::text,
+                b.multiplier_at_cashout::text,
+                b.created_at,
+                (gr.reel_outcome->>'crash_point') AS round_max,
+                COALESCE(u.metadata->>'username', u.phone, u.email) AS uname
+           FROM game_bets b
+           JOIN game_rounds gr ON gr.id = b.round_id
+           LEFT JOIN users u ON u.id = b.user_id
+          WHERE b.tenant_id = $1 AND b.game_id = 'aviator'
+            AND b.status = 'cashed_out'
+            AND b.created_at >= now() - $2::interval
+          ORDER BY ${orderCol} DESC NULLS LAST
+          LIMIT 20`,
+        [user.tenantId, interval]
+      );
+      return q.rows.map((r) => ({
+        user: maskPlayer(r.uname),
+        date: r.created_at,
+        betETB: Number(r.amount),
+        winETB: r.payout ? Number(r.payout) : 0,
+        result: r.multiplier_at_cashout ? Number(r.multiplier_at_cashout) : 0,
+        roundMax: r.round_max ? Number(r.round_max) : 0,
+      }));
+    });
+    res.json({ metric, period, items: rows });
   } catch (err) {
     next(err);
   }
@@ -630,6 +797,7 @@ router.get('/keno/round/current', async (req, res, next) => {
     if (!round) return res.json({ round_id: null, phase: 'betting', numbers_drawn: [] });
     res.json({
       round_id: round.id,
+      game_code: round.game_code ?? null,
       phase: round.phase,
       numbers_drawn:
         round.phase === 'complete'
@@ -794,12 +962,16 @@ router.post('/slots/spin', async (req, res, next) => {
         winLines = [outcome.winLine + 1];
       }
 
-      await client.query(
+      // `game_code` is filled by the column DEFAULT (8-digit sequence) — read
+      // it back so the client and admin history can show the short Game ID.
+      const roundRow = await client.query<{ game_code: string }>(
         `INSERT INTO game_rounds
          (id, tenant_id, game_id, server_seed, server_seed_hash, client_seed, reel_outcome, phase, started_at, ended_at)
-         VALUES ($1,$2,'multi-hot-5',$3,$4,$5,$6::jsonb,'complete',now(),now())`,
+         VALUES ($1,$2,'multi-hot-5',$3,$4,$5,$6::jsonb,'complete',now(),now())
+         RETURNING game_code`,
         [roundId, user.tenantId, seed.serverSeed, seed.serverSeedHash, clientSeed, JSON.stringify(reels)]
       );
+      const gameCode = roundRow.rows[0]?.game_code ?? '';
 
       const bet = await client.query(
         `INSERT INTO game_bets
@@ -820,6 +992,7 @@ router.post('/slots/spin', async (req, res, next) => {
 
       return {
         roundId,
+        gameCode,
         betId: bet.rows[0].id as string,
         reels,
         multiplier,
@@ -865,6 +1038,7 @@ router.post('/slots/spin', async (req, res, next) => {
 
     res.status(201).json({
       round_id: round.roundId,
+      game_code: round.gameCode,
       reels: round.reels,
       win_lines: round.winLines,
       multiplier: round.multiplier,
@@ -897,6 +1071,44 @@ router.get('/slots/history', async (req, res, next) => {
     });
     res.json({ items: out });
   } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------------- */
+/* Rain Bonus — active event lookup + claim (Fast Keno & Aviator)            */
+/* ------------------------------------------------------------------------- */
+
+const rainGameSchema = z.enum(['fast-keno', 'aviator']);
+
+// GET /api/games/rain/active?game=fast-keno — current claimable rain, if any.
+router.get('/rain/active', async (req, res, next) => {
+  try {
+    const user = ensureUser(req);
+    const game = rainGameSchema.parse(String(req.query.game ?? ''));
+    const active = getActiveRain(user.tenantId, game);
+    res.json({ active });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/games/rain/claim { game } — claim your share of the live rain.
+router.post('/rain/claim', async (req, res, next) => {
+  try {
+    await assertSiteAvailable(req);
+    const user = ensureUser(req);
+    const game = rainGameSchema.parse((req.body ?? {}).game);
+    const result = await claimRain({
+      tenantId: user.tenantId,
+      userId: user.id,
+      gameId: game,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err instanceof RainClaimError) {
+      return res.status(400).json({ ok: false, code: err.code, message: err.message });
+    }
     next(err);
   }
 });

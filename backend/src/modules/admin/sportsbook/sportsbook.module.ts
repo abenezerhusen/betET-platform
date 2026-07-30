@@ -13,6 +13,11 @@ import {
   getUa,
   requireScopedTenantId,
 } from '../admin-shared';
+import {
+  DEFAULT_SPORTSBOOK_TAX,
+  loadSportsbookTaxConfig,
+  normalizeSportsbookTaxConfig,
+} from '../../bets/sportsbook-tax';
 
 /* ========================================================================== */
 /* DTOs                                                                        */
@@ -90,6 +95,27 @@ const listBetsQuery = z.object({
 const settleBetSchema = z.object({
   status: z.enum(['won', 'lost', 'void', 'cashout', 'partial']),
   actual_payout: z.number().nonnegative().optional(),
+});
+
+/* Tax & Bonus -------------------------------------------------------------- */
+const taxConfigSchema = z.object({
+  betting_tax_enabled: z.boolean(),
+  betting_tax_percent: z.coerce.number().min(0).max(100),
+  compensation_bonus_enabled: z.boolean(),
+  compensation_bonus_percent: z.coerce.number().min(0).max(100),
+  winning_tax_enabled: z.boolean(),
+  winning_tax_percent: z.coerce.number().min(0).max(100),
+  winning_tax_threshold: z.coerce.number().min(0).max(100_000_000),
+});
+
+const taxReportQuery = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  sport: z.string().trim().min(1).optional(),
+  league: z.string().trim().min(1).optional(),
+  branch_id: z.string().uuid().optional(),
+  cashier_id: z.string().uuid().optional(),
+  user_id: z.string().uuid().optional(),
 });
 
 /* ========================================================================== */
@@ -802,6 +828,162 @@ async function voidBet(req: Request, id: string) {
   return settleBet(req, id, { status: 'void', actual_payout: 0 });
 }
 
+/* Tax & Bonus config + report --------------------------------------------- */
+
+async function getTaxConfig(req: Request) {
+  const scope = getAdminScope(req);
+  const tenantId = requireScopedTenantId(scope);
+  return withTenantClient(
+    { tenantId, bypassRls: scope.bypassRls },
+    async (client) => loadSportsbookTaxConfig(client, tenantId)
+  );
+}
+
+async function updateTaxConfig(
+  req: Request,
+  body: z.infer<typeof taxConfigSchema>
+) {
+  const scope = getAdminScope(req);
+  const tenantId = requireScopedTenantId(scope);
+  const normalized = normalizeSportsbookTaxConfig(body);
+  return withTenantClient(
+    { tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      await client.query(
+        `INSERT INTO settings (tenant_id, key, value)
+         VALUES ($1, 'sportsbook.tax', $2::jsonb)
+         ON CONFLICT (tenant_id, key) DO UPDATE
+           SET value = EXCLUDED.value, updated_at = now()`,
+        [tenantId, JSON.stringify(normalized)]
+      );
+      void tryAudit(
+        {
+          tenantId,
+          actorId: scope.actorId,
+          actorType: scope.actorType,
+          action: 'admin.sportsbook.tax_config.update',
+          resource: 'settings',
+          resourceId: 'sportsbook.tax',
+          payload: { after: normalized },
+          ip: getIp(req),
+          userAgent: getUa(req),
+          status: 'success',
+        },
+        { bypassRls: true }
+      );
+      return normalized;
+    }
+  );
+}
+
+async function getTaxReport(req: Request, q: z.infer<typeof taxReportQuery>) {
+  const scope = getAdminScope(req);
+  const tenantId = requireScopedTenantId(scope);
+  return withTenantClient(
+    { tenantId, bypassRls: scope.bypassRls },
+    async (client) => {
+      const filters: string[] = ['b.tenant_id = $1'];
+      const values: unknown[] = [tenantId];
+      let i = 2;
+      if (q.from) {
+        filters.push(`b.placed_at >= $${i++}`);
+        values.push(q.from);
+      }
+      if (q.to) {
+        filters.push(`b.placed_at <= $${i++}`);
+        values.push(q.to);
+      }
+      if (q.user_id) {
+        filters.push(`b.user_id = $${i++}`);
+        values.push(q.user_id);
+      }
+      if (q.cashier_id) {
+        filters.push(
+          `(b.cashier_id = $${i} OR b.paid_by_cashier_id = $${i})`
+        );
+        values.push(q.cashier_id);
+        i++;
+      }
+      if (q.branch_id) {
+        filters.push(`b.paid_branch_id = $${i++}`);
+        values.push(q.branch_id);
+      }
+      // Sport / league filter via the legs → selections → markets → events
+      // chain, expressed as an EXISTS so it doesn't multiply the row count.
+      if (q.sport) {
+        filters.push(`EXISTS (
+          SELECT 1 FROM sportsbook_bet_legs l
+            JOIN sports_selections s ON s.id = l.selection_id
+            JOIN sports_markets m ON m.id = s.market_id
+            JOIN sports_events e ON e.id = m.event_id
+           WHERE l.bet_id = b.id AND e.sport = $${i})`);
+        values.push(q.sport);
+        i++;
+      }
+      if (q.league) {
+        filters.push(`EXISTS (
+          SELECT 1 FROM sportsbook_bet_legs l
+            JOIN sports_selections s ON s.id = l.selection_id
+            JOIN sports_markets m ON m.id = s.market_id
+            JOIN sports_events e ON e.id = m.event_id
+           WHERE l.bet_id = b.id AND e.league = $${i})`);
+        values.push(q.league);
+        i++;
+      }
+      const where = `WHERE ${filters.join(' AND ')}`;
+
+      const agg = await client.query<{
+        total_tickets: string;
+        total_original_stakes: string;
+        total_betting_tax: string;
+        total_effective_stakes: string;
+        total_compensation_bonus: string;
+        total_winning_tax: string;
+        total_final_payout: string;
+      }>(
+        `SELECT
+           COUNT(*)::text AS total_tickets,
+           COALESCE(SUM(COALESCE(b.original_stake, b.stake)), 0)::text
+             AS total_original_stakes,
+           COALESCE(SUM(COALESCE(b.bet_tax_amount, 0)), 0)::text
+             AS total_betting_tax,
+           COALESCE(SUM(COALESCE(b.effective_stake, b.stake)), 0)::text
+             AS total_effective_stakes,
+           COALESCE(SUM(COALESCE(b.compensation_bonus_amount, 0))
+             FILTER (WHERE b.status = 'won'), 0)::text
+             AS total_compensation_bonus,
+           COALESCE(SUM(COALESCE(b.winning_tax_amount, 0))
+             FILTER (WHERE b.status = 'won'), 0)::text
+             AS total_winning_tax,
+           COALESCE(SUM(COALESCE(b.final_payout, b.actual_payout, 0))
+             FILTER (WHERE b.status = 'won'), 0)::text
+             AS total_final_payout
+         FROM sportsbook_bets b
+         ${where}`,
+        values
+      );
+
+      const r = agg.rows[0];
+      const originalStakes = Number(r?.total_original_stakes ?? 0);
+      const finalPayout = Number(r?.total_final_payout ?? 0);
+      return {
+        total_tickets: Number(r?.total_tickets ?? 0),
+        total_original_stakes: originalStakes,
+        total_betting_tax_collected: Number(r?.total_betting_tax ?? 0),
+        total_effective_stakes: Number(r?.total_effective_stakes ?? 0),
+        total_compensation_bonus_paid: Number(r?.total_compensation_bonus ?? 0),
+        total_winning_tax_collected: Number(r?.total_winning_tax ?? 0),
+        total_final_payout: finalPayout,
+        // P&L: money in (full stakes) minus money paid out to winners. The
+        // betting tax and winning tax are already reflected because they
+        // shrink the payout; the compensation bonus is reflected because it
+        // grows it.
+        net_sportsbook_revenue: Math.round((originalStakes - finalPayout) * 100) / 100,
+      };
+    }
+  );
+}
+
 /* ========================================================================== */
 /* Routes                                                                      */
 /* ========================================================================== */
@@ -907,6 +1089,17 @@ router.put(
     const { id } = idParam.parse(req.params);
     return updateSelection(req, id, updateSelectionSchema.parse(req.body));
   })
+);
+
+/* Tax & Bonus management */
+router.get('/tax-config', wrap((req) => getTaxConfig(req)));
+router.put(
+  '/tax-config',
+  wrap((req) => updateTaxConfig(req, taxConfigSchema.parse(req.body)))
+);
+router.get(
+  '/tax-report',
+  wrap((req) => getTaxReport(req, taxReportQuery.parse(req.query)))
 );
 
 /* Bets */
