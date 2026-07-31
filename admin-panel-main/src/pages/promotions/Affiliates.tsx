@@ -357,6 +357,7 @@ export function Affiliates() {
   };
 
   const handleCreateAffiliate = async (data: {
+    phoneNumber: string;
     name: string;
     referralCode: string;
     commission: { type: string; rate: number };
@@ -365,27 +366,14 @@ export function Affiliates() {
       await promotionsApi.createAffiliate({
         name: data.name,
         code: data.referralCode,
+        phone: data.phoneNumber?.trim() || undefined,
         plan: (data.commission.type === 'cpa' ? 'cpa' : data.commission.type === 'hybrid' ? 'hybrid' : 'revenue_share') as promotionsApi.Affiliate['plan'],
         commission_pct: data.commission.rate,
         cpa_amount: 0,
         status: 'active',
       });
       toast('Affiliate created.');
-      const res = await promotionsApi.listAffiliates({ limit: 200 });
-      setAffiliates(
-        (res.items ?? []).map((a) => ({
-          id: a.id,
-          phoneNumber: '—',
-          name: a.name,
-          referralCode: a.code,
-          totalReferrals: 0,
-          activeUsers: 0,
-          revenue: 0,
-          commission: Number(a.earnings_total ?? 0),
-          status: a.status,
-          lastActive: a.updated_at ? new Date(a.updated_at).toLocaleDateString() : '—',
-        }))
-      );
+      await reloadAffiliates();
       setIsCreateModalOpen(false);
     } catch (err) {
       toast(`Failed to create affiliate: ${(err as Error)?.message ?? err}`, 'error');

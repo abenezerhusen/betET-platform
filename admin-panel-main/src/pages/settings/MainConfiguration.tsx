@@ -37,12 +37,12 @@ export function MainConfiguration() {
   // missing the backend falls back to hardcoded defaults, so the admin
   // must configure them here for cashout to actually appear on tickets.
   const [cashoutConfig, setCashoutConfig] = useState({
-    min_total_odd: 1.5,
-    min_stake: 50,
-    min_individual_odd: 1.2,
-    min_matches: 2,
-    win_criteria: 'percentage' as 'percentage' | 'amount',
-    win_criteria_value: 80,
+    min_total_odd: 1.2,
+    min_stake: 10,
+    min_individual_odd: 1.05,
+    min_matches: 1,
+    win_criteria: 'amount' as 'percentage' | 'amount',
+    win_criteria_value: 0,
     max_cashout_amount: 10000,
     allow_bonus_cashout: false,
     allow_abandoned_match: true,
@@ -119,12 +119,12 @@ export function MainConfiguration() {
           const num = (v: unknown, fallback: number) =>
             typeof v === 'number' ? v : v != null ? Number(v) : fallback;
           setCashoutConfig({
-            min_total_odd: num(flat.min_total_odd, 1.5),
-            min_stake: num(flat.min_stake, 50),
-            min_individual_odd: num(flat.min_individual_odd, 1.2),
-            min_matches: num(flat.min_matches, 2),
-            win_criteria: flat.win_criteria === 'amount' ? 'amount' : 'percentage',
-            win_criteria_value: num(flat.win_criteria_value, 80),
+            min_total_odd: num(flat.min_total_odd, 1.2),
+            min_stake: num(flat.min_stake, 10),
+            min_individual_odd: num(flat.min_individual_odd, 1.05),
+            min_matches: num(flat.min_matches, 1),
+            win_criteria: flat.win_criteria === 'percentage' ? 'percentage' : 'amount',
+            win_criteria_value: num(flat.win_criteria_value, 0),
             max_cashout_amount: num(flat.max_cashout_amount, 10000),
             allow_bonus_cashout: flat.allow_bonus_cashout === true,
             allow_abandoned_match: flat.allow_abandoned_match !== false,

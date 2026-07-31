@@ -81,16 +81,21 @@ export function CreateAffiliateModal({ isOpen, onClose, onSubmit }: CreateAffili
 
   return (
     <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg w-full max-w-2xl">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-semibold">Register New Affiliate</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+      <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col shadow-xl">
+        <div className="flex justify-between items-center p-6 pb-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold">Register New Affiliate</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="overflow-y-auto p-6 space-y-6 flex-1">
             {error && (
               <div className="p-2 text-sm rounded border border-red-200 bg-red-50 text-red-700">
                 {error}
@@ -257,23 +262,24 @@ export function CreateAffiliateModal({ isOpen, onClose, onSubmit }: CreateAffili
               </div>
             </div>
 
-            <div className="flex justify-end space-x-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Register Affiliate
-              </button>
-            </div>
-          </form>
-        </div>
+          </div>
+
+          <div className="flex justify-end space-x-3 p-6 pt-4 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Register Affiliate
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

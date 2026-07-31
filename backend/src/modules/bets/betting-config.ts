@@ -117,12 +117,18 @@ const DEFAULT_TAX: TaxRules = {
 
 const DEFAULT_CASHOUT: CashoutRules = {
   enabled: true,
-  min_total_odd: 1.5,
-  min_stake: 50,
-  min_individual_odd: 1.2,
-  min_matches: 2,
-  win_criteria: 'percentage',
-  win_criteria_value: 80,
+  // Lenient defaults so that simply enabling cashout makes the Cash Out button
+  // appear on ordinary pending tickets (incl. single-selection bets). Operators
+  // can tighten these in Admin → Settings → Main Configuration (main.cashout).
+  min_total_odd: 1.2,
+  min_stake: 10,
+  min_individual_odd: 1.05,
+  min_matches: 1,
+  // 'amount' with a 0 floor means "offer cashout whenever there is any positive
+  // value" — the previous 'percentage'/80 default effectively hid cashout on
+  // pending tickets because a running bet's value is a small % of its potential.
+  win_criteria: 'amount',
+  win_criteria_value: 0,
   max_cashout_amount: 10_000,
   allow_bonus_cashout: false,
   allow_abandoned_match: true,

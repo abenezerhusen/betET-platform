@@ -178,7 +178,7 @@ export function listAffiliates(query: {
   }>('/api/admin/affiliates', { query });
 }
 
-export function createAffiliate(input: Partial<Affiliate>) {
+export function createAffiliate(input: Partial<Affiliate> & { phone?: string }) {
   return http.post<Affiliate>('/api/admin/affiliates', input);
 }
 

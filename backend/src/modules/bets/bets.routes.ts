@@ -110,6 +110,38 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Live early-cashout value for a still-running ticket.
+ *
+ * A fully-pending ticket is worth roughly the stake back (minus the operator's
+ * retention margin), and that value climbs toward the full potential payout as
+ * more legs are won:
+ *
+ *   base   = stake + (potential - stake) * (wonLegs / totalLegs)
+ *   value  = base * (1 - retentionRate)          (operator keeps `retention`)
+ *
+ * This replaces the older `potential * (won/total)` model, which offered ~0 on
+ * fresh tickets and therefore never surfaced a usable Cash Out button. The
+ * result is clamped to [stake * 0.05, maxCashoutAmount] as a safety net and is
+ * always ≤ what the ticket would pay if it settled won right now.
+ */
+function calcCashoutValue(params: {
+  stake: number;
+  potential: number;
+  wonLegs: number;
+  totalLegs: number;
+  retentionRate: number;
+  maxCashoutAmount: number;
+}): number {
+  const { stake, potential, wonLegs, totalLegs, retentionRate } = params;
+  const progress = totalLegs > 0 ? Math.min(1, Math.max(0, wonLegs / totalLegs)) : 0;
+  const base = stake + (potential - stake) * progress;
+  const value = base * (1 - retentionRate);
+  return round2(
+    Math.min(Math.max(value, stake * 0.05), params.maxCashoutAmount)
+  );
+}
+
 function calcTotalOdds(odds: number[]): number {
   if (!odds.length) return 1;
   return odds.reduce((acc, o) => acc * o, 1);
@@ -808,22 +840,20 @@ async function cashoutBet(
         }
       }
 
-      // Section 18D formula:
-      //   cashout_value = potential_win * (won/total) * (1 - retention_rate)
-      // For pending legs we treat "currently in progress" as still
-      // contributing only when status is 'won' (settled won) — this is
-      // the safe interpretation: the user can never withdraw more than
-      // they would receive if the bet settled with the current legs.
+      // Early-cashout value (see calcCashoutValue): stake-back on a fresh
+      // ticket, rising toward the full potential as legs are won. The user
+      // can never withdraw more than the ticket would pay if it settled won
+      // with its current legs.
       const total = legs.rows.length;
       const won = legs.rows.filter((l) => l.status === 'won').length;
-      const ratio = total === 0 ? 0 : won / total;
-      const rawValue = potential * ratio * (1 - cfg.cashout.retention_rate);
-      const cashoutValue = round2(
-        Math.min(
-          Math.max(rawValue, stake * 0.05), // floor: 5% of stake so users always get something back
-          cfg.cashout.max_cashout_amount
-        )
-      );
+      const cashoutValue = calcCashoutValue({
+        stake,
+        potential,
+        wonLegs: won,
+        totalLegs: total,
+        retentionRate: cfg.cashout.retention_rate,
+        maxCashoutAmount: cfg.cashout.max_cashout_amount,
+      });
 
       // Win-criteria gate.
       if (cfg.cashout.win_criteria === 'percentage') {
@@ -1165,14 +1195,14 @@ async function listMyBets(
 
         const total = legs.rows.length;
         const won = legs.rows.filter((l) => l.status === 'won').length;
-        const ratio = total === 0 ? 0 : won / total;
-        const rawValue = potential * ratio * (1 - cfg.cashout.retention_rate);
-        const baseValue = round2(
-          Math.min(
-            Math.max(rawValue, stake * 0.05),
-            cfg.cashout.max_cashout_amount
-          )
-        );
+        const baseValue = calcCashoutValue({
+          stake,
+          potential,
+          wonLegs: won,
+          totalLegs: total,
+          retentionRate: cfg.cashout.retention_rate,
+          maxCashoutAmount: cfg.cashout.max_cashout_amount,
+        });
 
         // Win-criteria gate.
         let passesGate = true;

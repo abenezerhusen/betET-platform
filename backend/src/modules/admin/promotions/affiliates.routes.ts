@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import {
+  BadRequestError,
   ConflictError,
   NotFoundError,
 } from '../../../http/errors/http-error';
@@ -49,6 +50,10 @@ const listAffiliatesQuery = z.object({
 
 const createAffiliateSchema = z.object({
   user_id: z.string().uuid().optional(),
+  // Optional phone of a registered online user. When provided (and user_id is
+  // not), the affiliate is linked to that user so referral/revenue stats and
+  // the displayed phone resolve correctly.
+  phone: z.string().trim().min(4).max(32).optional(),
   name: z.string().trim().min(1).max(160),
   code: z.string().trim().min(2).max(40),
   plan: z.enum(['revenue_share', 'cpa', 'hybrid']).default('revenue_share'),
@@ -221,6 +226,27 @@ router.post(
     return withTenantClient(
       { tenantId, bypassRls: scope.bypassRls },
       async (client) => {
+        // Resolve the linked user: explicit user_id wins; otherwise look up by
+        // phone (last 9 digits, so +2519…, 09…, 9… variants all match).
+        let resolvedUserId: string | null = body.user_id ?? null;
+        if (!resolvedUserId && body.phone) {
+          const digits = body.phone.replace(/\D/g, '');
+          const tail = digits.slice(-9);
+          const lookup = await client.query<{ id: string }>(
+            `SELECT id FROM users
+              WHERE tenant_id = $1
+                AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE '%' || $2
+              ORDER BY created_at
+              LIMIT 1`,
+            [tenantId, tail]
+          );
+          if (!lookup.rows[0]) {
+            throw new BadRequestError(
+              'No registered user found with this phone number'
+            );
+          }
+          resolvedUserId = lookup.rows[0].id;
+        }
         try {
           const r = await client.query(
             `INSERT INTO affiliates (
@@ -231,7 +257,7 @@ router.post(
                        updated_at`,
             [
               tenantId,
-              body.user_id ?? null,
+              resolvedUserId,
               body.name,
               body.code,
               body.plan,

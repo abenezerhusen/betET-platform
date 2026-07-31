@@ -6,6 +6,7 @@ import { toast } from '../../lib/toast';
 import { Gift, Plus, Users, Calendar, Trophy, FileDown } from 'lucide-react';
 import * as promotionsApi from '../../lib/api/promotions';
 import { useAuthStore } from '../../store/auth';
+import { CreateRaffleModal, type RaffleFormData } from '../../components/CreateRaffleModal';
 
 interface RaffleRow {
   id: string;
@@ -85,6 +86,7 @@ export function Raffles() {
   const [selectedRaffleId, setSelectedRaffleId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const selectedRaffle = useMemo(
     () => raffles.find((r) => r.id === selectedRaffleId) ?? null,
     [raffles, selectedRaffleId]
@@ -118,26 +120,26 @@ export function Raffles() {
       .catch((err: Error) => toast(`Failed to load raffle tickets: ${err.message ?? err}`, 'error'));
   }, [isAuth, selectedRaffleId]);
 
-  const createQuickRaffle = async () => {
+  const handleCreateRaffle = async (data: RaffleFormData) => {
     if (creating) return;
     setCreating(true);
     try {
-      const now = new Date();
-      const draw = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       await promotionsApi.createAdminRaffle({
-        name: `Test Raffle ${now.toISOString().slice(0, 16).replace('T', ' ')}`,
-        description: 'Test raffle created from admin panel',
-        start_date: now.toISOString(),
-        end_date: draw.toISOString(),
-        min_deposit: 0,
-        prize_pool: 0,
-        currency: 'ETB',
-        draw_mode: 'auto',
-        notify_winners: true,
-        prizes: [],
-        status: 'Active',
+        name: data.name,
+        description: data.description || undefined,
+        start_date: data.start_date ? new Date(data.start_date).toISOString() : undefined,
+        end_date: data.end_date ? new Date(data.end_date).toISOString() : undefined,
+        min_deposit: data.min_deposit,
+        prize_pool: data.prize_pool,
+        currency: data.currency || 'ETB',
+        max_tickets: data.max_tickets ?? undefined,
+        draw_mode: data.draw_mode,
+        notify_winners: data.notify_winners,
+        prizes: data.prizes,
+        status: data.status,
       });
-      toast('Test raffle created.');
+      toast('Raffle created.');
+      setIsCreateModalOpen(false);
       await reloadRaffles();
     } catch (err) {
       toast(`Failed to create raffle: ${(err as Error)?.message ?? err}`, 'error');
@@ -234,11 +236,11 @@ export function Raffles() {
             Export Report
           </button>
           <button
-            onClick={() => void createQuickRaffle()}
+            onClick={() => setIsCreateModalOpen(true)}
             className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700"
           >
             <Plus className="h-4 w-4 mr-2" />
-            {creating ? 'Creating...' : 'Create Raffle'}
+            Create Raffle
           </button>
         </div>
       </div>
@@ -303,6 +305,13 @@ export function Raffles() {
           data={activeTab === 'campaigns' ? filteredRaffles : tickets}
         />
       </div>
+
+      <CreateRaffleModal
+        isOpen={isCreateModalOpen}
+        saving={creating}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSubmit={handleCreateRaffle}
+      />
     </div>
   );
 }
