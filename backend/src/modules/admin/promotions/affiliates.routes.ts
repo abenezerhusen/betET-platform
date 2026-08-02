@@ -754,4 +754,299 @@ router.post(
   })
 );
 
+/* ---------------------------------------------------------------------- */
+/* Affiliate withdrawal requests (manual bank / Telebirr payout workflow)  */
+/*                                                                         */
+/* Affiliates raise requests from their self-service dashboard             */
+/* (POST /api/user/me/affiliate/withdrawals). Admin / Super Admin review    */
+/* them here: approve → transfer manually → mark paid, or reject.          */
+/* ---------------------------------------------------------------------- */
+
+const withdrawalsListQuery = z.object({
+  status: z.enum(['all', 'pending', 'approved', 'paid', 'rejected']).default('all'),
+  affiliate_id: z.string().uuid().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(200).default(50),
+});
+
+const rejectSchema = z.object({
+  note: z.string().trim().max(500).optional(),
+});
+
+const markPaidSchema = z.object({
+  reference: z.string().trim().max(160).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+
+const WITHDRAWAL_SELECT = `
+  SELECT w.id,
+         w.affiliate_id,
+         w.user_id,
+         w.amount::text AS amount,
+         w.currency,
+         w.method,
+         w.destination,
+         w.status,
+         w.reference,
+         w.admin_note,
+         w.requested_at,
+         w.reviewed_at,
+         w.paid_at,
+         w.created_at,
+         a.name AS affiliate_name,
+         a.code AS affiliate_code,
+         a.earnings_total::text AS affiliate_earnings,
+         COALESCE(u.phone, u.email, w.user_id::text) AS affiliate_contact
+    FROM affiliate_withdrawals w
+    JOIN affiliates a ON a.id = w.affiliate_id
+    LEFT JOIN users u ON u.id = w.user_id`;
+
+function projectWithdrawal(row: any) {
+  return {
+    id: row.id,
+    affiliate_id: row.affiliate_id,
+    affiliate_name: row.affiliate_name,
+    affiliate_code: row.affiliate_code,
+    affiliate_contact: row.affiliate_contact,
+    affiliate_earnings: Number(row.affiliate_earnings ?? 0),
+    user_id: row.user_id,
+    amount: Number(row.amount ?? 0),
+    currency: row.currency,
+    method: row.method,
+    destination: row.destination ?? {},
+    status: row.status,
+    reference: row.reference ?? null,
+    admin_note: row.admin_note ?? null,
+    requested_at: row.requested_at,
+    reviewed_at: row.reviewed_at,
+    paid_at: row.paid_at,
+    created_at: row.created_at,
+  };
+}
+
+router.get(
+  '/withdrawals',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const q = withdrawalsListQuery.parse(req.query);
+    const offset = (q.page - 1) * q.limit;
+    return withTenantClient(
+      { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+      async (client) => {
+        const filters: string[] = [];
+        const values: unknown[] = [];
+        let i = 1;
+        if (scope.tenantId) {
+          filters.push(`w.tenant_id = $${i++}`);
+          values.push(scope.tenantId);
+        }
+        if (q.status !== 'all') {
+          filters.push(`w.status = $${i++}`);
+          values.push(q.status);
+        }
+        if (q.affiliate_id) {
+          filters.push(`w.affiliate_id = $${i++}`);
+          values.push(q.affiliate_id);
+        }
+        const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+        const total = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM affiliate_withdrawals w ${where}`,
+          values
+        );
+        const rows = await client.query(
+          `${WITHDRAWAL_SELECT}
+             ${where}
+             ORDER BY
+               CASE w.status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+               w.created_at DESC
+             LIMIT $${i++} OFFSET $${i++}`,
+          [...values, q.limit, offset]
+        );
+        return {
+          items: rows.rows.map(projectWithdrawal),
+          total: Number(total.rows[0]?.count ?? 0),
+          page: q.page,
+          limit: q.limit,
+        };
+      }
+    );
+  })
+);
+
+/** Fetch a single withdrawal row (with FOR UPDATE) inside a transaction. */
+async function loadWithdrawalForUpdate(
+  client: import('pg').PoolClient,
+  id: string
+) {
+  const r = await client.query<{
+    id: string;
+    tenant_id: string;
+    affiliate_id: string;
+    amount: string;
+    status: string;
+  }>(
+    `SELECT id, tenant_id, affiliate_id, amount::text AS amount, status
+       FROM affiliate_withdrawals
+      WHERE id = $1
+      FOR UPDATE`,
+    [id]
+  );
+  return r.rows[0] ?? null;
+}
+
+router.post(
+  '/withdrawals/:id/approve',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const { id } = idParam.parse(req.params);
+    return withTenantClient(
+      { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+      async (client) => {
+        const w = await loadWithdrawalForUpdate(client, id);
+        if (!w) throw new NotFoundError('Withdrawal request not found');
+        if (w.status !== 'pending') {
+          throw new ConflictError(`Cannot approve a ${w.status} request`);
+        }
+        const r = await client.query(
+          `UPDATE affiliate_withdrawals
+              SET status = 'approved', reviewed_at = now(), reviewed_by = $2
+            WHERE id = $1
+            RETURNING id`,
+          [id, scope.actorId ?? null]
+        );
+        void tryAudit(
+          {
+            tenantId: w.tenant_id,
+            actorId: scope.actorId,
+            actorType: scope.actorType,
+            action: 'admin.affiliate.withdrawal.approve',
+            resource: 'affiliate_withdrawals',
+            resourceId: id,
+            payload: { amount: Number(w.amount) },
+            ip: getIp(req),
+            userAgent: getUa(req),
+            status: 'success',
+          },
+          { bypassRls: true }
+        );
+        return { id: r.rows[0].id, status: 'approved' };
+      }
+    );
+  })
+);
+
+router.post(
+  '/withdrawals/:id/reject',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const { id } = idParam.parse(req.params);
+    const body = rejectSchema.parse(req.body ?? {});
+    return withTenantClient(
+      { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+      async (client) => {
+        const w = await loadWithdrawalForUpdate(client, id);
+        if (!w) throw new NotFoundError('Withdrawal request not found');
+        if (w.status !== 'pending' && w.status !== 'approved') {
+          throw new ConflictError(`Cannot reject a ${w.status} request`);
+        }
+        // Rejecting frees the reserved commission automatically (the row is no
+        // longer in pending/approved), so the affiliate can request again.
+        const r = await client.query(
+          `UPDATE affiliate_withdrawals
+              SET status = 'rejected', reviewed_at = now(), reviewed_by = $2,
+                  admin_note = $3
+            WHERE id = $1
+            RETURNING id`,
+          [id, scope.actorId ?? null, body.note ?? null]
+        );
+        void tryAudit(
+          {
+            tenantId: w.tenant_id,
+            actorId: scope.actorId,
+            actorType: scope.actorType,
+            action: 'admin.affiliate.withdrawal.reject',
+            resource: 'affiliate_withdrawals',
+            resourceId: id,
+            payload: { amount: Number(w.amount), note: body.note ?? null },
+            ip: getIp(req),
+            userAgent: getUa(req),
+            status: 'success',
+          },
+          { bypassRls: true }
+        );
+        return { id: r.rows[0].id, status: 'rejected' };
+      }
+    );
+  })
+);
+
+router.post(
+  '/withdrawals/:id/paid',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const { id } = idParam.parse(req.params);
+    const body = markPaidSchema.parse(req.body ?? {});
+    return withTenantClient(
+      { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
+      async (client) => {
+        const w = await loadWithdrawalForUpdate(client, id);
+        if (!w) throw new NotFoundError('Withdrawal request not found');
+        if (w.status !== 'approved' && w.status !== 'pending') {
+          throw new ConflictError(`Cannot mark a ${w.status} request as paid`);
+        }
+        // Finalize: deduct the amount from the affiliate's commission ledger.
+        const affQ = await client.query<{ earnings_total: string }>(
+          `SELECT earnings_total::text FROM affiliates WHERE id = $1 FOR UPDATE`,
+          [w.affiliate_id]
+        );
+        const current = Number(affQ.rows[0]?.earnings_total ?? 0);
+        const amount = Number(w.amount);
+        if (amount > current) {
+          throw new ConflictError(
+            'Payout amount exceeds the affiliate commission balance'
+          );
+        }
+        await client.query(
+          `UPDATE affiliates SET earnings_total = earnings_total - $1::numeric,
+                  updated_at = now()
+            WHERE id = $2`,
+          [amount.toFixed(2), w.affiliate_id]
+        );
+        const r = await client.query(
+          `UPDATE affiliate_withdrawals
+              SET status = 'paid', paid_at = now(), paid_by = $2,
+                  reference = COALESCE($3, reference),
+                  admin_note = COALESCE($4, admin_note),
+                  reviewed_at = COALESCE(reviewed_at, now()),
+                  reviewed_by = COALESCE(reviewed_by, $2)
+            WHERE id = $1
+            RETURNING id`,
+          [id, scope.actorId ?? null, body.reference ?? null, body.note ?? null]
+        );
+        void tryAudit(
+          {
+            tenantId: w.tenant_id,
+            actorId: scope.actorId,
+            actorType: scope.actorType,
+            action: 'admin.affiliate.withdrawal.paid',
+            resource: 'affiliate_withdrawals',
+            resourceId: id,
+            payload: { amount, reference: body.reference ?? null },
+            ip: getIp(req),
+            userAgent: getUa(req),
+            status: 'success',
+          },
+          { bypassRls: true }
+        );
+        return {
+          id: r.rows[0].id,
+          status: 'paid',
+          amount,
+          remaining_earnings: current - amount,
+        };
+      }
+    );
+  })
+);
+
 export default router;

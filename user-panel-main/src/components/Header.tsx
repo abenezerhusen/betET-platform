@@ -60,6 +60,7 @@ import {
   Lock,
   ArrowLeft,
   Check,
+  Users,
 } from "lucide-react";
 
 const DEFAULT_MAIN_NAV_ITEMS = [
@@ -843,6 +844,18 @@ export function Header() {
                     >
                       <User className="w-4 h-4" />
                       Profile
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    asChild
+                    className="text-white hover:bg-gray-800 cursor-pointer focus:bg-gray-800 focus:text-white"
+                  >
+                    <Link
+                      href="/affiliate"
+                      className="flex items-center gap-2 w-full px-3 py-2"
+                    >
+                      <Users className="w-4 h-4" />
+                      Affiliate
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem

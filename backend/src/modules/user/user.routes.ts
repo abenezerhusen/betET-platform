@@ -14,6 +14,7 @@ import paymentsGatewayRouter from './payments-gateway.routes';
 import publicGamePicksRouter from '../public/game-picks/game-picks.module';
 import tournamentsRouter from './tournaments.routes';
 import branchWithdrawalRouter from './branch-withdrawal.routes';
+import affiliateRouter from './affiliate.routes';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -51,5 +52,8 @@ router.use('/', paymentsGatewayRouter);
 // Section 16 — branch (cash) withdrawals: user requests a single-use
 // code that any shop cashier can pay out via /api/cashier/withdrawal/*.
 router.use('/', branchWithdrawalRouter);
+// Affiliate self-service — an affiliate (agent) sees only their own record:
+// stats, commission balance, referrals, payout account, withdrawal requests.
+router.use('/', affiliateRouter);
 
 export default router;

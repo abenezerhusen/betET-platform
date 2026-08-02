@@ -83,6 +83,9 @@ export function Affiliates() {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [commissionConfig, setCommissionConfig] = useState<promotionsApi.CommissionConfig | null>(null);
   const [commissionLoading, setCommissionLoading] = useState(false);
+  const [withdrawals, setWithdrawals] = useState<promotionsApi.AffiliateWithdrawal[]>([]);
+  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
+  const [withdrawalStatus, setWithdrawalStatus] = useState<'all' | 'pending' | 'approved' | 'paid' | 'rejected'>('all');
 
   const mapAffiliates = (items: Array<promotionsApi.Affiliate & {
     phone?: string;
@@ -169,8 +172,72 @@ export function Affiliates() {
     };
   }, [isAuth, activeTab]);
 
+  const reloadWithdrawals = async () => {
+    setWithdrawalsLoading(true);
+    try {
+      const res = await promotionsApi.listAffiliateWithdrawals({
+        status: withdrawalStatus,
+        limit: 200,
+      });
+      setWithdrawals(res.items ?? []);
+    } catch (err) {
+      toast(`Failed to load withdrawals: ${(err as Error).message}`, 'error');
+    } finally {
+      setWithdrawalsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuth || activeTab !== 'withdrawals') return;
+    void reloadWithdrawals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuth, activeTab, withdrawalStatus]);
+
+  const formatDestination = (w: promotionsApi.AffiliateWithdrawal): string => {
+    const d = w.destination ?? {};
+    if (w.method === 'telebirr') return `Telebirr: ${d.telebirr_number ?? '—'}`;
+    return `${d.bank_name ?? '—'} — ${d.bank_account_number ?? '—'}${
+      d.bank_account_name ? ` (${d.bank_account_name})` : ''
+    }`;
+  };
+
+  const handleApproveWithdrawal = async (id: string) => {
+    try {
+      await promotionsApi.approveAffiliateWithdrawal(id);
+      toast('Withdrawal approved. Transfer the funds, then mark it as Paid.');
+      await reloadWithdrawals();
+    } catch (err) {
+      toast(`Approve failed: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const handleRejectWithdrawal = async (id: string) => {
+    const note = window.prompt('Reason for rejection (optional):') ?? undefined;
+    try {
+      await promotionsApi.rejectAffiliateWithdrawal(id, { note });
+      toast('Withdrawal rejected.');
+      await reloadWithdrawals();
+    } catch (err) {
+      toast(`Reject failed: ${(err as Error).message}`, 'error');
+    }
+  };
+
+  const handleMarkPaid = async (id: string) => {
+    const reference =
+      window.prompt('Enter the bank/Telebirr transfer reference (optional):') ?? undefined;
+    try {
+      await promotionsApi.markAffiliateWithdrawalPaid(id, { reference });
+      toast('Withdrawal marked as Paid.');
+      await reloadWithdrawals();
+      await reloadAffiliates();
+    } catch (err) {
+      toast(`Mark paid failed: ${(err as Error).message}`, 'error');
+    }
+  };
+
   const tabs = [
     { id: 'affiliates', label: 'Affiliate Records' },
+    { id: 'withdrawals', label: 'Withdrawals' },
     { id: 'payments', label: 'Affiliate Payments' },
     { id: 'commission', label: 'Commission Config' },
   ];
@@ -334,8 +401,96 @@ export function Affiliates() {
     ];
   }, [commissionConfig]);
 
+  const statusBadge = (status: string) => {
+    const map: Record<string, string> = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      approved: 'bg-blue-100 text-blue-800',
+      paid: 'bg-green-100 text-green-800',
+      rejected: 'bg-red-100 text-red-800',
+    };
+    return (
+      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${map[status] ?? 'bg-gray-100 text-gray-700'}`}>
+        {status}
+      </span>
+    );
+  };
+
+  const withdrawalColumns = [
+    { header: 'Affiliate', accessor: 'affiliate_name' as const },
+    { header: 'Contact', accessor: 'affiliate_contact' as const },
+    {
+      header: 'Amount',
+      accessor: 'amount' as const,
+      render: (v: number, row: promotionsApi.AffiliateWithdrawal) => `${v.toLocaleString()} ${row.currency}`,
+    },
+    {
+      header: 'Method',
+      accessor: 'method' as const,
+      render: (v: string) => (v === 'telebirr' ? 'Telebirr' : 'Bank'),
+    },
+    {
+      header: 'Destination',
+      accessor: 'id' as const,
+      render: (_id: string, row: promotionsApi.AffiliateWithdrawal) => (
+        <span className="text-xs text-gray-600">{formatDestination(row)}</span>
+      ),
+    },
+    {
+      header: 'Status',
+      accessor: 'status' as const,
+      render: (v: string) => statusBadge(v),
+    },
+    {
+      header: 'Requested',
+      accessor: 'requested_at' as const,
+      render: (v: string | null) => (v ? new Date(v).toLocaleString() : '—'),
+    },
+    {
+      header: 'Reference',
+      accessor: 'reference' as const,
+      render: (v: string | null) => v || '—',
+    },
+    {
+      header: 'Actions',
+      accessor: 'id' as const,
+      render: (id: string, row: promotionsApi.AffiliateWithdrawal) => (
+        <div className="flex space-x-2">
+          <button
+            type="button"
+            disabled={row.status !== 'pending'}
+            onClick={() => void handleApproveWithdrawal(id)}
+            className="text-blue-600 hover:text-blue-800 disabled:text-gray-300"
+            title="Approve"
+          >
+            <CheckCircle className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={row.status !== 'pending' && row.status !== 'approved'}
+            onClick={() => void handleMarkPaid(id)}
+            className="text-green-600 hover:text-green-800 disabled:text-gray-300"
+            title="Mark as Paid"
+          >
+            <DollarSign className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={row.status !== 'pending' && row.status !== 'approved'}
+            onClick={() => void handleRejectWithdrawal(id)}
+            className="text-red-600 hover:text-red-800 disabled:text-gray-300"
+            title="Reject"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+      ),
+    },
+  ];
+
   const getData = (): any[] => {
     switch (activeTab) {
+      case 'withdrawals':
+        return withdrawals;
       case 'payments':
         return payments;
       case 'commission':
@@ -347,6 +502,8 @@ export function Affiliates() {
 
   const getColumns = (): any[] => {
     switch (activeTab) {
+      case 'withdrawals':
+        return withdrawalColumns;
       case 'payments':
         return paymentColumns;
       case 'commission':
@@ -506,8 +663,30 @@ export function Affiliates() {
         }}
       />
 
+      {activeTab === 'withdrawals' && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Filter status:</span>
+          {(['all', 'pending', 'approved', 'paid', 'rejected'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setWithdrawalStatus(s)}
+              className={`px-3 py-1 rounded-full text-xs font-medium capitalize ${
+                withdrawalStatus === s
+                  ? 'bg-green-600 text-white'
+                  : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow">
         <DataTable columns={getColumns()} data={getData()} />
+        {activeTab === 'withdrawals' && withdrawalsLoading && (
+          <div className="px-6 pb-6 text-sm text-gray-500">Loading withdrawals…</div>
+        )}
         {activeTab === 'payments' && paymentsLoading && (
           <div className="px-6 pb-6 text-sm text-gray-500">Loading payments…</div>
         )}

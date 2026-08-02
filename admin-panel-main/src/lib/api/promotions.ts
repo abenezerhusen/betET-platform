@@ -259,6 +259,66 @@ export function updateCommissionConfig(input: CommissionConfig) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Affiliate withdrawals — manual bank / Telebirr payout workflow      */
+/* ------------------------------------------------------------------ */
+
+export interface AffiliateWithdrawal {
+  id: string;
+  affiliate_id: string;
+  affiliate_name: string;
+  affiliate_code: string;
+  affiliate_contact: string;
+  affiliate_earnings: number;
+  user_id: string | null;
+  amount: number;
+  currency: string;
+  method: 'bank' | 'telebirr';
+  destination: Record<string, string>;
+  status: 'pending' | 'approved' | 'paid' | 'rejected';
+  reference: string | null;
+  admin_note: string | null;
+  requested_at: string | null;
+  reviewed_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export function listAffiliateWithdrawals(query: {
+  status?: 'all' | 'pending' | 'approved' | 'paid' | 'rejected';
+  affiliate_id?: string;
+  page?: number;
+  limit?: number;
+} = {}) {
+  return http.get<{ items: AffiliateWithdrawal[]; total?: number; page: number; limit: number }>(
+    '/api/admin/affiliates/withdrawals',
+    { query }
+  );
+}
+
+export function approveAffiliateWithdrawal(id: string) {
+  return http.post<{ id: string; status: string }>(
+    `/api/admin/affiliates/withdrawals/${id}/approve`
+  );
+}
+
+export function rejectAffiliateWithdrawal(id: string, input: { note?: string } = {}) {
+  return http.post<{ id: string; status: string }>(
+    `/api/admin/affiliates/withdrawals/${id}/reject`,
+    input
+  );
+}
+
+export function markAffiliateWithdrawalPaid(
+  id: string,
+  input: { reference?: string; note?: string } = {}
+) {
+  return http.post<{ id: string; status: string; amount: number; remaining_earnings: number }>(
+    `/api/admin/affiliates/withdrawals/${id}/paid`,
+    input
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Spec-aligned raffles (/api/admin/raffles)                            */
 /* ------------------------------------------------------------------ */
 
