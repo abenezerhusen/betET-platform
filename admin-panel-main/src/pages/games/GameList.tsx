@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Gamepad2, Power, Search, History } from 'lucide-react';
+import { Gamepad2, Power, Search, History, Settings } from 'lucide-react';
 import * as rtpApi from '../../lib/api/rtp';
 import { toast } from '../../lib/toast';
 import { useAuthStore } from '../../store/auth';
 import { GameHistoryModal } from '../../components/GameHistoryModal';
+import { GameSettingsModal } from '../../components/GameSettingsModal';
 
 /**
  * /games/list — enable / disable internal games for the user panel lobby.
@@ -16,6 +17,7 @@ export function GameList() {
   const [search, setSearch] = useState('');
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [historyGame, setHistoryGame] = useState<rtpApi.InternalGameRtp | null>(null);
+  const [settingsGame, setSettingsGame] = useState<rtpApi.InternalGameRtp | null>(null);
 
   const load = useCallback(() => {
     if (!isAuth) return;
@@ -154,6 +156,14 @@ export function GameList() {
                     <td className="px-6 py-4 text-sm whitespace-nowrap space-x-4">
                       <button
                         type="button"
+                        onClick={() => setSettingsGame(g)}
+                        className="inline-flex items-center text-sm font-medium text-gray-600 hover:text-gray-900"
+                      >
+                        <Settings size={14} className="mr-1" />
+                        Settings
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setHistoryGame(g)}
                         className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800"
                       >
@@ -187,6 +197,16 @@ export function GameList() {
           gameId={historyGame.id}
           gameName={historyGame.name}
           onClose={() => setHistoryGame(null)}
+        />
+      )}
+
+      {settingsGame && (
+        <GameSettingsModal
+          game={settingsGame}
+          onSaved={(updated) =>
+            setGames((prev) => prev.map((row) => (row.id === updated.id ? updated : row)))
+          }
+          onClose={() => setSettingsGame(null)}
         />
       )}
     </div>

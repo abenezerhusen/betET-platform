@@ -38,6 +38,12 @@ const statusUpdateSchema = z.object({
   status: z.enum(['Active', 'Disabled']),
 });
 
+const limitsUpdateSchema = z.object({
+  min_bet: z.coerce.number().positive().max(10_000_000),
+  max_bet: z.coerce.number().positive().max(10_000_000),
+  max_win: z.coerce.number().positive().max(1_000_000_000),
+});
+
 const wrap =
   <T>(fn: (req: Request) => Promise<T>) =>
   async (req: Request, res: Response, next: NextFunction) => {
@@ -58,11 +64,16 @@ interface InternalGameRow {
   status: 'Active' | 'Disabled';
   min_bet: string;
   max_bet: string;
+  max_win: string;
   slug: string | null;
   thumbnail_url: string | null;
   description: string | null;
   game_type: string | null;
 }
+
+const GAME_COLUMNS = `id, name, provider, default_rtp::text, min_rtp::text, max_rtp::text,
+                  status, min_bet::text, max_bet::text, max_win::text, slug, thumbnail_url,
+                  description, game_type`;
 
 interface OverrideRow {
   id: string;
@@ -84,6 +95,7 @@ function shapeGame(g: InternalGameRow, overrides: OverrideRow[]) {
     status: g.status,
     minBet: Number(g.min_bet),
     maxBet: Number(g.max_bet),
+    maxWin: Number(g.max_win),
     slug: g.slug,
     thumbnail_url: g.thumbnail_url,
     description: g.description,
@@ -104,9 +116,7 @@ router.get(
       { tenantId: scope.tenantId, bypassRls: true },
       async (client) => {
         const games = await client.query<InternalGameRow>(
-          `SELECT id, name, provider, default_rtp::text, min_rtp::text, max_rtp::text,
-                  status, min_bet::text, max_bet::text, slug, thumbnail_url,
-                  description, game_type
+          `SELECT ${GAME_COLUMNS}
              FROM internal_games
              ORDER BY name`
         );
@@ -132,8 +142,7 @@ router.patch(
       { tenantId: scope.tenantId, bypassRls: true },
       async (client) => {
         const gameQ = await client.query<InternalGameRow>(
-          `SELECT id, name, provider, default_rtp::text, min_rtp::text, max_rtp::text,
-                  status, min_bet::text, max_bet::text, slug, thumbnail_url, description, game_type
+          `SELECT ${GAME_COLUMNS}
              FROM internal_games WHERE id = $1`,
           [id]
         );
@@ -173,8 +182,7 @@ router.patch(
         }
 
         const after = await client.query<InternalGameRow>(
-          `SELECT id, name, provider, default_rtp::text, min_rtp::text, max_rtp::text,
-                  status, min_bet::text, max_bet::text, slug, thumbnail_url, description, game_type
+          `SELECT ${GAME_COLUMNS}
              FROM internal_games WHERE id = $1`,
           [id]
         );
@@ -225,8 +233,7 @@ router.patch(
           `UPDATE internal_games
               SET status = $2, updated_at = now()
             WHERE id = $1
-            RETURNING id, name, provider, default_rtp::text, min_rtp::text, max_rtp::text,
-                      status, min_bet::text, max_bet::text, slug, thumbnail_url, description, game_type`,
+            RETURNING ${GAME_COLUMNS}`,
           [id, body.status]
         );
         if (!r.rows[0]) throw new NotFoundError('Internal game not found');
@@ -251,6 +258,77 @@ router.patch(
     );
 
     return { ok: true, id, status: result.status };
+  })
+);
+
+/**
+ * PATCH /api/admin/games/:id/limits — update the per-game bet & win limits
+ * (Minimum Bet, Maximum Bet, Maximum Win). These are enforced live by the bet
+ * APIs and game workers. RTP is managed separately via /:id/rtp; this endpoint
+ * only touches the limit columns so existing RTP / status config is untouched.
+ */
+router.patch(
+  '/:id/limits',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const { id } = gameIdParam.parse(req.params);
+    const body = limitsUpdateSchema.parse(req.body);
+
+    if (body.max_bet < body.min_bet) {
+      throw new BadRequestError('Maximum bet must be greater than or equal to minimum bet', {
+        min_bet: body.min_bet,
+        max_bet: body.max_bet,
+      });
+    }
+    if (body.max_win < body.max_bet) {
+      throw new BadRequestError('Maximum win must be greater than or equal to maximum bet', {
+        max_bet: body.max_bet,
+        max_win: body.max_win,
+      });
+    }
+
+    const result = await withTenantClient(
+      { tenantId: scope.tenantId, bypassRls: true },
+      async (client) => {
+        const r = await client.query<InternalGameRow>(
+          `UPDATE internal_games
+              SET min_bet = $2::numeric, max_bet = $3::numeric, max_win = $4::numeric,
+                  updated_at = now()
+            WHERE id = $1
+            RETURNING ${GAME_COLUMNS}`,
+          [id, body.min_bet, body.max_bet, body.max_win]
+        );
+        if (!r.rows[0]) throw new NotFoundError('Internal game not found');
+        const overrides = await client.query<OverrideRow>(
+          `SELECT id, game_id, client_id, rtp::text, updated_at
+             FROM game_rtp_overrides WHERE game_id = $1`,
+          [id]
+        );
+        return shapeGame(r.rows[0], overrides.rows);
+      }
+    );
+
+    void tryAudit(
+      {
+        tenantId: scope.tenantId,
+        actorId: scope.actorId,
+        actorType: scope.actorType,
+        action: 'admin.game.limits',
+        resource: 'internal_games',
+        resourceId: id,
+        payload: {
+          min_bet: body.min_bet,
+          max_bet: body.max_bet,
+          max_win: body.max_win,
+        },
+        ip: getIp(req),
+        userAgent: getUa(req),
+        status: 'success',
+      },
+      { bypassRls: true }
+    );
+
+    return { ok: true, game: result };
   })
 );
 

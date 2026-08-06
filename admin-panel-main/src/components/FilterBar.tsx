@@ -56,6 +56,16 @@ export function FilterBar({
                 type={filter.type}
                 value={filter.value}
                 onChange={(e) => filter.onChange(e.target.value)}
+                // Mobile browsers otherwise auto-capitalise, auto-correct or
+                // autofill (often reformatting phone numbers with spaces),
+                // which stops the reactive filters from matching. Turning
+                // these off makes every text/number filter behave on phones
+                // exactly like it does on desktop.
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                inputMode={filter.type === 'number' ? 'decimal' : 'search'}
                 className="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 placeholder={`Enter ${filter.label.toLowerCase()}`}
               />

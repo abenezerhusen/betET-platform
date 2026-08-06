@@ -162,6 +162,69 @@ export function listTransactions(
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/* Admin Deposit Report                                                       */
+/* -------------------------------------------------------------------------- */
+
+export interface AdminDepositQuery extends DateRange {
+  /** Depositing administrator id (metadata.actor_id). */
+  admin_id?: string;
+  /** Recipient user id. */
+  user_id?: string;
+  /** Recipient phone / email. */
+  phone?: string;
+  /** Free-text: deposit id, reference, recipient phone/email. */
+  search?: string;
+  min_amount?: number;
+  max_amount?: number;
+  sort?: 'date' | 'amount' | 'admin';
+  dir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface AdminDepositRow {
+  id: string;
+  tenant_id: string;
+  user_id: string | null;
+  wallet_id: string | null;
+  amount: string | number;
+  before_balance: string | number;
+  after_balance: string | number;
+  currency: string | null;
+  reference: string | null;
+  status: string | null;
+  created_at: string;
+  remark: string | null;
+  bucket: string | null;
+  admin_id: string | null;
+  admin_role: string | null;
+  admin_name: string | null;
+  admin_email: string | null;
+  user_email: string | null;
+  user_phone: string | null;
+  user_name: string | null;
+}
+
+export interface AdminDepositListResponse {
+  items: AdminDepositRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  summary: { total_amount: string; count: string } | null;
+  admins: Array<{ id: string; name: string }>;
+}
+
+export function listAdminDeposits(
+  query: AdminDepositQuery = {}
+): Promise<AdminDepositListResponse> {
+  return http.get<AdminDepositListResponse>(
+    '/api/admin/transactions/admin-deposits',
+    { query }
+  );
+}
+
 /* Legacy wrappers — keep older imports compiling. */
 
 export function listBranchTransactions(query: BranchTxQuery = {}) {

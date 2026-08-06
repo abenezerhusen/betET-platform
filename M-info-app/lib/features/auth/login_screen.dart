@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config/app_config.dart';
 import 'auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -14,21 +13,12 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _backendUrlCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _submitting = false;
 
   @override
-  void initState() {
-    super.initState();
-    final cfg = ref.read(appConfigProvider).valueOrNull;
-    if (cfg != null) _backendUrlCtrl.text = cfg.backendUrl;
-  }
-
-  @override
   void dispose() {
-    _backendUrlCtrl.dispose();
     _phoneCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -37,15 +27,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _submitting = true);
-
-    // Persist URL FIRST so the AgentApi rebuilds against the new base.
-    await ref
-        .read(appConfigProvider.notifier)
-        .setBackendUrl(_backendUrlCtrl.text.trim());
-
-    // Riverpod will rebuild agentApiProvider; give it a microtask to
-    // settle before we call login.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
 
     final ok = await ref.read(authControllerProvider.notifier).login(
           telebirrNumber: _phoneCtrl.text.trim(),
@@ -102,27 +83,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _backendUrlCtrl,
-                      keyboardType: TextInputType.url,
-                      autocorrect: false,
-                      decoration: const InputDecoration(
-                        labelText: 'Backend URL',
-                        hintText: 'http://YOUR_PC_IP:4000',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'Required';
-                        }
-                        final uri = Uri.tryParse(v.trim());
-                        if (uri == null || !uri.hasScheme) {
-                          return 'Must be a valid URL';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 12),
                     TextFormField(
                       controller: _phoneCtrl,
                       keyboardType: TextInputType.phone,

@@ -11,9 +11,13 @@
 class Env {
   const Env._();
 
+  /// Production backend API. Baked into the build at compile time and never
+  /// user-editable. A build flavor may still override it via
+  /// `--dart-define=BACKEND_URL=https://...`, but the app never surfaces or
+  /// stores a URL entered by the operator.
   static const String defaultBackendUrl = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'http://10.0.2.2:4000',
+    defaultValue: 'https://api.1birr.bet',
   );
 
   /// Heartbeat cadence for `/api/agent/auth/heartbeat`. Backend rate

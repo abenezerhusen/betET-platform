@@ -66,6 +66,7 @@ const menuItems: MenuItem[] = [
       { title: 'Online Transactions', path: '/transactions/online', perm: 'tx.online.view', icon: <ChevronRight size={16} /> },
       { title: 'Branch Transactions', path: '/transactions/branch', perm: 'tx.branch.view', icon: <ChevronRight size={16} /> },
       { title: 'Wallet Transactions', path: '/transactions/wallet', perm: 'tx.wallet.view', icon: <ChevronRight size={16} /> },
+      { title: 'Admin Deposit Report', path: '/transactions/admin-deposits', perm: 'tx.online.view', icon: <ChevronRight size={16} /> },
     ],
   },
   {

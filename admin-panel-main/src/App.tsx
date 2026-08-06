@@ -29,6 +29,7 @@ import { OnlineUsers } from './pages/users/OnlineUsers';
 import { OnlineTransactions } from './pages/transactions/OnlineTransactions';
 import { BranchTransactions } from './pages/transactions/BranchTransactions';
 import { WalletTransactions } from './pages/transactions/WalletTransactions';
+import { AdminDepositReport } from './pages/transactions/AdminDepositReport';
 import { OfflineBets } from './pages/bets/OfflineBets';
 import { OnlineBets } from './pages/bets/OnlineBets';
 import { SuperJackpots } from './pages/bets/SuperJackpots';
@@ -134,6 +135,7 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/transactions/online', perm: 'tx.online.view', element: <OnlineTransactions /> },
   { path: '/transactions/branch', perm: 'tx.branch.view', element: <BranchTransactions /> },
   { path: '/transactions/wallet', perm: 'tx.wallet.view', element: <WalletTransactions /> },
+  { path: '/transactions/admin-deposits', perm: 'tx.online.view', element: <AdminDepositReport /> },
 
   /* Bets */
   { path: '/bets/offline', perm: 'bets.offline.view', element: <OfflineBets /> },

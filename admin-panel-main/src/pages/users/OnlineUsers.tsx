@@ -245,13 +245,23 @@ export function OnlineUsers() {
 
     if (phoneNumber) {
       const needle = phoneNumber.trim().toLowerCase();
+      // Digits-only variant so a formatted/pasted number (e.g. a mobile
+      // keyboard autofilling "+251 92 400 4654") still matches the stored
+      // "+251924004654". Ignores spaces, dashes and parentheses.
+      const digitNeedle = needle.replace(/\D/g, '');
       if (needle) {
-        filtered = filtered.filter(
-          (u) =>
-            String(u.phone ?? '').toLowerCase().includes(needle) ||
-            String(u.email ?? '').toLowerCase().includes(needle) ||
-            String(u.name ?? '').toLowerCase().includes(needle)
-        );
+        filtered = filtered.filter((u) => {
+          const phone = String(u.phone ?? '').toLowerCase();
+          const email = String(u.email ?? '').toLowerCase();
+          const name = String(u.name ?? '').toLowerCase();
+          return (
+            phone.includes(needle) ||
+            email.includes(needle) ||
+            name.includes(needle) ||
+            (digitNeedle.length > 0 &&
+              phone.replace(/\D/g, '').includes(digitNeedle))
+          );
+        });
       }
     }
     if (selectedStatus) {

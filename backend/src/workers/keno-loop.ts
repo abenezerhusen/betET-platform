@@ -129,14 +129,19 @@ const KENO_BASE_RTP: Record<number, number> = (() => {
  */
 async function readGameStatusAndRtp(
   tenantId: string
-): Promise<{ status: 'Active' | 'Disabled'; rtp: number } | null> {
+): Promise<{ status: 'Active' | 'Disabled'; rtp: number; maxWin: number } | null> {
   return withTenantClient({ tenantId, bypassRls: true }, async (client) => {
-    const g = await client.query<{ status: string; default_rtp: string }>(
-      `SELECT status, default_rtp::text FROM internal_games WHERE id = 'fast-keno'`
+    const g = await client.query<{
+      status: string;
+      default_rtp: string;
+      max_win: string;
+    }>(
+      `SELECT status, default_rtp::text, max_win::text FROM internal_games WHERE id = 'fast-keno'`
     );
     if (!g.rows[0]) return null;
+    const maxWin = Number(g.rows[0].max_win);
     if (g.rows[0].status === 'Disabled') {
-      return { status: 'Disabled', rtp: Number(g.rows[0].default_rtp) };
+      return { status: 'Disabled', rtp: Number(g.rows[0].default_rtp), maxWin };
     }
     const slug = await client.query<{ slug: string | null }>(
       `SELECT slug FROM tenants WHERE id = $1`,
@@ -151,7 +156,7 @@ async function readGameStatusAndRtp(
       );
       if (o.rows[0]) rtp = Number(o.rows[0].rtp);
     }
-    return { status: 'Active', rtp };
+    return { status: 'Active', rtp, maxWin };
   });
 }
 
@@ -229,7 +234,8 @@ async function settleRound(
   tenantId: string,
   roundId: string,
   allNumbers: number[],
-  rtpMultiplier: number
+  rtpMultiplier: number,
+  maxWin: number
 ) {
   await withTenantClient({ tenantId }, async (client) => {
     const betsQ = await client.query<{
@@ -259,7 +265,11 @@ async function settleRound(
       // (targetRtp / baseRtp[spots]).
       const baseRtp = KENO_BASE_RTP[selected.length] ?? 1;
       const scale = rtpMultiplier / baseRtp;
-      const payout = Number((Number(bet.amount) * multiplier * scale).toFixed(2));
+      const rawPayout = Number(bet.amount) * multiplier * scale;
+      // Enforce the admin-configured max-win ceiling on the round payout.
+      const cappedPayout =
+        maxWin > 0 && Number.isFinite(maxWin) ? Math.min(rawPayout, maxWin) : rawPayout;
+      const payout = Number(cappedPayout.toFixed(2));
       const status = payout > 0 ? 'won' : 'lost';
 
       await client.query(
@@ -428,7 +438,7 @@ async function tickTenant(tenantId: string): Promise<void> {
       });
     }
     if (targetIndex >= 20) {
-      await settleRound(tenantId, round.id, allNumbers, rtpMultiplier);
+      await settleRound(tenantId, round.id, allNumbers, rtpMultiplier, gameInfo?.maxWin ?? 0);
     }
     return;
   }

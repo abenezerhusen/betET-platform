@@ -26,6 +26,7 @@ export interface InternalGameRtp {
   status: GameStatus;
   minBet: number;
   maxBet: number;
+  maxWin: number;
   slug: string | null;
   thumbnail_url: string | null;
   description: string | null;
@@ -51,5 +52,15 @@ export function updateGameStatus(gameId: string, status: GameStatus) {
   return http.patch<{ ok: boolean; id: string; status: GameStatus }>(
     `/api/admin/games/${gameId}/status`,
     { status }
+  );
+}
+
+export function updateGameLimits(
+  gameId: string,
+  body: { min_bet: number; max_bet: number; max_win: number }
+) {
+  return http.patch<{ ok: boolean; game: InternalGameRtp }>(
+    `/api/admin/games/${gameId}/limits`,
+    body
   );
 }

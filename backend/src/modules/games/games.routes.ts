@@ -495,6 +495,7 @@ router.post('/aviator/bet', async (req, res, next) => {
     if (gameInfo?.status === 'Disabled') {
       throw new BadRequestError('Aviator is currently disabled');
     }
+    assertBetWithinLimits(body.amount, gameInfo, 'Aviator');
     const round = await currentRound(user.tenantId, 'aviator');
     if (!round || round.id !== body.round_id) throw new NotFoundError('Round not found');
     if (round.phase !== 'waiting') throw new BadRequestError('Round is not accepting bets');
@@ -538,6 +539,7 @@ router.post('/aviator/cashout', async (req, res, next) => {
   try {
     const body = aviatorCashoutSchema.parse(req.body);
     const user = ensureUser(req);
+    const gameInfo = await readInternalGameRtp(user.tenantId, 'aviator');
 
     const result = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
       const roundQ = await client.query<{ phase: string; metadata: Record<string, unknown> }>(
@@ -560,7 +562,9 @@ router.post('/aviator/cashout', async (req, res, next) => {
       if (bet.status !== 'active') throw new BadRequestError('Bet already settled');
 
       const currentMultiplier = Number((round.metadata?.current_multiplier ?? 1).toString());
-      const payout = Number((Number(bet.amount) * currentMultiplier).toFixed(2));
+      const payout = Number(
+        capPayout(Number(bet.amount) * currentMultiplier, gameInfo).toFixed(2)
+      );
 
       await client.query(
         `UPDATE game_bets
@@ -658,6 +662,7 @@ router.post('/jetx/bet', async (req, res, next) => {
     if (gameInfo?.status === 'Disabled') {
       throw new BadRequestError('JetX is currently disabled');
     }
+    assertBetWithinLimits(body.amount, gameInfo, 'JetX');
     const round = await currentRound(user.tenantId, 'jetx');
     if (!round || round.id !== body.round_id) throw new NotFoundError('Round not found');
     if (round.phase !== 'waiting') throw new BadRequestError('Round is not accepting bets');
@@ -701,6 +706,7 @@ router.post('/jetx/cashout', async (req, res, next) => {
   try {
     const body = aviatorCashoutSchema.parse(req.body);
     const user = ensureUser(req);
+    const gameInfo = await readInternalGameRtp(user.tenantId, 'jetx');
 
     const result = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
       const roundQ = await client.query<{ phase: string; metadata: Record<string, unknown> }>(
@@ -723,7 +729,9 @@ router.post('/jetx/cashout', async (req, res, next) => {
       if (bet.status !== 'active') throw new BadRequestError('Bet already settled');
 
       const currentMultiplier = Number((round.metadata?.current_multiplier ?? 1).toString());
-      const payout = Number((Number(bet.amount) * currentMultiplier).toFixed(2));
+      const payout = Number(
+        capPayout(Number(bet.amount) * currentMultiplier, gameInfo).toFixed(2)
+      );
 
       await client.query(
         `UPDATE game_bets
@@ -822,6 +830,7 @@ router.post('/keno/bet', async (req, res, next) => {
     if (gameInfo?.status === 'Disabled') {
       throw new BadRequestError('Fast Keno is currently disabled');
     }
+    assertBetWithinLimits(body.amount, gameInfo, 'Fast Keno');
     const round = await currentRound(user.tenantId, 'fast-keno');
     if (!round || round.id !== body.round_id) throw new NotFoundError('Round not found');
     if (round.phase !== 'betting') throw new BadRequestError('Round is not accepting bets');
@@ -857,25 +866,6 @@ router.post('/keno/bet', async (req, res, next) => {
 });
 
 /**
- * Multi Hot 5 reel symbols. These MUST match the symbol `id`s the
- * Multi Hot 5 client renders (see SYMBOLS in
- * game-engine-main/app/games/multi-hot-5/page.tsx). The previous default
- * poker set (A/K/Q/J/10/WILD/SCATTER) didn't map to any client symbol, so
- * every reel fell back to "seven" and the grid always showed 7-7-7.
- */
-const MULTI_HOT_5_SYMBOLS = [
-  'seven',
-  'dollar',
-  'bell',
-  'watermelon',
-  'grapes',
-  'orange',
-  'cherry',
-  'lemon',
-  'plum',
-];
-
-/**
  * Multi Hot 5 paytable — line-win multiple of bet-per-line for a 3-of-a-kind
  * of each symbol. Mirrors the values shown on the in-game rules screen
  * (77 ×15, $$ ×10, bells ×5, watermelon/grapes ×4, low fruits ×2).
@@ -892,15 +882,30 @@ const MULTI_HOT_5_PAYTABLE: Record<string, number> = {
   plum: 2,
 };
 
+interface InternalGameConfig {
+  status: 'Active' | 'Disabled';
+  rtp: number;
+  minBet: number;
+  maxBet: number;
+  maxWin: number;
+}
+
 async function readInternalGameRtp(
   tenantId: string,
   gameId: 'aviator' | 'jetx' | 'fast-keno' | 'multi-hot-5'
-): Promise<{ status: 'Active' | 'Disabled'; rtp: number } | null> {
+): Promise<InternalGameConfig | null> {
   return withTenantClient(
     { tenantId, bypassRls: true },
     async (client) => {
-      const g = await client.query<{ status: string; default_rtp: string }>(
-        `SELECT status, default_rtp::text FROM internal_games WHERE id = $1`,
+      const g = await client.query<{
+        status: string;
+        default_rtp: string;
+        min_bet: string;
+        max_bet: string;
+        max_win: string;
+      }>(
+        `SELECT status, default_rtp::text, min_bet::text, max_bet::text, max_win::text
+           FROM internal_games WHERE id = $1`,
         [gameId]
       );
       if (!g.rows[0]) return null;
@@ -917,9 +922,46 @@ async function readInternalGameRtp(
         );
         if (o.rows[0]) rtp = Number(o.rows[0].rtp);
       }
-      return { status: (g.rows[0].status as 'Active' | 'Disabled') ?? 'Active', rtp };
+      return {
+        status: (g.rows[0].status as 'Active' | 'Disabled') ?? 'Active',
+        rtp,
+        minBet: Number(g.rows[0].min_bet),
+        maxBet: Number(g.rows[0].max_bet),
+        maxWin: Number(g.rows[0].max_win),
+      };
     }
   );
+}
+
+/**
+ * Enforce the admin-configured per-game bet range. `stake` is the TOTAL amount
+ * risked on the round (for slots, bet-per-line × lines). No-op when the game
+ * row / limits are unavailable so a config gap never blocks play.
+ */
+function assertBetWithinLimits(
+  stake: number,
+  cfg: InternalGameConfig | null,
+  gameName: string
+): void {
+  if (!cfg) return;
+  if (Number.isFinite(cfg.minBet) && stake < cfg.minBet) {
+    throw new BadRequestError(
+      `Minimum bet for ${gameName} is ${cfg.minBet} ETB`,
+      { min_bet: cfg.minBet, max_bet: cfg.maxBet }
+    );
+  }
+  if (Number.isFinite(cfg.maxBet) && stake > cfg.maxBet) {
+    throw new BadRequestError(
+      `Maximum bet for ${gameName} is ${cfg.maxBet} ETB`,
+      { min_bet: cfg.minBet, max_bet: cfg.maxBet }
+    );
+  }
+}
+
+/** Cap a single-round payout at the admin-configured max-win ceiling. */
+function capPayout(payout: number, cfg: InternalGameConfig | null): number {
+  if (!cfg || !Number.isFinite(cfg.maxWin) || cfg.maxWin <= 0) return payout;
+  return Math.min(payout, cfg.maxWin);
 }
 
 router.post('/slots/spin', async (req, res, next) => {
@@ -932,6 +974,7 @@ router.post('/slots/spin', async (req, res, next) => {
     if (gameInfo?.status === 'Disabled') {
       throw new BadRequestError('Multi Hot 5 is currently disabled');
     }
+    assertBetWithinLimits(totalStake, gameInfo, 'Multi Hot 5');
     const { walletId, before } = await walletForUpdate(req);
     if (before < totalStake) throw new BadRequestError('Insufficient balance');
 
@@ -939,27 +982,33 @@ router.post('/slots/spin', async (req, res, next) => {
       const seed = gameRngService.generateRoundSeed();
       const clientSeed = gameRngService.createClientSeed();
       const roundId = crypto.randomUUID();
+      // RTP is applied inside the RNG as a win-frequency gate (default 97.05%,
+      // or the admin-configured value), so the payout here is the EXACT
+      // paytable amount — never scaled. Premium symbols (777/$$$) are never
+      // forced; they only appear naturally and are extremely rare.
       const outcome = gameRngService.generateMultiHot5Outcome(
         seed.serverSeed,
         clientSeed,
-        roundId
+        roundId,
+        gameInfo?.rtp ?? null
       );
       const reels = outcome.grid; // 3 reels × 3 rows
       const multiplier = outcome.multiplier;
-      const rtp = { symbolWeights: MULTI_HOT_5_SYMBOLS };
-      const rtpMultiplier = gameRngService.slotPayoutMultiplier(gameInfo?.rtp ?? null);
-      // Pay per the client's rules paytable (line-multiple × bet-per-line ×
-      // multiplier reel), scaled by the admin RTP. The grid is built so the
-      // winning symbol sits on exactly one real payline, so the client's
-      // highlighted line always matches what we paid.
+      // Each winning line pays betPerLine × symbol-multiple; sum every winning
+      // line, then apply the 1x–5x multiplier reel once to the total.
+      //   e.g. 777 line at 2/line, mult 4x → (2 × 15) × 4 = 120
+      //        777 + Bell + Watermelon at 5/line, mult 3x
+      //          → (5×15 + 5×5 + 5×4) × 3 = 360
       let payout = 0;
       let winLines: number[] = [];
-      if (outcome.winSymbol && outcome.winLine !== null) {
-        const lineMultiple = MULTI_HOT_5_PAYTABLE[outcome.winSymbol] ?? 0;
-        payout = Number(
-          (body.bet_per_line * lineMultiple * multiplier * rtpMultiplier).toFixed(2)
-        );
-        winLines = [outcome.winLine + 1];
+      if (outcome.winningLines.length > 0) {
+        let baseWin = 0;
+        for (const wl of outcome.winningLines) {
+          baseWin += body.bet_per_line * (MULTI_HOT_5_PAYTABLE[wl.symbol] ?? 0);
+        }
+        // Enforce the admin-configured max-win ceiling on the round payout.
+        payout = Number(capPayout(baseWin * multiplier, gameInfo).toFixed(2));
+        winLines = outcome.winningLines.map((wl) => wl.line + 1);
       }
 
       // `game_code` is filled by the column DEFAULT (8-digit sequence) — read
@@ -1001,7 +1050,6 @@ router.post('/slots/spin', async (req, res, next) => {
         serverSeed: seed.serverSeed,
         serverSeedHash: seed.serverSeedHash,
         clientSeed,
-        rtp,
       };
     });
 

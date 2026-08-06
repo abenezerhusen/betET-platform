@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   dnsPrefetch,
-  prefetchPage,
   preconnect,
   lazyLoadImages,
   measureWebVitals
@@ -12,6 +11,7 @@ import {
 
 export function PerformanceOptimizer() {
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     // In local development we must avoid stale cached bundles/API responses.
@@ -67,18 +67,36 @@ export function PerformanceOptimizer() {
     // Preconnect to critical domains
     preconnect('https://ext.same-assets.com');
 
-    // Prefetch likely next pages based on current page
-    const prefetchRoutes = {
-      '/': ['/sport', '/live', '/deposit'],
-      '/sport': ['/live', '/deposit', '/sport-history'],
-      '/live': ['/sport', '/deposit'],
-      '/deposit': ['/withdraw', '/sport'],
-      '/withdraw': ['/deposit', '/transaction-history'],
+    // Warm the routes the user is most likely to open next using Next's
+    // App Router prefetch. Unlike a raw <link rel="prefetch"> (which only
+    // fetches the HTML document), router.prefetch() pulls in the route's
+    // JS chunk + RSC payload — and in dev it compiles the segment ahead of
+    // time — so the page opens instantly when clicked instead of compiling
+    // on-demand. Safe and invisible: it only pre-loads, never navigates.
+    const COMMON_ROUTES = ['/', '/sport', '/live', '/games', '/deposit'];
+    const prefetchRoutes: Record<string, string[]> = {
+      '/': ['/sport', '/live', '/games', '/deposit'],
+      '/sport': ['/live', '/deposit', '/sport-history', '/'],
+      '/live': ['/sport', '/deposit', '/'],
+      '/games': ['/deposit', '/', '/sport'],
+      '/deposit': ['/withdraw', '/sport', '/'],
+      '/withdraw': ['/deposit', '/transaction-history', '/'],
     };
 
-    const routesToPrefetch = prefetchRoutes[pathname as keyof typeof prefetchRoutes] || [];
-    routesToPrefetch.forEach((route) => {
-      setTimeout(() => prefetchPage(route), 1000); // Prefetch after 1 second
+    const targets = Array.from(
+      new Set([...(prefetchRoutes[pathname] ?? COMMON_ROUTES)])
+    ).filter((route) => route !== pathname);
+
+    // Stagger the prefetches so we never overwhelm the server with a burst
+    // of simultaneous compiles/requests.
+    targets.forEach((route, i) => {
+      setTimeout(() => {
+        try {
+          router.prefetch(route);
+        } catch {
+          /* ignore */
+        }
+      }, 400 * (i + 1));
     });
 
     // Initialize lazy loading for images
@@ -100,7 +118,7 @@ export function PerformanceOptimizer() {
     // Note: In a real app, these would be actual API endpoints
     // For now, this sets up the pattern
 
-  }, [pathname]);
+  }, [pathname, router]);
 
   // Listen for online/offline events
   useEffect(() => {

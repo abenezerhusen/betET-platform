@@ -37,14 +37,19 @@ async function settleRound(tenantId: string, roundId: string, crashPoint: number
 
 async function readGameStatusAndRtp(
   tenantId: string
-): Promise<{ status: 'Active' | 'Disabled'; rtp: number } | null> {
+): Promise<{ status: 'Active' | 'Disabled'; rtp: number; maxWin: number } | null> {
   return withTenantClient({ tenantId, bypassRls: true }, async (client) => {
-    const g = await client.query<{ status: string; default_rtp: string }>(
-      `SELECT status, default_rtp::text FROM internal_games WHERE id = 'jetx'`
+    const g = await client.query<{
+      status: string;
+      default_rtp: string;
+      max_win: string;
+    }>(
+      `SELECT status, default_rtp::text, max_win::text FROM internal_games WHERE id = 'jetx'`
     );
     if (!g.rows[0]) return null;
+    const maxWin = Number(g.rows[0].max_win);
     if (g.rows[0].status === 'Disabled') {
-      return { status: 'Disabled', rtp: Number(g.rows[0].default_rtp) };
+      return { status: 'Disabled', rtp: Number(g.rows[0].default_rtp), maxWin };
     }
     const slug = await client.query<{ slug: string | null }>(
       `SELECT slug FROM tenants WHERE id = $1`,
@@ -59,8 +64,14 @@ async function readGameStatusAndRtp(
       );
       if (o.rows[0]) rtp = Number(o.rows[0].rtp);
     }
-    return { status: 'Active', rtp };
+    return { status: 'Active', rtp, maxWin };
   });
+}
+
+/** Cap an auto-cashout payout at the admin-configured max-win ceiling. */
+function capWin(payout: number, maxWin: number | undefined): number {
+  if (!maxWin || !Number.isFinite(maxWin) || maxWin <= 0) return payout;
+  return Math.min(payout, maxWin);
 }
 
 async function rotateRound(tenantId: string) {
@@ -170,7 +181,9 @@ async function tickTenant(tenantId: string) {
     );
 
     for (const bet of autoQ.rows) {
-      const payout = Number((Number(bet.amount) * Number(bet.auto_cashout)).toFixed(2));
+      const payout = Number(
+        capWin(Number(bet.amount) * Number(bet.auto_cashout), gameInfo?.maxWin).toFixed(2)
+      );
       await client.query(
         `UPDATE game_bets
             SET status = 'cashed_out',

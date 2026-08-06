@@ -99,6 +99,30 @@ const walletQuery = dateRange.extend({
 });
 
 /**
+ * Admin Deposit Report query — a dedicated view over the wallet ledger that
+ * surfaces ONLY manual admin-to-user credits (the "deposit funds into an
+ * online user's account" action). Those rows are written by
+ * `POST /api/admin/wallets/:id/credit` as `type = 'adjustment'` with
+ * `metadata.admin_action = 'credit'`, `metadata.actor_id = <admin id>` and
+ * `metadata.reason = <remark>`.
+ */
+const adminDepositQuery = dateRange.extend({
+  /** Filter to a single depositing administrator (metadata.actor_id). */
+  admin_id: z.string().trim().min(1).max(64).optional(),
+  /** Filter to a single recipient user. */
+  user_id: z.string().uuid().optional(),
+  /** Free-text search over recipient phone/email, deposit id or reference. */
+  search: z.string().trim().min(1).max(120).optional(),
+  phone: z.string().trim().min(1).max(64).optional(),
+  min_amount: z.coerce.number().nonnegative().optional(),
+  max_amount: z.coerce.number().nonnegative().optional(),
+  sort: z.enum(['date', 'amount', 'admin']).default('date'),
+  dir: z.enum(['asc', 'desc']).default('desc'),
+  limit: z.coerce.number().int().positive().max(500).default(50),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+/**
  * Set of `transactions.type` values that the Wallet page surfaces. The
  * spec calls these "internal wallet movements": bonus credit/debit, admin
  * adjustments, referral / commission payouts and wagering rollovers, plus
@@ -559,6 +583,160 @@ async function listWalletTransactions(
   );
 }
 
+/**
+ * Admin Deposit Report — every manual credit an administrator made to a
+ * user's wallet. Read-only, tenant-scoped, with server-side filtering,
+ * sorting, pagination, a range total, and the distinct list of depositing
+ * admins (for the filter dropdown).
+ */
+async function listAdminDeposits(
+  req: Request,
+  query: z.infer<typeof adminDepositQuery>
+) {
+  const scope = getAdminScope(req);
+  return withTenantClient(
+    { tenantId: scope.tenantId, bypassRls: scope.bypassRls, readOnly: true },
+    async (client) => {
+      // Only manual admin-to-user credits — never debits or automated ledger
+      // movements. The wallets/credit endpoint stamps admin_action='credit'.
+      const filters: string[] = [
+        `t.type = 'adjustment'`,
+        `t.metadata->>'admin_action' = 'credit'`,
+      ];
+      const values: unknown[] = [];
+      let i = 1;
+
+      if (scope.tenantId) {
+        filters.push(`t.tenant_id = $${i++}`);
+        values.push(scope.tenantId);
+      }
+      if (query.admin_id) {
+        filters.push(`t.metadata->>'actor_id' = $${i++}`);
+        values.push(query.admin_id);
+      }
+      if (query.user_id) {
+        filters.push(`t.user_id = $${i++}`);
+        values.push(query.user_id);
+      }
+      if (query.phone) {
+        filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
+        values.push(`%${query.phone}%`);
+        i++;
+      }
+      if (query.search) {
+        filters.push(
+          `(t.id::text ILIKE $${i} OR t.reference ILIKE $${i} OR u.phone ILIKE $${i} OR u.email ILIKE $${i})`
+        );
+        values.push(`%${query.search}%`);
+        i++;
+      }
+      if (query.min_amount !== undefined) {
+        filters.push(`ABS(t.amount) >= $${i++}`);
+        values.push(query.min_amount);
+      }
+      if (query.max_amount !== undefined) {
+        filters.push(`ABS(t.amount) <= $${i++}`);
+        values.push(query.max_amount);
+      }
+      if (query.from) {
+        filters.push(`t.created_at >= $${i++}`);
+        values.push(query.from);
+      }
+      if (query.to) {
+        filters.push(`t.created_at <= $${i++}`);
+        values.push(query.to);
+      }
+      const where = `WHERE ${filters.join(' AND ')}`;
+
+      // Whitelist the sort column so the query stays injection-safe.
+      const ADMIN_NAME_EXPR =
+        `COALESCE(a.metadata->>'full_name', a.metadata->>'name', a.email, a.phone)`;
+      const sortExpr =
+        query.sort === 'amount'
+          ? 'ABS(t.amount)'
+          : query.sort === 'admin'
+          ? ADMIN_NAME_EXPR
+          : 't.created_at';
+      const sortDir = query.dir === 'asc' ? 'ASC' : 'DESC';
+
+      const totalRes = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM transactions t
+           LEFT JOIN users u ON u.id = t.user_id
+           ${where}`,
+        values
+      );
+
+      const summaryRes = await client.query<{
+        total_amount: string;
+        count: string;
+      }>(
+        `SELECT COALESCE(SUM(ABS(t.amount)), 0)::text AS total_amount,
+                COUNT(*)::text                        AS count
+           FROM transactions t
+           LEFT JOIN users u ON u.id = t.user_id
+           ${where}`,
+        values
+      );
+
+      const itemsRes = await client.query(
+        `SELECT t.id, t.tenant_id, t.user_id, t.wallet_id,
+                ABS(t.amount)::numeric        AS amount,
+                t.before_balance::numeric     AS before_balance,
+                t.after_balance::numeric      AS after_balance,
+                t.currency, t.reference, t.status, t.created_at,
+                t.metadata->>'reason'         AS remark,
+                t.metadata->>'bucket'         AS bucket,
+                t.metadata->>'actor_id'       AS admin_id,
+                t.metadata->>'actor_role'     AS admin_role,
+                u.email                       AS user_email,
+                u.phone                       AS user_phone,
+                COALESCE(u.metadata->>'full_name', u.metadata->>'name', u.email, u.phone) AS user_name,
+                COALESCE(${ADMIN_NAME_EXPR}, a.email, a.phone, t.metadata->>'actor_id')   AS admin_name,
+                a.email                       AS admin_email
+           FROM transactions t
+           LEFT JOIN users u ON u.id = t.user_id
+           LEFT JOIN users a ON a.id::text = t.metadata->>'actor_id'
+           ${where}
+           ORDER BY ${sortExpr} ${sortDir}, t.created_at DESC
+           LIMIT $${i++} OFFSET $${i++}`,
+        [...values, query.limit, query.offset]
+      );
+
+      // Distinct depositing admins for the filter dropdown (tenant-scoped,
+      // all-time — not affected by the current page/date filters).
+      const adminFilters: string[] = [
+        `t.type = 'adjustment'`,
+        `t.metadata->>'admin_action' = 'credit'`,
+        `t.metadata->>'actor_id' IS NOT NULL`,
+      ];
+      const adminValues: unknown[] = [];
+      if (scope.tenantId) {
+        adminFilters.push(`t.tenant_id = $1`);
+        adminValues.push(scope.tenantId);
+      }
+      const adminsRes = await client.query<{ id: string; name: string }>(
+        `SELECT DISTINCT t.metadata->>'actor_id' AS id,
+                COALESCE(${ADMIN_NAME_EXPR}, a.email, a.phone, t.metadata->>'actor_id') AS name
+           FROM transactions t
+           LEFT JOIN users a ON a.id::text = t.metadata->>'actor_id'
+           WHERE ${adminFilters.join(' AND ')}
+           ORDER BY name ASC`,
+        adminValues
+      );
+
+      return {
+        items: itemsRes.rows,
+        total: Number(totalRes.rows[0]?.count ?? 0),
+        limit: query.limit,
+        offset: query.offset,
+        summary: summaryRes.rows[0] ?? { total_amount: '0', count: '0' },
+        admins: adminsRes.rows,
+      };
+    }
+  );
+}
+
 /* ========================================================================== */
 /* Routes                                                                     */
 /* ========================================================================== */
@@ -603,6 +781,16 @@ router.get(
       `Unknown transactions type "${t}" — expected one of: online, branch, wallet.`
     );
   })
+);
+
+/**
+ * Admin Deposit Report — GET /api/admin/transactions/admin-deposits
+ * Lists every manual admin-to-user wallet credit. Fixed sub-path, so it
+ * never collides with the `?type=` dispatcher on `/`.
+ */
+router.get(
+  '/admin-deposits',
+  wrap((req) => listAdminDeposits(req, adminDepositQuery.parse(req.query)))
 );
 
 /* Legacy aliases kept for backwards compatibility with older bundles. */

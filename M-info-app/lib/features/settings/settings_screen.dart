@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/app_config.dart';
-import '../../core/storage/secure_store.dart';
 import '../../data/api_client.dart';
 import '../../services/native_control.dart';
 import '../../services/permissions_service.dart';
@@ -17,24 +16,18 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  final _backendUrlCtrl = TextEditingController();
   final _oldPasswordCtrl = TextEditingController();
   final _newPasswordCtrl = TextEditingController();
   final _confirmNewPasswordCtrl = TextEditingController();
 
-  bool _savingUrl = false;
-  bool _testing = false;
   bool _updatingPassword = false;
   bool _ussdA11yEnabled = false;
   bool _overlayEnabled = false;
-  String? _testMsg;
   String? _passwordMsg;
 
   @override
   void initState() {
     super.initState();
-    final cfg = ref.read(appConfigProvider).valueOrNull;
-    if (cfg != null) _backendUrlCtrl.text = cfg.backendUrl;
     _refreshA11yStatus();
   }
 
@@ -50,50 +43,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   void dispose() {
-    _backendUrlCtrl.dispose();
     _oldPasswordCtrl.dispose();
     _newPasswordCtrl.dispose();
     _confirmNewPasswordCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _saveBackendUrl() async {
-    setState(() => _savingUrl = true);
-    try {
-      await ref
-          .read(appConfigProvider.notifier)
-          .setBackendUrl(_backendUrlCtrl.text.trim());
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Backend URL saved')),
-      );
-    } finally {
-      if (mounted) setState(() => _savingUrl = false);
-    }
-  }
-
-  Future<void> _testConnection() async {
-    setState(() {
-      _testing = true;
-      _testMsg = null;
-    });
-    try {
-      final url = _backendUrlCtrl.text.trim();
-      final api = AgentApi(
-        baseUrl: url,
-        secureStore: ref.read(secureStoreProvider),
-      );
-      await api.status();
-      if (!mounted) return;
-      setState(() => _testMsg = 'Connection successful');
-    } catch (err) {
-      if (!mounted) return;
-      setState(() {
-        _testMsg = err is ApiException ? err.message : err.toString();
-      });
-    } finally {
-      if (mounted) setState(() => _testing = false);
-    }
   }
 
   Future<void> _changePassword() async {
@@ -143,72 +96,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back to Home',
+          onPressed: () => context.go('/home'),
+        ),
         title: const Text('Settings'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Backend Configuration',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _backendUrlCtrl,
-                    keyboardType: TextInputType.url,
-                    decoration: const InputDecoration(
-                      labelText: 'Backend URL',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      FilledButton.tonal(
-                        onPressed: _savingUrl ? null : _saveBackendUrl,
-                        child: _savingUrl
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Save URL'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonal(
-                        onPressed: _testing ? null : _testConnection,
-                        child: _testing
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Test Connection'),
-                      ),
-                    ],
-                  ),
-                  if (_testMsg != null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _testMsg!,
-                      style: TextStyle(
-                        color: _testMsg == 'Connection successful'
-                            ? Colors.green
-                            : Colors.red,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
           Card(
             child: SwitchListTile(
               value: cfg?.autostart ?? false,

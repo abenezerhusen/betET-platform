@@ -3,13 +3,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'env.dart';
 
-/// Operator-mutable runtime configuration. Persisted in SharedPreferences
-/// so the user can change the backend URL once on first run and never
-/// again. Anything here MUST tolerate being missing (caller falls back
-/// to [Env] defaults).
+/// Operator-mutable runtime configuration. Persisted in SharedPreferences.
+///
+/// NOTE: the backend URL is NOT operator-mutable — it is baked into the build
+/// ([Env.defaultBackendUrl], the production API) and is never read from or
+/// written to storage. Only [autostart] is persisted here.
 class AppConfig {
   AppConfig({required this.backendUrl, required this.autostart});
 
+  /// Always the compile-time production API URL. Kept as a field so existing
+  /// consumers (api client, sms service) read it unchanged.
   final String backendUrl;
 
   /// When true the boot receiver will start PayService on device boot.
@@ -17,27 +20,26 @@ class AppConfig {
   /// background service before the operator logs in.
   final bool autostart;
 
-  AppConfig copyWith({String? backendUrl, bool? autostart}) {
+  AppConfig copyWith({bool? autostart}) {
     return AppConfig(
-      backendUrl: backendUrl ?? this.backendUrl,
+      backendUrl: backendUrl,
       autostart: autostart ?? this.autostart,
     );
   }
 
-  static const _kBackendUrl = 'cfg.backend_url';
   static const _kAutostart = 'cfg.autostart';
 
   static Future<AppConfig> load() async {
     final prefs = await SharedPreferences.getInstance();
     return AppConfig(
-      backendUrl: prefs.getString(_kBackendUrl) ?? Env.defaultBackendUrl,
+      // Production backend, fixed at build time — never user-editable.
+      backendUrl: Env.defaultBackendUrl,
       autostart: prefs.getBool(_kAutostart) ?? false,
     );
   }
 
   Future<void> save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kBackendUrl, backendUrl);
     await prefs.setBool(_kAutostart, autostart);
   }
 }
@@ -49,30 +51,12 @@ class AppConfigNotifier extends AsyncNotifier<AppConfig> {
   @override
   Future<AppConfig> build() => AppConfig.load();
 
-  Future<void> setBackendUrl(String url) async {
-    final next = (state.value ?? await AppConfig.load()).copyWith(
-      backendUrl: _normalise(url),
-    );
-    await next.save();
-    state = AsyncData(next);
-  }
-
   Future<void> setAutostart(bool enabled) async {
     final next = (state.value ?? await AppConfig.load()).copyWith(
       autostart: enabled,
     );
     await next.save();
     state = AsyncData(next);
-  }
-
-  /// Strips trailing slashes so the Dio baseUrl never produces "//api"
-  /// when the user typed "http://host/" in Settings.
-  static String _normalise(String url) {
-    var u = url.trim();
-    while (u.endsWith('/')) {
-      u = u.substring(0, u.length - 1);
-    }
-    return u;
   }
 }
 
