@@ -29,9 +29,7 @@ const passwordChangeSchema = z
     currentPassword: z.string().min(1, "Current password is required"),
     newPassword: z
       .string()
-      .min(8, "New password must be at least 8 characters")
-      .regex(/[A-Z]/, "New password must contain uppercase letter")
-      .regex(/[0-9]/, "New password must contain a number"),
+      .min(6, "New password must be at least 6 characters"),
     confirmPassword: z.string().min(1, "Confirm password is required"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {

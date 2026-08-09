@@ -106,7 +106,7 @@ function iconForNavLabel(label: string) {
 
 const loginSchema = z.object({
   phone: z.string().trim().min(8, "Phone number is required"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
 const registerSchema = z
@@ -115,9 +115,7 @@ const registerSchema = z
     phone: z.string().trim().regex(/^\d{8,}$/, "Enter a valid phone number"),
     password: z
       .string()
-      .min(8, "At least 8 characters")
-      .regex(/[A-Z]/, "Must contain uppercase letter")
-      .regex(/[0-9]/, "Must contain a number"),
+      .min(6, "Password must be at least 6 characters"),
     confirmPassword: z.string().min(1, "Confirm password is required"),
     referralCode: z.string().trim().max(40, "Referral code too long").optional(),
   })
@@ -534,8 +532,8 @@ export function Header() {
   const handleForgotReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError("");
-    if (forgotNewPassword.length < 8) {
-      setForgotError("New password must be at least 8 characters.");
+    if (forgotNewPassword.length < 6) {
+      setForgotError("New password must be at least 6 characters.");
       return;
     }
     if (forgotNewPassword !== forgotConfirmPassword) {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import {
   ensureGameToken,
   fetchPlayerMe,
@@ -8,6 +8,7 @@ import {
   onWalletUpdated,
   listenEmbeddedWalletInit,
   spinSlots,
+  fetchGameLimits,
   type SlotsSpinResponse,
 } from "@/lib/game-engine"
 import { goBackToParent } from "@/lib/embed-nav"
@@ -139,6 +140,32 @@ const PAYLINES = [
   [2, 1, 0],
 ]
 
+// Per-line bet ladder. TOTAL bet = perLine × PAYLINES.length (5). Shared by the
+// bet-step selector and the min/max clamp so the chosen per-line value always
+// exists in the (filtered) ladder.
+const MH5_BET_STEPS = [
+  0.01, 0.02, 0.03, 0.04, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1.0,
+  1.5, 2.0, 3.0, 4.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0,
+]
+
+/**
+ * Given the admin min/max TOTAL-bet limits, return the per-line ladder filtered
+ * to stakes within range (never empty). Used for both the default clamp and the
+ * scroll options so the two always agree.
+ */
+function mh5FilteredSteps(minBet: number, maxBet: number): number[] {
+  const lines = PAYLINES.length
+  const filtered = MH5_BET_STEPS.filter((perLine) => {
+    const total = perLine * lines
+    if (minBet > 0 && total < minBet) return false
+    if (maxBet > 0 && total > maxBet) return false
+    return true
+  })
+  if (filtered.length > 0) return filtered
+  const fallbackPerLine = minBet > 0 ? Number((minBet / lines).toFixed(2)) : MH5_BET_STEPS[0]
+  return [fallbackPerLine]
+}
+
 // Symbol component using clear/blur images with vertical spinning animation
 function SlotSymbol({ symbolId, isWinning, isSpinning }: { symbolId: string, isWinning: boolean, isSpinning: boolean }) {
   const images = SYMBOL_IMAGES[symbolId as keyof typeof SYMBOL_IMAGES]
@@ -218,6 +245,41 @@ export default function MultiHot5Page() {
 
   const [betAmount, setBetAmount] = useState(0.25)
   const [betPerLine, setBetPerLine] = useState(0.05)
+  // Admin-configured per-game bet limits (TOTAL bet). 0 = "not loaded yet /
+  // no limit"; the backend still enforces these authoritatively on every spin.
+  const [minBet, setMinBet] = useState(0)
+  const [maxBet, setMaxBet] = useState(0)
+
+  // Pull the admin-configured Minimum/Maximum bet for Multi Hot 5 and make the
+  // game respect it: the default bet is raised to the configured minimum and
+  // the selectable bet steps are clamped so a player can never pick a stake
+  // below the minimum (or above the maximum).
+  useEffect(() => {
+    let cancelled = false
+    fetchGameLimits("multi-hot-5")
+      .then((limits) => {
+        if (cancelled || !limits) return
+        const min = Number(limits.min_bet) || 0
+        const max = Number(limits.max_bet) || 0
+        setMinBet(min)
+        setMaxBet(max)
+        // Snap the current per-line stake into the allowed ladder so the
+        // default total bet respects the configured minimum (and maximum).
+        const steps = mh5FilteredSteps(min, max)
+        setBetPerLine((prevPerLine) => {
+          const prevTotal = prevPerLine * PAYLINES.length
+          const belowMin = min > 0 && prevTotal < min
+          const aboveMax = max > 0 && prevTotal > max
+          if (!belowMin && !aboveMax) return prevPerLine
+          // Below min → smallest allowed step; above max → largest allowed step.
+          const newPerLine = belowMin ? steps[0] : steps[steps.length - 1]
+          setBetAmount(Number((newPerLine * PAYLINES.length).toFixed(2)))
+          return newPerLine
+        })
+      })
+      .catch(() => { /* keep built-in defaults on failure */ })
+    return () => { cancelled = true }
+  }, [])
   const [showBetScroll, setShowBetScroll] = useState(false)
   const [showMenuPopup, setShowMenuPopup] = useState(false)
   const [menuActiveTab, setMenuActiveTab] = useState<'rules' | 'settings' | 'history'>('rules')
@@ -830,8 +892,10 @@ export default function MultiHot5Page() {
     }
   }, [autoplayActive, isSpinning, autoplayRemaining, lastWin, autoplayWinLimit, autoplayLoseLimit, stopOnBigWin, balance, betAmount, stopAutoplay, notifyBalance])
 
-  // Bet amounts array for scrolling (min 0.05, max 400 total bet = 80 per line)
-  const betSteps = [0.01, 0.02, 0.03, 0.04, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.75, 1.00, 1.50, 2.00, 3.00, 4.00, 5.00, 7.50, 10.00, 15.00, 20.00, 30.00, 40.00, 50.00, 60.00, 80.00]
+  // Per-line bet steps (TOTAL bet = perLine × 5 paylines), clamped to the
+  // admin-configured Minimum/Maximum bet so the scroll only ever offers stakes
+  // within the allowed range.
+  const betSteps = useMemo(() => mh5FilteredSteps(minBet, maxBet), [minBet, maxBet])
   
   const adjustBet = (delta: number) => {
     const currentIndex = betSteps.findIndex(b => b === betPerLine)

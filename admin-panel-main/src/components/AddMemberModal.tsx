@@ -21,9 +21,7 @@ const addMemberSchema = z
     address: z.string().trim().min(3, 'Address is required'),
     password: z
       .string()
-      .min(8, 'Password must be at least 8 characters')
-      .regex(/[A-Z]/, 'Password must contain uppercase')
-      .regex(/[0-9]/, 'Password must contain number'),
+      .min(6, 'Password must be at least 6 characters'),
     confirmPassword: z.string(),
   })
   .refine((d) => d.password === d.confirmPassword, {

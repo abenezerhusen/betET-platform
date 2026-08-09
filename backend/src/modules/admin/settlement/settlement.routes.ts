@@ -39,7 +39,25 @@ import {
   handleEventPostponed,
   handleEventCancelled,
   expirePostponedSelections,
+  isTerminalBetStatus,
 } from './settlement.service';
+
+/**
+ * Shared duplicate-settlement guard for the money-moving manual overrides
+ * (force-win / force-lose / void-ticket / refund-stake). Refuses to act on a
+ * ticket that has already reached a terminal, paid state so an admin can never
+ * accidentally credit/refund the same ticket twice. To deliberately correct a
+ * settled ticket, the admin reopens it first (POST /tickets/:id/reopen), which
+ * resets status to 'pending'.
+ */
+function assertNotAlreadySettled(status: string): void {
+  if (isTerminalBetStatus(status)) {
+    throw new BadRequestError(
+      `Ticket is already settled (${status}). Reopen it first to apply a manual outcome.`,
+      { reason: 'already_settled', status }
+    );
+  }
+}
 
 const router = Router();
 
@@ -170,6 +188,7 @@ router.post('/tickets/:id/void-ticket', async (req: Request, res: Response, next
       );
       const bet = betRow.rows[0];
       if (!bet) throw new NotFoundError('Ticket not found');
+      assertNotAlreadySettled(bet.status);
 
       const oldStatus = bet.settlement_status ?? bet.status;
 
@@ -311,6 +330,7 @@ router.post('/tickets/:id/force-win', async (req: Request, res: Response, next: 
       );
       const bet = betRow.rows[0];
       if (!bet) throw new NotFoundError('Ticket not found');
+      assertNotAlreadySettled(bet.status);
 
       await client.query(
         `UPDATE sportsbook_bets
@@ -373,6 +393,7 @@ router.post('/tickets/:id/force-lose', async (req: Request, res: Response, next:
       );
       const bet = betRow.rows[0];
       if (!bet) throw new NotFoundError('Ticket not found');
+      assertNotAlreadySettled(bet.status);
 
       await client.query(
         `UPDATE sportsbook_bets
@@ -428,6 +449,7 @@ router.post('/tickets/:id/refund-stake', async (req: Request, res: Response, nex
       );
       const bet = betRow.rows[0];
       if (!bet) throw new NotFoundError('Ticket not found');
+      assertNotAlreadySettled(bet.status);
 
       await client.query(
         `UPDATE sportsbook_bets

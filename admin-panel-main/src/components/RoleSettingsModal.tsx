@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Shield, Plus, Trash2 } from 'lucide-react';
 import {
   getPermissionsForScope,
@@ -56,6 +56,23 @@ export function RoleSettingsModal({
     () => (scope ? getPermissionsForScope(scope, custom) : []),
     [scope, custom]
   );
+
+  // Re-seed the working selection every time the modal is opened so it always
+  // reflects the *currently selected* user's saved permissions. The modal
+  // instance is reused across users (the parent keeps it mounted and only
+  // toggles `isOpen`), and `useState(currentPermissions)` seeds only on the
+  // first mount — without this, editing/assigning/removing a role for a user
+  // showed stale (or empty) selections and could overwrite real permissions
+  // on save. Keyed on `isOpen` only (not `currentPermissions`) so background
+  // list refreshes while the modal is open never discard in-progress edits.
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedPermissions(currentPermissions);
+      setSearchTerm('');
+      setShowAddCustom(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

@@ -17,9 +17,7 @@ const passwordChangeSchema = z
   .object({
     password: z
       .string()
-      .min(8, 'Password must be at least 8 characters long')
-      .regex(/[A-Z]/, 'Password must contain uppercase letter')
-      .regex(/[0-9]/, 'Password must contain number'),
+      .min(6, 'Password must be at least 6 characters'),
     confirmPassword: z.string().min(1, 'Confirm password is required'),
   })
   .refine((d) => d.password === d.confirmPassword, {

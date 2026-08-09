@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken } from '../../middleware/authenticate';
 import { requireRole } from '../../middleware/require-role';
+import { enforceAdminPermission } from '../../middleware/enforce-admin-permission';
 import tenantsRouter from './tenants/tenants.routes';
 import usersRouter from './users/users.routes';
 import rolesRouter from './roles/roles.routes';
@@ -65,9 +66,17 @@ swagger.registerPath({
   responses: { '404': { description: 'Mountpoint only (no direct handler)' } },
 });
 
-// All admin routes require an authenticated superadmin or tenant_admin.
+// All admin routes require an authenticated admin-tier account. `superadmin`
+// and `tenant_admin` are full administrators (wildcard permissions); `admin`
+// accounts are the restricted Administrators created from the panel and are
+// gated per-permission by `enforceAdminPermission()` below.
 router.use(authenticateToken());
-router.use(requireRole('superadmin', 'tenant_admin'));
+router.use(requireRole('superadmin', 'tenant_admin', 'admin'));
+// Backend permission enforcement — wildcard holders (superadmin / full
+// tenant_admin) bypass; restricted `admin` accounts are checked against the
+// permission catalog so the API can never be reached beyond what the assigned
+// role allows, even by manipulating requests or URLs.
+router.use(enforceAdminPermission());
 
 // /api/admin/dashboard — unified Section-2 KPIs (read-only)
 router.use('/dashboard', dashboardRouter);

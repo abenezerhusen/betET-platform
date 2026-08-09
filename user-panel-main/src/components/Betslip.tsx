@@ -493,6 +493,19 @@ export function Betslip({ onClose }: BetslipProps = {}) {
     setPendingBetMode(null);
   };
   const [stake, setStake] = useState(20);
+  // Text mirror of the numeric stake so the field can be cleared and freely
+  // typed on a keyboard (the old number input coerced an empty value to 0 and
+  // fought the user). `stake` stays the numeric source of truth for all
+  // calculations; `stakeText` is only what the input renders while editing.
+  const [stakeText, setStakeText] = useState("20");
+
+  // Set both the numeric stake and its text mirror at once. Used by the +/-
+  // steppers and the quick-add chips so the input reflects their changes.
+  const applyStake = (n: number) => {
+    const v = Math.max(0, Number.isFinite(n) ? n : 0);
+    setStake(v);
+    setStakeText(String(v));
+  };
   // Defaults to false so that on phones/tablets the "Show more detail"
   // section is collapsed from the very first paint (arrow pointing down).
   // The effect below flips it open only on xl+ desktops, preserving the
@@ -527,8 +540,8 @@ export function Betslip({ onClose }: BetslipProps = {}) {
   const netPayout = potentialWin - incomeTax;
   const currentBonus = accumulatorBonus;
 
-  const incrementStake = () => setStake(prev => prev + 10);
-  const decrementStake = () => setStake(prev => Math.max(10, prev - 10));
+  const incrementStake = () => applyStake(stake + 10);
+  const decrementStake = () => applyStake(Math.max(10, stake - 10));
 
   // Mobile/tablet default is collapsed (see `useState(false)` above).
   // On xl+ desktops the original design shows the bonus/tax breakdown
@@ -762,9 +775,34 @@ export function Betslip({ onClose }: BetslipProps = {}) {
               <label className="text-sm font-semibold text-white mb-2 block">Stake</label>
               <div className="relative">
                 <input
-                  type="number"
-                  value={stake}
-                  onChange={(e) => setStake(Number(e.target.value) || 0)}
+                  type="text"
+                  inputMode="decimal"
+                  value={stakeText}
+                  onChange={(e) => {
+                    // Allow an empty field and free typing (digits + one
+                    // decimal point). Ignore any other characters so the
+                    // caret never jumps.
+                    const raw = e.target.value;
+                    if (raw === "") {
+                      setStakeText("");
+                      return;
+                    }
+                    if (!/^\d*\.?\d*$/.test(raw)) return;
+                    setStakeText(raw);
+                    const n = Number(raw);
+                    if (Number.isFinite(n)) setStake(n);
+                  }}
+                  onBlur={() => {
+                    // On leaving the field, normalise: empty / invalid / below
+                    // the 10 ETB minimum snaps up to 10 so the summary and the
+                    // placement validation stay consistent.
+                    const n = Number(stakeText);
+                    if (!stakeText || !Number.isFinite(n) || n < 10) {
+                      applyStake(10);
+                    } else {
+                      applyStake(n);
+                    }
+                  }}
                   className="w-full px-3 py-3 rounded bg-[#2a2a4a] border border-gray-700 text-white text-lg font-semibold outline-none focus:border-purple-500 transition-colors"
                 />
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
@@ -792,7 +830,7 @@ export function Betslip({ onClose }: BetslipProps = {}) {
                 {[10, 20, 30, 50, 100, 1000].map((amount) => (
                   <button
                     key={amount}
-                    onClick={() => setStake(prev => prev + amount)}
+                    onClick={() => applyStake(stake + amount)}
                     className="py-2 px-1 rounded text-[10px] font-bold transition-all hover:opacity-80"
                     style={{
                       background: "linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)",

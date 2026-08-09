@@ -120,6 +120,22 @@ export interface AuditEntry {
 }
 
 /* ------------------------------------------------------------------ */
+/* Terminal-state guard (duplicate-settlement protection)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A sportsbook bet's main `status` column moves to one of these values once it
+ * has been settled (and `settled_at` is stamped). While a ticket is still open
+ * — even if some legs are voided — `status` stays `pending`. So this is the
+ * authoritative "already settled, do not pay again" check.
+ */
+const TERMINAL_BET_STATUSES = new Set(['won', 'lost', 'void', 'cashout']);
+
+export function isTerminalBetStatus(status: string | null | undefined): boolean {
+  return status != null && TERMINAL_BET_STATUSES.has(status);
+}
+
+/* ------------------------------------------------------------------ */
 /* Audit helper                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -348,6 +364,21 @@ export async function settleBetFromLegs(
   );
   const bet = betRow.rows[0];
   if (!bet) throw new Error(`Bet ${params.betId} not found`);
+
+  // Duplicate-settlement guard. A settled ticket has its main `status` moved
+  // to a terminal value (won/lost/void/cashout) and `settled_at` stamped. If
+  // we reach here on such a ticket (double-click, auto-loop + manual overlap,
+  // retry), do NOT re-credit the wallet — return the existing outcome as an
+  // idempotent no-op. NOTE: a still-open ticket with some voided legs keeps
+  // status='pending' (only settlement_status becomes 'partially_voided'), so
+  // this never blocks a legitimate first settlement. Corrections go through
+  // the explicit reopen → resettle flow, which resets status to 'pending'.
+  if (isTerminalBetStatus(bet.status)) {
+    return {
+      status: bet.settlement_status ?? bet.status,
+      credit: 0,
+    };
+  }
 
   const stake = Number(bet.stake);
   const currency = bet.currency;

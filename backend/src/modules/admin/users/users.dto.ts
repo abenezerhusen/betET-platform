@@ -95,7 +95,7 @@ export const createUserSchema = z
   .object({
     email: z.string().trim().toLowerCase().email().optional(),
     phone: z.string().trim().min(3).max(32).optional(),
-    password: z.string().min(8).max(128).optional(),
+    password: z.string().min(6, 'Password must be at least 6 characters').max(128).optional(),
     role: z.enum(ROLE_VALUES).default('user'),
     kyc_status: z.enum(KYC_VALUES).optional(),
     status: z.enum(STATUS_VALUES).optional(),
@@ -167,8 +167,8 @@ export const userStatusSchema = z.object({
 export const changeUserPasswordSchema = z.object({
   password: z
     .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128, 'Password is too long'),
+      .min(6, 'Password must be at least 6 characters')
+      .max(128, 'Password is too long'),
 });
 
 export const kycRejectSchema = z.object({

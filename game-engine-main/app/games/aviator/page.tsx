@@ -16,6 +16,7 @@ import {
   readBalance,
   onWalletUpdated,
   listenEmbeddedWalletInit,
+  fetchGameLimits,
   type AviatorRoundCrashedEvent,
   type AviatorRoundFlyingEvent,
   type AviatorRoundStartEvent,
@@ -97,6 +98,11 @@ export default function AviatorPage() {
   // round_start event arrives.
   const [betAmount1, setBetAmount1] = useState(4.00)
   const [betAmount2, setBetAmount2] = useState(4.00)
+  // Admin-configured bet limits (shared by both bet panels). Defaults keep the
+  // historical 1..∞ range until the real values load; the backend enforces
+  // them authoritatively on every bet.
+  const [betMin, setBetMin] = useState(1)
+  const [betMax, setBetMax] = useState(0) // 0 = no max configured
   const [balance, setBalance] = useState(0)
   const [multiplier, setMultiplier] = useState(1.00)
   const [gamePhase, setGamePhase] = useState<"waiting" | "flying" | "crashed">("waiting")
@@ -536,6 +542,37 @@ export default function AviatorPage() {
         .catch(() => { /* ignore */ })
     })
   }, [])
+
+  // Load admin-configured Minimum/Maximum bet for Aviator and snap both bet
+  // panels into range (raises each default up to the configured minimum).
+  useEffect(() => {
+    let cancelled = false
+    fetchGameLimits("aviator")
+      .then((limits) => {
+        if (cancelled || !limits) return
+        const min = Number(limits.min_bet) > 0 ? Number(limits.min_bet) : 1
+        const max = Number(limits.max_bet) > 0 ? Number(limits.max_bet) : 0
+        setBetMin(min)
+        setBetMax(max)
+        const clamp = (v: number) => {
+          const lo = Math.max(v, min)
+          return max > 0 ? Math.min(lo, max) : lo
+        }
+        setBetAmount1(prev => clamp(prev))
+        setBetAmount2(prev => clamp(prev))
+      })
+      .catch(() => { /* keep defaults on failure */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // Clamp a bet value into the admin-configured [min, max] range (max=0 → none).
+  const clampBet = useCallback(
+    (v: number) => {
+      const lo = Math.max(v, betMin)
+      return betMax > 0 ? Math.min(lo, betMax) : lo
+    },
+    [betMin, betMax]
+  )
 
   // ── Left-sidebar real data ──────────────────────────────────────────────
   // Live "All Bets" (current round) + "Previous" (last round) feed and the
@@ -1992,7 +2029,7 @@ export default function AviatorPage() {
                       style={{ backgroundColor: '#0e0e0e' }}
                     >
                       <button 
-                        onClick={() => setBetAmount1(Math.max(1, betAmount1 - 1))}
+                        onClick={() => setBetAmount1(clampBet(betAmount1 - 1))}
                         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                         style={{ backgroundColor: '#3a3b3d', color: '#fff' }}
                       >
@@ -2002,7 +2039,7 @@ export default function AviatorPage() {
                         {betAmount1.toFixed(2)}
                       </div>
                       <button 
-                        onClick={() => setBetAmount1(betAmount1 + 1)}
+                        onClick={() => setBetAmount1(clampBet(betAmount1 + 1))}
                         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                         style={{ backgroundColor: '#3a3b3d', color: '#fff' }}
                       >
@@ -2015,7 +2052,7 @@ export default function AviatorPage() {
                       {[16, 40, 80, 400].map(amt => (
                         <button 
                           key={amt}
-                          onClick={() => setBetAmount1(amt)}
+                          onClick={() => setBetAmount1(clampBet(amt))}
                           className="py-2 rounded-full text-xs font-medium"
                           style={{ backgroundColor: '#0e0e0e', color: '#6a6a6a' }}
                         >
@@ -2177,7 +2214,7 @@ export default function AviatorPage() {
                       style={{ backgroundColor: '#0e0e0e' }}
                     >
                       <button 
-                        onClick={() => setBetAmount2(Math.max(1, betAmount2 - 1))}
+                        onClick={() => setBetAmount2(clampBet(betAmount2 - 1))}
                         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                         style={{ backgroundColor: '#3a3b3d', color: '#fff' }}
                       >
@@ -2187,7 +2224,7 @@ export default function AviatorPage() {
                         {betAmount2.toFixed(2)}
                       </div>
                       <button 
-                        onClick={() => setBetAmount2(betAmount2 + 1)}
+                        onClick={() => setBetAmount2(clampBet(betAmount2 + 1))}
                         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
                         style={{ backgroundColor: '#3a3b3d', color: '#fff' }}
                       >
@@ -2200,7 +2237,7 @@ export default function AviatorPage() {
                       {[16, 40, 80, 400].map(amt => (
                         <button 
                           key={amt}
-                          onClick={() => setBetAmount2(amt)}
+                          onClick={() => setBetAmount2(clampBet(amt))}
                           className="py-2 rounded-full text-xs font-medium"
                           style={{ backgroundColor: '#0e0e0e', color: '#6a6a6a' }}
                         >

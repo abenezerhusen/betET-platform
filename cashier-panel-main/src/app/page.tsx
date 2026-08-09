@@ -77,6 +77,7 @@ import {
 import {
   ThermalTicketView,
   buildThermalTicketPrintHtml,
+  buildDashboardReportPrintHtml,
 } from "@/components/ThermalTicketView";
 
 // User-panel base URL for the "Launch Fixtures" sidebar shortcut. The
@@ -1811,15 +1812,73 @@ function DashboardPage({ username }: { username: string }) {
   };
 
   const handlePrint = () => {
-    window.print();
+    // Print a compact 80 mm thermal report (same paper as the ticket slips)
+    // instead of the whole dashboard page. When there is no data yet we fall
+    // back to the browser print so the button never appears dead.
+    if (!stats) {
+      window.print();
+      return;
+    }
+    try {
+      const session = getCashierSession();
+      const branchLabel =
+        session?.branch?.branch_code || session?.branch?.label || "—";
+      const cashierName =
+        session?.login_username ||
+        session?.user?.email ||
+        session?.user?.phone ||
+        username ||
+        "Cashier";
+      const html = buildDashboardReportPrintHtml({
+        stats,
+        cashierName,
+        branchLabel,
+      });
+      const win = window.open("", "_blank", "width=340,height=700");
+      if (!win) {
+        setDashboardError("Popup blocked. Please allow popups and try again.");
+        return;
+      }
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+    } catch (err) {
+      setDashboardError(
+        (err as Error).message || "Failed to prepare the report for printing.",
+      );
+    }
   };
 
   const loadStats = useCallback(async () => {
     try {
       setDashboardError("");
+      // The <input type="date"> values are "YYYY-MM-DD" in the operator's
+      // LOCAL day. Convert them to the full local-day boundaries so the range
+      // is inclusive: start = 00:00:00.000 of the start day, end =
+      // 23:59:59.999 of the end day. The previous code used `new Date(str)`
+      // which is parsed as UTC midnight, so the end day was excluded entirely
+      // (a single-day filter returned an empty window) and the boundaries were
+      // shifted by the timezone offset.
+      const startOfLocalDay = (ymd: string): Date => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+      };
+      const endOfLocalDay = (ymd: string): Date => {
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+      };
+
+      // Guard against an inverted range (start after end) by swapping so the
+      // filter still returns the intended window instead of nothing.
+      let fromStr = startDate;
+      let toStr = endDate;
+      if (fromStr && toStr && fromStr > toStr) {
+        [fromStr, toStr] = [toStr, fromStr];
+      }
+
       const out = await getCashierDashboardStats({
-        from: startDate ? new Date(startDate).toISOString() : undefined,
-        to: endDate ? new Date(endDate).toISOString() : undefined,
+        from: fromStr ? startOfLocalDay(fromStr).toISOString() : undefined,
+        to: toStr ? endOfLocalDay(toStr).toISOString() : undefined,
         mine: showMine,
       });
       setStats(out);
@@ -1828,7 +1887,7 @@ function DashboardPage({ username }: { username: string }) {
         (err as Error).message || "Failed to load dashboard data.",
       );
     }
-  }, [startDate, endDate, showMine]);
+  }, [startDate, endDate, showMine, username]);
 
   const handleFilter = () => {
     void loadStats();
@@ -2199,8 +2258,8 @@ function SettingsPage() {
       setPwMsg("New password and confirm password do not match.");
       return;
     }
-    if (newPassword.length < 8) {
-      setPwMsg("New password must be at least 8 characters long.");
+    if (newPassword.length < 6) {
+      setPwMsg("New password must be at least 6 characters long.");
       return;
     }
     setPwBusy(true);

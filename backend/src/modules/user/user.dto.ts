@@ -53,7 +53,7 @@ export const updateProfileSchema = z
 export const changePasswordSchema = z
   .object({
     current_password: z.string().min(1).max(128),
-    new_password: z.string().min(8).max(128),
+    new_password: z.string().min(6, 'Password must be at least 6 characters').max(128),
   })
   .refine((d) => d.current_password !== d.new_password, {
     message: 'new_password must differ from current_password',

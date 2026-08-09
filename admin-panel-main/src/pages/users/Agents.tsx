@@ -78,7 +78,7 @@ const createAgentSchema = z
     email: z.string().trim().email().optional().or(z.literal('')),
     phone: z.string().trim().min(8).optional().or(z.literal('')),
     agentType: z.enum(['regular', 'pos']),
-    password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
+    password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
     confirmPassword: z.string().optional().or(z.literal('')),
   })
   .refine((d) => Boolean((d.email ?? '').trim()) || Boolean((d.phone ?? '').trim()), {
@@ -430,6 +430,8 @@ export function Agents() {
                 <label className="block text-sm font-medium text-gray-700">Username</label>
                 <input
                   type="text"
+                  name="agent_username_new"
+                  autoComplete="off"
                   value={formState.username}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, username: e.target.value }))
@@ -476,6 +478,8 @@ export function Agents() {
                 <label className="block text-sm font-medium text-gray-700">New Password</label>
                 <input
                   type="password"
+                  name="agent_password_new"
+                  autoComplete="new-password"
                   value={formState.password}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, password: e.target.value }))
@@ -487,6 +491,8 @@ export function Agents() {
                 <label className="block text-sm font-medium text-gray-700">Repeat Password</label>
                 <input
                   type="password"
+                  name="agent_confirm_password_new"
+                  autoComplete="new-password"
                   value={formState.confirmPassword}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, confirmPassword: e.target.value }))

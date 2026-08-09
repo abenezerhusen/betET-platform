@@ -32,12 +32,12 @@ export async function revenueByPeriod(
     `b.placed_at <= $3`,
     `b.status IN ('won','lost','settled','void','cashed_out')`,
   ];
-  const params: unknown[] = [
-    filters.tenantId,
-    filters.from,
-    filters.to,
-    filters.granularity,
-  ];
+  // `baseParams` ($1..$3) drives the summary/aggregate queries; the series
+  // query additionally binds $4 (granularity for date_trunc). Postgres rejects
+  // a bind that supplies more parameters than the statement references, so the
+  // summary query must NOT receive the extra granularity parameter.
+  const baseParams: unknown[] = [filters.tenantId, filters.from, filters.to];
+  const seriesParams: unknown[] = [...baseParams, filters.granularity];
   const tenantClause = `($1::uuid IS NULL OR b.tenant_id = $1::uuid)`;
   where.push(tenantClause);
   const whereSql = `WHERE ${where.join(' AND ')}`;
@@ -52,7 +52,7 @@ export async function revenueByPeriod(
        ${whereSql}
       GROUP BY 1
       ORDER BY 1`,
-    params
+    seriesParams
   );
 
   const summary = await client.query<RevenueSummary>(
@@ -62,7 +62,7 @@ export async function revenueByPeriod(
             COALESCE(SUM(b.stake - COALESCE(b.payout, 0)), 0) AS ggr
        FROM bets b
        ${whereSql}`,
-    params
+    baseParams
   );
 
   return { summary: summary.rows[0], series: series.rows };
@@ -94,12 +94,10 @@ export async function betsAggregates(
   client: PoolClient,
   filters: BaseFilters & { granularity: Granularity }
 ): Promise<{ summary: BetsSummary; series: BetsSeriesRow[] }> {
-  const params: unknown[] = [
-    filters.tenantId,
-    filters.from,
-    filters.to,
-    filters.granularity,
-  ];
+  // See revenueByPeriod: the summary query references $1..$3 only, while the
+  // series query binds $4 (granularity). Keep the parameter arrays separate.
+  const baseParams: unknown[] = [filters.tenantId, filters.from, filters.to];
+  const seriesParams: unknown[] = [...baseParams, filters.granularity];
   const tenantClause = `($1::uuid IS NULL OR b.tenant_id = $1::uuid)`;
   const whereSql = `WHERE b.placed_at >= $2 AND b.placed_at <= $3 AND ${tenantClause}`;
 
@@ -131,7 +129,7 @@ export async function betsAggregates(
                    / SUM(stake)::numeric
             END AS margin
        FROM base`,
-    params
+    baseParams
   );
 
   const series = await client.query<BetsSeriesRow>(
@@ -144,7 +142,7 @@ export async function betsAggregates(
        ${whereSql}
       GROUP BY 1
       ORDER BY 1`,
-    params
+    seriesParams
   );
 
   return { summary: summaryRes.rows[0], series: series.rows };
@@ -171,12 +169,9 @@ export async function userMetrics(
   client: PoolClient,
   filters: BaseFilters & { granularity: Granularity }
 ): Promise<{ summary: UsersSummary; series: UsersSeriesRow[] }> {
-  const params: unknown[] = [
-    filters.tenantId,
-    filters.from,
-    filters.to,
-    filters.granularity,
-  ];
+  // Summary references $1..$3 only; the series query binds $4 (granularity).
+  const baseParams: unknown[] = [filters.tenantId, filters.from, filters.to];
+  const seriesParams: unknown[] = [...baseParams, filters.granularity];
 
   const tenantUsers = `($1::uuid IS NULL OR u.tenant_id = $1::uuid)`;
   const tenantBets = `($1::uuid IS NULL OR b.tenant_id = $1::uuid)`;
@@ -197,7 +192,7 @@ export async function userMetrics(
             (SELECT COUNT(*)::int FROM active) AS active_users,
             (SELECT COUNT(*)::int FROM all_bettors b
               WHERE b.user_id NOT IN (SELECT user_id FROM active)) AS churned_users`,
-    params
+    baseParams
   );
 
   const series = await client.query<UsersSeriesRow>(
@@ -219,9 +214,9 @@ export async function userMetrics(
             COALESCE(np.n, 0)                     AS new_users,
             COALESCE(ap.n, 0)                     AS active_users
        FROM new_per np
-       FULL OUTER JOIN active_per ap ON ap.period = np.period
+      FULL OUTER JOIN active_per ap ON ap.period = np.period
       ORDER BY period`,
-    params
+    seriesParams
   );
 
   return { summary: summary.rows[0], series: series.rows };
@@ -262,12 +257,9 @@ export async function transactionsAggregates(
   byType: TransactionTypeRow[];
   series: TransactionsSeriesRow[];
 }> {
-  const params: unknown[] = [
-    filters.tenantId,
-    filters.from,
-    filters.to,
-    filters.granularity,
-  ];
+  // byType/summary reference $1..$3 only; the series query binds $4.
+  const baseParams: unknown[] = [filters.tenantId, filters.from, filters.to];
+  const seriesParams: unknown[] = [...baseParams, filters.granularity];
   const tenantClause = `($1::uuid IS NULL OR t.tenant_id = $1::uuid)`;
   const whereSql = `WHERE t.created_at >= $2 AND t.created_at <= $3
                        AND t.status = 'completed' AND ${tenantClause}`;
@@ -280,7 +272,7 @@ export async function transactionsAggregates(
        ${whereSql}
       GROUP BY t.type
       ORDER BY t.type`,
-    params
+    baseParams
   );
 
   const summaryRes = await client.query<TransactionsSummary>(
@@ -297,7 +289,7 @@ export async function transactionsAggregates(
             COALESCE(SUM(amount), 0)                                        AS net_flow
        FROM transactions t
        ${whereSql}`,
-    params
+    baseParams
   );
 
   const series = await client.query<TransactionsSeriesRow>(
@@ -310,7 +302,7 @@ export async function transactionsAggregates(
        ${whereSql}
       GROUP BY 1
       ORDER BY 1`,
-    params
+    seriesParams
   );
 
   return {
@@ -510,12 +502,12 @@ export async function offlineCashReport(
   let i = 4;
   let branchClause = '';
   if (filters.branchId) {
-    branchClause = ` AND ctb.branch_id = $${i++}`;
+    branchClause = ` AND branch_id = $${i++}`;
     params.push(filters.branchId);
   }
   let cashierClause = '';
   if (filters.cashierId) {
-    cashierClause = ` AND b.cashier_id = $${i++}`;
+    cashierClause = ` AND cashier_id = $${i++}`;
     params.push(filters.cashierId);
   }
 
@@ -531,44 +523,62 @@ export async function offlineCashReport(
        WHERE u.role = 'branch'
          AND ($1::uuid IS NULL OR u.tenant_id = $1::uuid)
     ),
-    cashier_branch AS (
-      SELECT u.id                                          AS cashier_id,
+    /* Name any user who may have sold a ticket (cashier, sales, or a branch
+       operator selling directly). Also carry their metadata.branch_id so we
+       can still resolve a branch for legacy rows that predate the dedicated
+       sold_branch_id column. */
+    sellers AS (
+      SELECT u.id                                          AS seller_id,
              COALESCE(NULLIF(u.metadata->>'full_name', ''),
                       u.email::text,
                       u.phone,
-                      'Unknown')                          AS cashier_name,
-             u.phone                                       AS cashier_phone,
+                      'Unknown')                          AS seller_name,
+             u.phone                                       AS seller_phone,
              u.metadata->>'branch_id'                      AS branch_link
         FROM users u
-       WHERE u.role IN ('cashier', 'sales')
-         AND ($1::uuid IS NULL OR u.tenant_id = $1::uuid)
+       WHERE ($1::uuid IS NULL OR u.tenant_id = $1::uuid)
     ),
-    cashier_to_branch AS (
-      SELECT cb.cashier_id, cb.cashier_name, cb.cashier_phone,
-             br.branch_id, br.branch_name, br.branch_code
-        FROM cashier_branch cb
-        LEFT JOIN branches br
-          ON br.branch_id::text = cb.branch_link
-          OR (br.branch_code IS NOT NULL AND br.branch_code = cb.branch_link)
-    ),
-    bets_offline AS (
+    bets_base AS (
       SELECT b.id,
-             b.cashier_id,
-             ctb.branch_id,
-             ctb.branch_name,
-             ctb.branch_code,
-             ctb.cashier_name,
-             ctb.cashier_phone,
+             /* Authoritative seller/branch columns first; fall back to the
+                legacy cashier_id for old rows. */
+             COALESCE(b.sold_by_cashier_id, b.cashier_id)  AS cashier_id,
+             b.sold_branch_id                              AS direct_branch_id,
              b.stake,
              COALESCE(b.actual_payout, 0)                  AS payout,
              b.status,
              b.placed_at
         FROM sportsbook_bets b
-        LEFT JOIN cashier_to_branch ctb ON ctb.cashier_id = b.cashier_id
        WHERE b.channel = 'offline'
          AND b.sold_at IS NOT NULL
          AND b.placed_at >= $2 AND b.placed_at <= $3
          AND ($1::uuid IS NULL OR b.tenant_id = $1::uuid)
+    ),
+    bets_resolved AS (
+      SELECT bb.id,
+             bb.cashier_id,
+             bb.stake,
+             bb.payout,
+             bb.status,
+             bb.placed_at,
+             /* Prefer the ticket's own sold_branch_id; only when it is NULL do
+                we fall back to the seller's linked branch. */
+             COALESCE(bb.direct_branch_id, lbr.branch_id)  AS branch_id,
+             COALESCE(dbr.branch_name, lbr.branch_name)    AS branch_name,
+             COALESCE(dbr.branch_code, lbr.branch_code)    AS branch_code,
+             s.seller_name                                 AS cashier_name,
+             s.seller_phone                                AS cashier_phone
+        FROM bets_base bb
+        LEFT JOIN sellers  s   ON s.seller_id = bb.cashier_id
+        LEFT JOIN branches dbr ON dbr.branch_id = bb.direct_branch_id
+        LEFT JOIN branches lbr ON bb.direct_branch_id IS NULL
+                              AND (lbr.branch_id::text = s.branch_link
+                                   OR (lbr.branch_code IS NOT NULL
+                                       AND lbr.branch_code = s.branch_link))
+    ),
+    bets_offline AS (
+      SELECT * FROM bets_resolved
+       WHERE TRUE
          ${branchClause}
          ${cashierClause}
     )
@@ -713,16 +723,6 @@ export async function computePayableRows(
        WHERE u.role IN ('cashier', 'sales')
          AND ($1::uuid IS NULL OR u.tenant_id = $1::uuid)
     ),
-    cashier_to_branch AS (
-      SELECT c.cashier_id, c.cashier_role, c.cashier_name,
-             c.sales_rate,
-             br.branch_id, br.branch_name, br.agent_id AS branch_agent_id,
-             COALESCE(c.agent_id, br.agent_id)        AS resolved_agent_id
-        FROM cashiers c
-        LEFT JOIN branches br
-          ON br.branch_id::text = c.branch_link
-          OR (br.branch_code IS NOT NULL AND br.branch_code = c.branch_link)
-    ),
     agents AS (
       SELECT u.id                                       AS agent_id,
              COALESCE(NULLIF(u.metadata->>'full_name',''),
@@ -734,22 +734,42 @@ export async function computePayableRows(
        WHERE u.role = 'agent'
          AND ($1::uuid IS NULL OR u.tenant_id = $1::uuid)
     ),
-    bets_offline AS (
+    bets_raw AS (
       SELECT b.id,
-             b.cashier_id,
+             /* Authoritative seller/branch columns first; fall back to the
+                legacy cashier_id for old rows. */
+             COALESCE(b.sold_by_cashier_id, b.cashier_id) AS cashier_id,
+             b.sold_branch_id                             AS direct_branch_id,
              b.stake,
-             COALESCE(b.actual_payout, 0)               AS payout,
-             b.placed_at::date                          AS day,
-             ctb.branch_id, ctb.branch_name,
-             ctb.cashier_role, ctb.cashier_name,
-             ctb.sales_rate,
-             ctb.resolved_agent_id                       AS agent_id
+             COALESCE(b.actual_payout, 0)                 AS payout,
+             b.placed_at::date                            AS day
         FROM sportsbook_bets b
-        LEFT JOIN cashier_to_branch ctb ON ctb.cashier_id = b.cashier_id
        WHERE b.channel = 'offline'
          AND b.sold_at IS NOT NULL
          AND b.placed_at >= $2 AND b.placed_at <= $3
          AND ($1::uuid IS NULL OR b.tenant_id = $1::uuid)
+    ),
+    bets_offline AS (
+      SELECT br0.id,
+             br0.cashier_id,
+             br0.stake,
+             br0.payout,
+             br0.day,
+             /* Prefer the ticket's own sold_branch_id; only fall back to the
+                cashier's linked branch when the ticket has no branch stamp. */
+             COALESCE(br0.direct_branch_id, lbr.branch_id)    AS branch_id,
+             COALESCE(dbr.branch_name, lbr.branch_name)       AS branch_name,
+             c.cashier_role,
+             c.cashier_name,
+             c.sales_rate,
+             COALESCE(c.agent_id, dbr.agent_id, lbr.agent_id) AS agent_id
+        FROM bets_raw br0
+        LEFT JOIN cashiers c   ON c.cashier_id = br0.cashier_id
+        LEFT JOIN branches dbr ON dbr.branch_id = br0.direct_branch_id
+        LEFT JOIN branches lbr ON br0.direct_branch_id IS NULL
+                              AND (lbr.branch_id::text = c.branch_link
+                                   OR (lbr.branch_code IS NOT NULL
+                                       AND lbr.branch_code = c.branch_link))
     )
     SELECT * FROM (
       ${

@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 const credentialsSchema = z.object({
   username: z.string().trim().min(3, 'Username is required'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
 const otpSchema = z.string().regex(/^\d{6}$/, 'Enter the 6-digit code');

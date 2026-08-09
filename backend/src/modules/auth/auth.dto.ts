@@ -48,7 +48,7 @@ export const registerSchema = z
     full_name: z.string().trim().min(2).max(120),
     email: z.string().trim().toLowerCase().email().optional(),
     phone: z.string().trim().min(8).max(32).optional(),
-    password: z.string().min(4).max(128),
+    password: z.string().min(6, 'Password must be at least 6 characters').max(128),
     referral_code: z.string().trim().min(2).max(40).optional(),
     // Registration OTP — only enforced by the service when a provider is
     // enabled. Optional here so legacy (both-disabled) registration works.
@@ -88,7 +88,7 @@ export const resetPasswordOtpSchema = z
     email: z.string().trim().toLowerCase().email().optional(),
     phone: z.string().trim().min(3).max(32).optional(),
     code: z.string().trim().min(4).max(12),
-    new_password: z.string().min(8).max(128),
+    new_password: z.string().min(6, 'Password must be at least 6 characters').max(128),
   })
   .refine((d) => Boolean(d.email) || Boolean(d.phone), {
     message: 'Either email or phone is required',
@@ -115,12 +115,12 @@ export const forgotPasswordSchema = z
 
 export const resetPasswordSchema = z.object({
   token: z.string().min(16).max(512),
-  new_password: z.string().min(8).max(128),
+  new_password: z.string().min(6, 'Password must be at least 6 characters').max(128),
 });
 
 export const changePasswordSchema = z.object({
   current_password: z.string().min(1).max(256),
-  new_password: z.string().min(8).max(128),
+  new_password: z.string().min(6, 'Password must be at least 6 characters').max(128),
 });
 
 /**

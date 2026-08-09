@@ -14,16 +14,24 @@ export const initiateDepositSchema = z.object({
   amount: moneySchema,
   /**
    * Real Telebirr transaction reference the user pasted from their own
-   * Telebirr SMS (the `Ref:` value). Optional: when supplied the backend
-   * confirms the deposit by matching it against the agent SMS's parsed ref.
-   * Telebirr refs are short alphanumeric strings; keep it lenient but bounded.
+   * Telebirr SMS (the `transaction number` value). Optional: when supplied the
+   * backend confirms the deposit by matching it against the agent SMS's parsed
+   * ref.
+   *
+   * A live Telebirr transaction number is ALWAYS a 10-character alphanumeric
+   * code (e.g. "DGD2T2M9YQ"). We reject anything else up-front so a mistyped /
+   * wrong reference is flagged immediately as "Invalid Reference Number"
+   * instead of opening a deposit request that can only ever sit in "Waiting".
+   * The value is upper-cased to match the SMS-parsed ref (Strategy 0).
    */
   telebirr_reference: z
     .string()
     .trim()
-    .min(4)
-    .max(64)
-    .regex(/^[A-Za-z0-9-]+$/, 'Invalid Telebirr reference')
+    .transform((s) => s.toUpperCase())
+    .refine((s) => /^[A-Z0-9]{10}$/.test(s), {
+      message:
+        'Invalid Reference Number. The 10-digit Telebirr reference you entered is incorrect — open your Telebirr SMS, check the transaction number carefully, and enter it again.',
+    })
     .optional(),
   /**
    * Payment screenshot as a base64 data URL (image/*) or an http(s) URL.

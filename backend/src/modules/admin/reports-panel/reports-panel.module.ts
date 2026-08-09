@@ -38,7 +38,9 @@ async function offlineCashReport(req: Request, q: z.infer<typeof offlineCashQuer
         values.push(scope.tenantId);
       }
       if (q.cashier_id) {
-        filters.push(`b.cashier_id = $${i++}`);
+        // Match the authoritative seller column (sold_by_cashier_id) and fall
+        // back to the legacy cashier_id for older rows.
+        filters.push(`COALESCE(b.sold_by_cashier_id, b.cashier_id) = $${i++}`);
         values.push(q.cashier_id);
       }
       if (q.from) {
@@ -72,7 +74,7 @@ async function offlineCashReport(req: Request, q: z.infer<typeof offlineCashQuer
       );
 
       const byCashierRes = await client.query(
-        `SELECT b.cashier_id,
+        `SELECT COALESCE(b.sold_by_cashier_id, b.cashier_id) AS cashier_id,
                 u.email AS cashier_email,
                 u.phone AS cashier_phone,
                 COUNT(*)::int AS bets_count,
@@ -80,9 +82,9 @@ async function offlineCashReport(req: Request, q: z.infer<typeof offlineCashQuer
                 COALESCE(SUM(b.actual_payout), 0)::numeric AS total_payout,
                 COALESCE(SUM(b.stake) - SUM(COALESCE(b.actual_payout, 0)), 0)::numeric AS gross_margin
            FROM sportsbook_bets b
-           LEFT JOIN users u ON u.id = b.cashier_id
+           LEFT JOIN users u ON u.id = COALESCE(b.sold_by_cashier_id, b.cashier_id)
            ${where}
-           GROUP BY b.cashier_id, u.email, u.phone
+           GROUP BY COALESCE(b.sold_by_cashier_id, b.cashier_id), u.email, u.phone
            ORDER BY total_stake DESC`,
         values
       );

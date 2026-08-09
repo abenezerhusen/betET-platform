@@ -42,7 +42,7 @@ const createSuperAdminSchema = z
     username: z.string().trim().min(2, 'Username is required'),
     email: z.string().trim().email().optional().or(z.literal('')),
     phone: z.string().trim().min(8).optional().or(z.literal('')),
-    password: z.string().min(8, 'Password must be at least 8 characters'),
+    password: z.string().min(6, 'Password must be at least 6 characters'),
     confirmPassword: z.string(),
   })
   .refine((d) => Boolean((d.email ?? '').trim()) || Boolean((d.phone ?? '').trim()), {

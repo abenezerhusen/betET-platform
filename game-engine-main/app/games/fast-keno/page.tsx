@@ -13,6 +13,7 @@ import {
   readBalance,
   onWalletUpdated,
   listenEmbeddedWalletInit,
+  fetchGameLimits,
   type KenoNumberDrawnEvent,
   type KenoRoundCompleteEvent,
   type KenoRoundStartEvent,
@@ -60,6 +61,10 @@ export default function FastKenoPage() {
   const [currentDrawIndex, setCurrentDrawIndex] = useState(0)
   const [gamePhase, setGamePhase] = useState<"betting" | "drawing" | "result">("betting")
   const [betAmount, setBetAmount] = useState(2.00)
+  // Admin-configured bet limits. Defaults keep the historical 1..1000 range
+  // until the real values load; the backend enforces them authoritatively.
+  const [betMin, setBetMin] = useState(1)
+  const [betMax, setBetMax] = useState(1000)
   const [balance, setBalance] = useState(0)
   const [roundTimer, setRoundTimer] = useState(30) // 30-second betting window
   // roundId stays the backend UUID (required to place bets); roundCode is the
@@ -415,20 +420,37 @@ export default function FastKenoPage() {
     }
   }
 
+  // Load admin-configured Minimum/Maximum bet for Fast Keno and snap the
+  // current bet into range (raises the default up to the configured minimum).
+  useEffect(() => {
+    let cancelled = false
+    fetchGameLimits("fast-keno")
+      .then((limits) => {
+        if (cancelled || !limits) return
+        const min = Number(limits.min_bet) > 0 ? Number(limits.min_bet) : 1
+        const max = Number(limits.max_bet) > 0 ? Number(limits.max_bet) : 1000
+        setBetMin(min)
+        setBetMax(max)
+        setBetAmount(prev => Math.min(Math.max(prev, min), max))
+      })
+      .catch(() => { /* keep defaults on failure */ })
+    return () => { cancelled = true }
+  }, [])
+
   const adjustBet = (increment: boolean) => {
     if (increment) {
-      setBetAmount(prev => Math.min(prev + 1, 1000))
+      setBetAmount(prev => Math.min(prev + 1, betMax))
     } else {
-      setBetAmount(prev => Math.max(prev - 1, 1))
+      setBetAmount(prev => Math.max(prev - 1, betMin))
     }
   }
 
   const doubleBet = () => {
-    setBetAmount(prev => Math.min(prev * 2, 1000))
+    setBetAmount(prev => Math.min(Math.max(prev * 2, betMin), betMax))
   }
 
   const maxBet = () => {
-    setBetAmount(Math.min(balance, 1000))
+    setBetAmount(Math.max(Math.min(balance, betMax), betMin))
   }
 
   const clearSelection = () => {

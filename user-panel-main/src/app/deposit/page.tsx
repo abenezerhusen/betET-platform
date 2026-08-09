@@ -201,9 +201,18 @@ function P2PDepositPanel() {
   );
 
   const parsed = Number(amount || 0);
-  const refOk = reference.trim().length >= 4;
+  // A live Telebirr transaction number is always a 10-character alphanumeric
+  // code (e.g. "DGD2T2M9YQ"). Validate the format up-front so a mistyped /
+  // wrong reference is caught immediately and we never open a deposit request
+  // that can only ever sit in "Waiting".
+  const normalizedRef = reference.trim().toUpperCase();
+  const refFormatValid = /^[A-Z0-9]{10}$/.test(normalizedRef);
+  const refInvalidFormat = normalizedRef.length > 0 && !refFormatValid;
   const canSubmit =
-    Number.isFinite(parsed) && parsed >= 10 && refOk && !busy && !requestId;
+    Number.isFinite(parsed) && parsed >= 10 && refFormatValid && !busy && !requestId;
+
+  const INVALID_REF_MESSAGE =
+    "Invalid Reference Number. The 10-digit reference number you entered is incorrect. Please go back to your Telebirr message, check the reference number carefully, and enter it again.";
 
   const copy = async (text: string) => {
     try {
@@ -253,22 +262,28 @@ function P2PDepositPanel() {
       setErr("Enter an amount of at least 10 ETB.");
       return;
     }
-    if (!refOk) {
-      setErr("Enter the Telebirr reference from your payment SMS.");
+    if (!refFormatValid) {
+      // Reject a wrong / mistyped reference BEFORE creating a request, so it
+      // can never be left hanging in "Waiting".
+      setErr(INVALID_REF_MESSAGE);
       return;
     }
     setBusy(true);
     try {
       const out = await walletApi.telebirrDepositInitiate({
         amount: parsed,
-        telebirr_reference: reference.trim(),
+        telebirr_reference: normalizedRef,
         ...(screenshot ? { screenshot_url: screenshot } : {}),
       });
       setRequestId(out.request_id);
       setStatus(out.confirmed ? "confirmed" : "waiting");
       if (out.confirmed) void refreshWallet();
     } catch (e) {
-      setErr((e as Error).message || "Failed to submit deposit.");
+      // The backend also validates the reference format; surface its
+      // "Invalid Reference Number" message verbatim (no lingering request is
+      // created when the reference is rejected).
+      const msg = (e as Error).message || "Failed to submit deposit.";
+      setErr(/invalid reference/i.test(msg) ? INVALID_REF_MESSAGE : msg);
     } finally {
       setBusy(false);
     }
@@ -339,7 +354,11 @@ function P2PDepositPanel() {
               </div>
             ) : status === "expired" ? (
               <div className="px-3 py-2 rounded text-sm bg-red-500/15 border border-red-500/40 text-red-400">
-                This request expired before a matching payment was found.
+                <span className="font-semibold">Invalid Reference Number.</span>{" "}
+                No Telebirr payment matched the reference you entered. Please go
+                back to your Telebirr message, check the 10-digit transaction
+                number carefully, and start a new request with the correct
+                reference.
               </div>
             ) : status === "cancelled" ? (
               <div className="px-3 py-2 rounded text-sm bg-gray-500/15 border border-gray-500/40 text-gray-300">
@@ -465,15 +484,32 @@ function P2PDepositPanel() {
               </label>
               <Input
                 type="text"
-                placeholder="e.g. CH12AB34CD"
+                inputMode="text"
+                autoCapitalize="characters"
+                maxLength={10}
+                placeholder="e.g. DGD2T2M9YQ"
                 value={reference}
-                onChange={(e) => setReference(e.target.value.toUpperCase())}
-                className="h-9 bg-[var(--mezzo-bg-tertiary)] border-[var(--mezzo-border)] text-white font-mono tracking-wide"
+                onChange={(e) =>
+                  setReference(
+                    e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10)
+                  )
+                }
+                className={`h-9 bg-[var(--mezzo-bg-tertiary)] text-white font-mono tracking-wide ${
+                  refInvalidFormat ? "border-red-500" : "border-[var(--mezzo-border)]"
+                }`}
               />
-              <p className="text-[11px] text-gray-500 mt-1">
-                Copy the &quot;Ref&quot; value from the Telebirr confirmation SMS you
-                received after sending the money.
-              </p>
+              {refInvalidFormat ? (
+                <p className="text-[11px] text-red-400 mt-1">
+                  Invalid Reference Number — the Telebirr transaction number is
+                  exactly 10 letters/digits (e.g. DGD2T2M9YQ). Check your
+                  Telebirr SMS and re-enter it.
+                </p>
+              ) : (
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Copy the &quot;transaction number&quot; (10 characters) from the
+                  Telebirr confirmation SMS you received after sending the money.
+                </p>
+              )}
             </div>
 
             <div>

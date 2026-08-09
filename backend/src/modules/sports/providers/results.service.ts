@@ -38,8 +38,23 @@ export interface ResultsOutcome {
   cancelled: number; // events cancelled → tickets voided/refunded
 }
 
-/** How far back to look for finished fixtures each run. */
+/** Minimum window looked back for finished fixtures each run. */
 const RESULTS_LOOKBACK_HOURS = 72;
+/**
+ * Hard cap on how far back the results backfill will reach in one pass. Without
+ * this, the FIRST run after a long gap could ask the provider for months of
+ * settled fixtures at once. 45 days matches the fixture import window, so any
+ * event we could have imported can also be finalized.
+ */
+const MAX_RESULTS_LOOKBACK_HOURS = 45 * 24;
+/** Provider page size + max pages per sport per cycle (paginate the backlog). */
+const RESULTS_PAGE = 5000;
+const MAX_RESULT_PAGES = 4;
+/**
+ * Leave this many requests in the hourly budget for the odds/events phases
+ * after results — so draining a big backlog never starves live pricing.
+ */
+const RESULTS_BUDGET_RESERVE = 15;
 
 /**
  * Grade every still-open selection of a finished event from its final score
@@ -93,50 +108,85 @@ export async function settleFinishedResults(
   // 1) Which sports have past-kickoff fixtures still open? Only those are worth
   //    a request. (Covers score-recording for every recently-finished match,
   //    not just ones with bets.)
-  const sportsNeeding = await withTenantClient({ tenantId }, async (c) => {
-    const r = await c.query<{ sport: string }>(
-      `SELECT DISTINCT lower(sport) AS sport
+  const needing = await withTenantClient({ tenantId }, async (c) => {
+    const r = await c.query<{ sport: string; oldest: Date | null }>(
+      `SELECT lower(sport) AS sport, min(starts_at) AS oldest
          FROM sports_events
         WHERE tenant_id = $1
           AND metadata ? 'provider_event_id'
           AND status IN ('scheduled', 'live')
-          AND starts_at < now()`,
+          AND starts_at < now()
+        GROUP BY lower(sport)`,
       [tenantId]
     );
-    return r.rows.map((row) => row.sport);
+    return r.rows;
   });
 
+  const sportsNeeding = needing.map((row) => row.sport);
   const sports = cfg.sports.filter((s) => sportsNeeding.includes(s.toLowerCase()));
   if (sports.length === 0) return { finalized: 0, settled: 0, cancelled: 0 };
+
+  // How far back must we look? Cover the OLDEST still-open past-kickoff event
+  // (so nothing stays permanently unsettled once it finishes), but never look
+  // back further than MAX_RESULTS_LOOKBACK_HOURS in a single pass, and always
+  // at least the default RESULTS_LOOKBACK_HOURS window.
+  const oldestOpenMs = needing
+    .map((row) => (row.oldest ? new Date(row.oldest).getTime() : null))
+    .filter((v): v is number => v !== null)
+    .reduce((min, v) => (v < min ? v : min), Number.POSITIVE_INFINITY);
 
   // 2) Fetch finished + cancelled fixtures (HTTP, outside any transaction).
   //    Odds-API status vocabulary is pending | live | settled | cancelled —
   //    FINISHED games come back as `settled` (with final `scores`), abandoned
   //    ones as `cancelled`. Both are pulled in ONE call per sport to stay
   //    inside the request budget.
-  const fromIso = new Date(
-    Date.now() - RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000
-  ).toISOString();
-  const toIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const floorMs = nowMs - RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
+  const maxBackMs = nowMs - MAX_RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
+  const fromMs = Number.isFinite(oldestOpenMs)
+    ? Math.min(floorMs, Math.max(oldestOpenMs, maxBackMs))
+    : floorMs;
+  const fromIso = new Date(fromMs).toISOString();
+  const toIso = new Date(nowMs).toISOString();
   const finalById = new Map<string, { home: number; away: number }>();
   const cancelledIds = new Set<string>();
 
+  let stop = false;
   for (const sport of sports) {
-    if (budget.remaining() <= 0) break;
-    try {
-      // The /events filter only accepts pending | live | settled. Cancelled /
-      // abandoned fixtures surface inside the settled feed with their own
-      // per-event status, so we classify each row via mapStatus below.
-      const events = await client.getEvents(
-        {
-          sport,
-          status: 'settled',
-          from: fromIso,
-          to: toIso,
-          limit: 5000,
-        },
-        budget
-      );
+    if (stop || budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
+    // Paginate the settled feed so a multi-week backlog is drained across
+    // cycles instead of being truncated at the first 5000 rows.
+    for (let page = 0; page < MAX_RESULT_PAGES; page += 1) {
+      if (budget.remaining() <= RESULTS_BUDGET_RESERVE) {
+        stop = true;
+        break;
+      }
+      let events;
+      try {
+        // The /events filter only accepts pending | live | settled. Cancelled
+        // / abandoned fixtures surface inside the settled feed with their own
+        // per-event status, so we classify each row via mapStatus below.
+        events = await client.getEvents(
+          {
+            sport,
+            status: 'settled',
+            from: fromIso,
+            to: toIso,
+            limit: RESULTS_PAGE,
+            skip: page * RESULTS_PAGE,
+          },
+          budget
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
+        // Rate limited / provider unavailable — stop this cycle; whatever we
+        // already collected is still applied, the rest retries next cycle.
+        if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited')) {
+          stop = true;
+        }
+        break;
+      }
       for (const e of events) {
         const st = mapStatus(e.status);
         if (st === 'cancelled') {
@@ -149,12 +199,7 @@ export async function settleFinishedResults(
           finalById.set(String(e.id), { home: h, away: a });
         }
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
-      // Rate limited / provider unavailable — stop this cycle; whatever we
-      // already collected is still applied, the rest retries next cycle.
-      if (msg.includes('429') || msg.includes('503')) break;
+      if (events.length < RESULTS_PAGE) break; // last page for this sport
     }
   }
 

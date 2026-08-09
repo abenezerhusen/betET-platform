@@ -369,6 +369,40 @@ export async function fetchLobby(): Promise<LobbyResponse> {
   return apiRequest<LobbyResponse>("/api/games/lobby", { auth: false });
 }
 
+export interface GameLimits {
+  min_bet: number;
+  max_bet: number;
+}
+
+/**
+ * Fetch the admin-configured bet limits (Minimum Bet / Maximum Bet) for a
+ * single internal game. The public lobby already exposes per-game
+ * `min_bet`/`max_bet`, so we read it and pick the matching game. Returns
+ * `null` on any failure so callers keep their built-in defaults instead of
+ * breaking play when the config endpoint is briefly unavailable.
+ */
+export async function fetchGameLimits(gameId: string): Promise<GameLimits | null> {
+  try {
+    const lobby = await fetchLobby();
+    const all = [
+      ...(lobby.all_games ?? []),
+      ...(lobby.top_games ?? []),
+      ...(lobby.new_games ?? []),
+      ...(lobby.popular_games ?? []),
+    ];
+    const g = all.find((x) => x.id === gameId);
+    if (!g) return null;
+    const min = Number(g.min_bet);
+    const max = Number(g.max_bet);
+    return {
+      min_bet: Number.isFinite(min) && min > 0 ? min : 0,
+      max_bet: Number.isFinite(max) && max > 0 ? max : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------------ */
 /* Aviator                                                                  */
 /* ------------------------------------------------------------------------ */

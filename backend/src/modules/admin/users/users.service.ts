@@ -341,6 +341,12 @@ export async function updateUser(req: Request, id: string, body: UpdateUserInput
 
       const after = await repo.updateUser(client, id, body);
       if (!after) throw new BadRequestError('No fields to update');
+
+      // If the role changed, the effective permission set changes too — kill
+      // active sessions so the new access level applies immediately.
+      if (body.role && body.role !== before.role) {
+        await revokeAllUserRefreshTokens(client, id);
+      }
       return { before, after };
     }
   );
@@ -765,6 +771,13 @@ export async function assignRole(req: Request, id: string, body: AssignRoleInput
 
       const after = await repo.updateUser(client, id, { role: body.role });
       if (!after) throw new NotFoundError('User not found');
+
+      // A role change alters the effective permission set. Revoke active
+      // sessions so the new role (and its permissions) applies immediately and
+      // the old role's access cannot be renewed with an existing token.
+      if (body.role !== before.role) {
+        await revokeAllUserRefreshTokens(client, id);
+      }
       return { before, after };
     }
   );
@@ -833,6 +846,13 @@ export async function updatePermissions(
 
       const after = await repo.updateUser(client, id, { metadata: md });
       if (!after) throw new NotFoundError('User not found');
+
+      // Force the change to take effect immediately: revoke every active
+      // session so the user must re-authenticate and cannot keep using an
+      // access/refresh token that still carries the old permission set.
+      // (Access tokens are short-lived; killing refresh tokens guarantees the
+      // stale permissions cannot be renewed.)
+      await revokeAllUserRefreshTokens(client, id);
 
       return { before, after, permissions: deduped };
     }

@@ -78,7 +78,7 @@ const createSalesSchema = z
     agentId: z.string().uuid('Agent is required'),
     branchId: z.string().uuid('Branch is required'),
     channel: z.enum(['retail', 'online']),
-    password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
+    password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
     confirmPassword: z.string().optional().or(z.literal('')),
   })
   .refine((d) => Boolean((d.email ?? '').trim()) || Boolean((d.phone ?? '').trim()), {

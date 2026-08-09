@@ -25,7 +25,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { CashierTicket } from "@/lib/api";
+import type { CashierTicket, CashierDashboardStats } from "@/lib/api";
 import { renderBarcode, renderBarcodeImgTag } from "@/lib/barcode";
 
 interface ThermalTicketViewProps {
@@ -494,6 +494,156 @@ export function buildThermalTicketPrintHtml(args: {
       window.print();
       // Close the popup after a short delay so the OS print spooler
       // has received the job before the window disappears.
+      setTimeout(function () { window.close(); }, 800);
+    });
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Render the Cashier **dashboard report** as a self-contained 80 mm thermal
+ * receipt document for the print popup.
+ *
+ * The on-screen dashboard is a wide card grid meant for a monitor; printing
+ * it with `window.print()` produced a long A4-style page with the sidebar,
+ * filter controls and buttons bleeding in. This builder emits ONLY the report
+ * figures, laid out as compact label:value rows that fit the 80 mm roll — the
+ * same paper the ticket slips use — so the printout is short, aligned and
+ * professional. The on-screen dashboard design is untouched.
+ */
+export function buildDashboardReportPrintHtml(args: {
+  stats: CashierDashboardStats;
+  cashierName: string;
+  branchLabel: string;
+}): string {
+  const { stats, cashierName, branchLabel } = args;
+  const dashedLine = "-".repeat(32);
+
+  const escape = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const money = (n: number) =>
+    `${(Number(n) || 0).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} ETB`;
+  const count = (n: number) => String(Number(n) || 0);
+
+  // A label:value line. The value is right-aligned so columns line up on the
+  // fixed-width thermal font.
+  const row = (label: string, value: string, bold = false) =>
+    `<div style="display:flex;justify-content:space-between;gap:8px;${
+      bold ? "font-weight:700;" : ""
+    }">
+       <span>${escape(label)}</span>
+       <span style="text-align:right;white-space:nowrap;">${escape(value)}</span>
+     </div>`;
+
+  const sectionTitle = (title: string) =>
+    `<div style="font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin:2px 0;">${escape(
+      title
+    )}</div>`;
+
+  const t = stats.totals;
+  const printedAt = formatTimestamp(new Date().toISOString());
+  const periodFrom = formatTimestamp(stats.from);
+  const periodTo = formatTimestamp(stats.to);
+  const scopeLabel = stats.mine ? "My tickets" : "Branch (all cashiers)";
+  const grandNet = Number(t.grand_net) || 0;
+
+  return `
+<html>
+<head>
+  <title>Cashier Report</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    * { box-sizing: border-box; }
+    body {
+      width: 80mm;
+      margin: 0;
+      padding: 10px;
+      color: #000;
+      background: #fff;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 10.5px;
+      line-height: 1.3;
+      font-weight: 700;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  </style>
+</head>
+<body>
+  <div style="text-align:center;margin-bottom:6px;">
+    <div style="font-weight:700;font-size:13px;letter-spacing:2px;">1BIRR.BET</div>
+    <div style="font-size:9.5px;letter-spacing:0.5px;">Cashier Report</div>
+  </div>
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  <div style="text-align:center;margin-bottom:4px;">
+    <div>${escape(printedAt)}</div>
+    <div>Cashier: ${escape(cashierName)}</div>
+    <div>Branch: ${escape(branchLabel)}</div>
+    <div>Scope: ${escape(scopeLabel)}</div>
+  </div>
+  <div style="font-size:9.5px;">
+    <div>From: ${escape(periodFrom)}</div>
+    <div>To:&nbsp;&nbsp; ${escape(periodTo)}</div>
+  </div>
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  ${sectionTitle("Sales")}
+  ${row("Total Sold", `${count(t.total_sold_count)} tk`)}
+  ${row("Total Price", money(t.total_sold_amount))}
+  ${row("Jackpots Sold", `${count(t.total_jackpots_sold_count)} jp`)}
+  ${row("Jackpots Price", money(t.total_jackpots_sold_amount))}
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  ${sectionTitle("Payouts")}
+  ${row("Paid Tickets", `${count(t.total_paid_tickets_count)} tk`)}
+  ${row("Paid Amount", money(t.total_paid_amount))}
+  ${row("Paid Jackpots", `${count(t.total_paid_jackpots_count)} jp`)}
+  ${row("Paid Jkpt Amt", money(t.total_paid_jackpots_amount))}
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  ${sectionTitle("Cash")}
+  ${row("Deposits", `${money(t.total_deposit_amount)}`)}
+  ${row("  count", `${count(t.total_deposit_count)}`)}
+  ${row("Withdrawals", `${money(t.total_withdraw_amount)}`)}
+  ${row("  count", `${count(t.total_withdraw_count)}`)}
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  <div style="display:flex;justify-content:space-between;margin-top:2px;padding-top:3px;border-top:1px dashed #000;font-weight:700;font-size:12px;">
+    <span>GRAND NET</span>
+    <span>${escape(money(grandNet))}</span>
+  </div>
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  ${sectionTitle("Two-Day Payable")}
+  ${row("Bets", `${count(stats.two_day_payable.bets_count)} tk`)}
+  ${row("Payable", money(stats.two_day_payable.payable_amount))}
+
+  <div style="margin:4px 0;">${dashedLine}</div>
+
+  <div style="text-align:center;font-size:9.5px;line-height:1.3;">
+    <div style="font-weight:700;">1birr.bet</div>
+    <div>Report generated by cashier panel</div>
+  </div>
+
+  <script>
+    window.addEventListener('load', function () {
+      window.print();
       setTimeout(function () { window.close(); }, 800);
     });
   </script>

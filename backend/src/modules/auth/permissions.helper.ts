@@ -101,7 +101,17 @@ export async function loadEffectivePermissionsForUser(
     }
   }
 
-  return loadPermissionsForRole(client, tenantId, user.role);
+  const rolePerms = await loadPermissionsForRole(client, tenantId, user.role);
+  if (rolePerms.length > 0) return rolePerms;
+
+  // `tenant_admin` is a FULL administrator by default. Unless the operator
+  // explicitly restricts it (via a `roles` row or a per-user override handled
+  // above), it receives the wildcard so it keeps unrestricted access on both
+  // the frontend and the backend permission gate. This mirrors the documented
+  // intent in ROLE_FALLBACKS and keeps frontend/backend gating consistent.
+  if (user.role === 'tenant_admin') return [SUPERADMIN_WILDCARD];
+
+  return rolePerms;
 }
 
 /** Returns true if the JWT-embedded permission list covers `required`. */
