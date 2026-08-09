@@ -79,6 +79,8 @@ export function PasswordChangeModal({
             <label className="block text-sm font-medium text-gray-700">New Password</label>
             <input
               type="password"
+              name="change_password_new"
+              autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -90,6 +92,8 @@ export function PasswordChangeModal({
             <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
             <input
               type="password"
+              name="change_password_confirm"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"

@@ -10,6 +10,7 @@ import gamesRouter from './games/games.routes';
 import settingsRouter from './settings/settings.routes';
 import reportsRouter from './reports/reports.routes';
 import dashboardRouter from './dashboard/dashboard.routes';
+import agentDashboardRouter from './agent-dashboard/agent-dashboard.module';
 import auditLogsRouter from './audit-logs/audit-logs.routes';
 import bonusesRouter from './bonuses/bonuses.routes';
 import telebirrRouter from './telebirr/admin.telebirr.routes';
@@ -68,10 +69,13 @@ swagger.registerPath({
 
 // All admin routes require an authenticated admin-tier account. `superadmin`
 // and `tenant_admin` are full administrators (wildcard permissions); `admin`
-// accounts are the restricted Administrators created from the panel and are
-// gated per-permission by `enforceAdminPermission()` below.
+// accounts are the restricted Administrators created from the panel; `agent`
+// accounts operate the panel too but are confined to their own sub-tree
+// (branches / sales staff) — both `admin` and `agent` are gated per-permission
+// by `enforceAdminPermission()` below and, for agents, further scoped to their
+// own records inside the users service.
 router.use(authenticateToken());
-router.use(requireRole('superadmin', 'tenant_admin', 'admin'));
+router.use(requireRole('superadmin', 'tenant_admin', 'admin', 'agent'));
 // Backend permission enforcement — wildcard holders (superadmin / full
 // tenant_admin) bypass; restricted `admin` accounts are checked against the
 // permission catalog so the API can never be reached beyond what the assigned
@@ -80,6 +84,10 @@ router.use(enforceAdminPermission());
 
 // /api/admin/dashboard — unified Section-2 KPIs (read-only)
 router.use('/dashboard', dashboardRouter);
+// /api/admin/agent-dashboard — agent-scoped shop KPIs (read-only). Agents are
+// locked to their own sub-tree inside the module; superadmin/admin may focus a
+// single agent via ?agent_id or aggregate all shops.
+router.use('/agent-dashboard', agentDashboardRouter);
 
 // /api/admin/tenants — superadmin only (enforced inside the sub-router as well).
 router.use('/tenants', tenantsRouter);

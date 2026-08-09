@@ -9,8 +9,10 @@ import {
 import { tryAudit } from '../../audit/audit.service';
 import { hashPassword } from '../../auth/password';
 import { revokeAllUserRefreshTokens } from '../../auth/auth.repository';
+import { hasPermission, SUPERADMIN_WILDCARD } from '../../auth/permissions.helper';
 import { emitUserSuspended } from '../../../realtime/socket';
 import {
+  type AdminScope,
   getAdminScope,
   getIp,
   getUa,
@@ -43,13 +45,40 @@ function pickAuditUser(u: repo.AdminUserRow): Record<string, unknown> {
 }
 
 /**
- * Tenant-admin may not assign superadmin role; this prevents privilege
- * escalation. Superadmin may assign any role.
+ * Only Super Admin may assign a role that carries the full wildcard by
+ * default (`superadmin`, `tenant_admin`). This blocks a lower-privileged
+ * admin — or an agent — from minting a wildcard account and escalating.
  */
 function ensureCanAssignRole(role: string, isSuperadmin: boolean) {
-  if (!isSuperadmin && role === 'superadmin') {
-    throw new ForbiddenError('Cannot assign superadmin role');
+  if (!isSuperadmin && (role === 'superadmin' || role === 'tenant_admin')) {
+    throw new ForbiddenError('Only a Super Admin can assign this role');
   }
+}
+
+/**
+ * Permission IDs that authorise a caller to set another user's permission
+ * set. Mirrors the ROLE_MANAGE group in `enforce-admin-permission.ts`.
+ */
+const ROLE_MANAGE_PERMS = [
+  'admin.manage_roles',
+  'users.agents.roles',
+  'users.super_admin.manage',
+];
+
+/**
+ * Whether the caller is allowed to set `metadata.permissions` through the
+ * generic create/update endpoints. Only Super Admin, tenant-admin (wildcard),
+ * or an admin explicitly granted a role-management permission may do so.
+ * Everyone else (restricted admins, agents) has the `permissions` key stripped
+ * so they can never escalate themselves or an account they create/edit. The
+ * dedicated `PUT /users/:id/permissions` endpoint (gated by ROLE_MANAGE)
+ * remains the only sanctioned way to change permissions.
+ */
+function callerCanManagePermissions(req: Request, scope: AdminScope): boolean {
+  if (scope.isSuperadmin) return true;
+  const perms = (req.user?.permissions ?? []) as string[];
+  if (perms.includes(SUPERADMIN_WILDCARD)) return true;
+  return ROLE_MANAGE_PERMS.some((p) => hasPermission(perms, p));
 }
 
 /**
@@ -134,6 +163,29 @@ async function validateShopHierarchy(
   }
 }
 
+/**
+ * Agent sub-tree guard.
+ *
+ * Agents operate the Admin Panel but may only ever touch their OWN sub-tree:
+ * the branches and sales staff whose `metadata.agent_id` equals the agent's
+ * own id (plus their own record). Every single-record action funnels through
+ * here so an agent can never read or mutate another agent's staff, an admin,
+ * a super admin, or an online player — even by guessing an id or crafting the
+ * request directly. Super admins and non-agent admins are unaffected.
+ */
+function assertAgentCanAccessRow(scope: AdminScope, row: repo.AdminUserRow): void {
+  if (scope.isSuperadmin || scope.actorRole !== 'agent') return;
+  const md = (row.metadata ?? {}) as Record<string, unknown>;
+  const ownsSubtree =
+    (row.role === 'branch' || row.role === 'sales') &&
+    typeof md.agent_id === 'string' &&
+    md.agent_id === scope.actorId;
+  const isSelf = row.id === scope.actorId;
+  if (!ownsSubtree && !isSelf) {
+    throw new ForbiddenError('This account is outside your agent scope');
+  }
+}
+
 /* ------------------------------------------------------------------------- */
 /* List                                                                      */
 /* ------------------------------------------------------------------------- */
@@ -142,12 +194,42 @@ export async function listUsers(req: Request, params: ListUsersQuery) {
   const scope = getAdminScope(req);
   const offset = (params.page - 1) * params.limit;
 
+  // Agent sub-tree scoping. An agent may only list their own branches / sales
+  // staff (filtered by metadata.agent_id) or their own agent record. Any
+  // attempt to list other roles (admins, online users, other agents) is
+  // refused — this is enforced here regardless of the frontend.
+  const isAgent = !scope.isSuperadmin && scope.actorRole === 'agent';
+  let agentId: string | null = null;
+  let onlyId: string | null = null;
+  let roles: string[] | null = params._include_cashier_alias
+    ? ['sales', 'cashier']
+    : null;
+  let excludeOfflineStaffRoles = params._online_users_alias ?? false;
+  if (isAgent) {
+    const requested = params.role ?? null;
+    if (requested === 'sales' || requested === 'branch') {
+      agentId = scope.actorId;
+    } else if (requested === 'agent') {
+      // Agents can only ever resolve their own agent record.
+      onlyId = scope.actorId;
+    } else {
+      throw new ForbiddenError(
+        'Agents can only view their own branches and sales staff'
+      );
+    }
+    // Agents never use the cashier / online-user aliases.
+    roles = null;
+    excludeOfflineStaffRoles = false;
+  }
+
   const data = await withTenantClient(
     { tenantId: scope.tenantId, bypassRls: scope.bypassRls },
     async (client) =>
       repo.listUsers(client, scope.tenantId, {
         role: params.role ?? null,
-        roles: params._include_cashier_alias ? ['sales', 'cashier'] : null,
+        roles,
+        agentId,
+        onlyId,
         status: params.status ?? null,
         kycStatus: params.kyc_status ?? null,
         search: params.search ?? null,
@@ -158,7 +240,7 @@ export async function listUsers(req: Request, params: ListUsersQuery) {
         // When the admin panel hit the `online_user` alias, also defensively
         // exclude every offline/shop-based role even if a malformed row
         // ended up with `role='user'` plus shop-hierarchy metadata.
-        excludeOfflineStaffRoles: params._online_users_alias ?? false,
+        excludeOfflineStaffRoles,
       })
   );
 
@@ -185,6 +267,7 @@ export async function getUser(req: Request, id: string) {
   if (!scope.isSuperadmin && user.tenant_id !== scope.tenantId) {
     throw new ForbiddenError('User belongs to a different tenant');
   }
+  assertAgentCanAccessRow(scope, user);
   return user;
 }
 
@@ -195,9 +278,28 @@ export async function getUser(req: Request, id: string) {
 export async function createUser(req: Request, body: CreateUserInput) {
   const scope = getAdminScope(req);
   const tenantId = requireScopedTenantId(scope);
+
+  // Agents may only create accounts inside their own sub-tree: branch or
+  // sales staff, always owned by themselves. We force `agent_id` to the
+  // caller regardless of the submitted payload so an agent can never attach a
+  // branch / sales account to a different agent.
+  const isAgent = !scope.isSuperadmin && scope.actorRole === 'agent';
+  if (isAgent && body.role !== 'branch' && body.role !== 'sales') {
+    throw new ForbiddenError('Agents can only create branch or sales accounts');
+  }
+
   ensureCanAssignRole(body.role, scope.isSuperadmin);
 
-  const metadata = (body.metadata ?? {}) as Record<string, unknown>;
+  const metadata = { ...((body.metadata ?? {}) as Record<string, unknown>) };
+  if (isAgent) {
+    metadata.agent_id = scope.actorId;
+  }
+  // Privilege-escalation guard: callers without role-management rights may
+  // never seed a permission set on a new account (would otherwise allow
+  // creating a wildcard admin via the generic create endpoint).
+  if (!callerCanManagePermissions(req, scope)) {
+    delete metadata.permissions;
+  }
   if (body.role === 'branch' || body.role === 'sales') {
     await withTenantClient(
       { tenantId, bypassRls: scope.bypassRls },
@@ -278,6 +380,32 @@ export async function updateUser(req: Request, id: string, body: UpdateUserInput
       if (!before) throw new NotFoundError('User not found');
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
+      }
+      assertAgentCanAccessRow(scope, before);
+      // An agent editing their own branch / sales staff may not change the
+      // role away from branch/sales, nor re-assign the record to another
+      // agent. Force ownership to stay with the calling agent.
+      if (!scope.isSuperadmin && scope.actorRole === 'agent') {
+        if (body.role && body.role !== 'branch' && body.role !== 'sales') {
+          throw new ForbiddenError('Agents can only manage branch or sales accounts');
+        }
+        if (body.metadata !== undefined) {
+          (body.metadata as Record<string, unknown>).agent_id = scope.actorId;
+        }
+      }
+      // Privilege-escalation guard: callers without role-management rights
+      // cannot change a permission set through the generic update endpoint.
+      // Preserve whatever the target already had so a crafted payload with
+      // `metadata.permissions = ['*']` is ignored. Permission changes must go
+      // through PUT /users/:id/permissions (gated by ROLE_MANAGE).
+      if (body.metadata !== undefined && !callerCanManagePermissions(req, scope)) {
+        const prevPerms = (before.metadata as Record<string, unknown> | null)
+          ?.permissions;
+        if (prevPerms === undefined) {
+          delete (body.metadata as Record<string, unknown>).permissions;
+        } else {
+          (body.metadata as Record<string, unknown>).permissions = prevPerms;
+        }
       }
 
       // Re-validate hierarchy whenever the role or metadata changes, using
@@ -394,6 +522,7 @@ export async function suspendUser(req: Request, id: string, body: SuspendUserInp
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       if (before.role === 'superadmin' && !scope.isSuperadmin) {
         throw new ForbiddenError('Cannot suspend a Super Admin');
       }
@@ -474,6 +603,7 @@ export async function setUserStatus(
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       // Tenant-admins may not flip a superadmin (privilege escalation guard).
       if (before.role === 'superadmin' && !scope.isSuperadmin) {
         throw new ForbiddenError('Cannot change the status of a Super Admin');
@@ -553,6 +683,7 @@ export async function changeUserPassword(
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       if (before.role === 'superadmin' && !scope.isSuperadmin) {
         throw new ForbiddenError('Cannot change the password of a Super Admin');
       }
@@ -601,6 +732,7 @@ export async function kycApprove(req: Request, id: string) {
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       const after = await repo.setUserKyc(client, id, 'verified');
       if (!after) throw new NotFoundError('User not found');
       return { before, after };
@@ -640,6 +772,7 @@ export async function kycReject(req: Request, id: string, body: KycRejectInput) 
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       const after = await repo.setUserKyc(client, id, 'rejected');
       if (!after) throw new NotFoundError('User not found');
       return { before, after };
@@ -685,6 +818,7 @@ export async function userActivity(req: Request, id: string, params: UserActivit
       if (!scope.isSuperadmin && user.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, user);
       const activity = await repo.listUserActivity(client, id, {
         type: params.type,
         from: params.from ?? null,
@@ -723,6 +857,7 @@ export async function assignRole(req: Request, id: string, body: AssignRoleInput
         throw new ForbiddenError('User belongs to a different tenant');
       }
 
+      assertAgentCanAccessRow(scope, before);
       // Same dependent-check + hierarchy validation we use in updateUser.
       // If the existing metadata is missing agent_id / branch_id but the
       // new role demands them, the admin must use the full edit form.
@@ -832,6 +967,7 @@ export async function updatePermissions(
       if (!scope.isSuperadmin && before.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, before);
       // Tenant-admins may not rewrite a superadmin's permissions.
       if (before.role === 'superadmin' && !scope.isSuperadmin) {
         throw new ForbiddenError('Cannot change permissions of a Super Admin');
@@ -915,6 +1051,7 @@ export async function getUserDetails(req: Request, id: string) {
       if (!scope.isSuperadmin && bundle.user.tenant_id !== scope.tenantId) {
         throw new ForbiddenError('User belongs to a different tenant');
       }
+      assertAgentCanAccessRow(scope, bundle.user);
       return bundle;
     }
   );

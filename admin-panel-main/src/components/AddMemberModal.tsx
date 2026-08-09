@@ -113,6 +113,7 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
             <input
               type="text"
               name="username"
+              autoComplete="off"
               value={formData.username}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -201,6 +202,7 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
             <input
               type="password"
               name="password"
+              autoComplete="new-password"
               value={formData.password}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -213,6 +215,7 @@ export function AddMemberModal({ isOpen, onClose, onAdd }: AddMemberModalProps) 
             <input
               type="password"
               name="confirmPassword"
+              autoComplete="new-password"
               value={formData.confirmPassword}
               onChange={handleChange}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"

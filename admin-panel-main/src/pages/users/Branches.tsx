@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
@@ -16,6 +16,7 @@ import { useAdminUsersByRole } from '../../lib/hooks';
 import * as usersApi from '../../lib/api/users';
 import type { AdminUser } from '../../lib/api/types';
 import { toNumber } from '../../lib/format';
+import { useAuthStore } from '../../store/auth';
 
 interface BranchData {
   id: string;
@@ -74,10 +75,11 @@ const tabs = [
 
 const createBranchSchema = z.object({
   branchId: z.string().trim().min(2, 'Branch ID is required'),
-  city: z.string().trim().min(2, 'City is required'),
+  // City / Address are optional metadata — do not block branch creation on them.
+  city: z.string().trim().max(120).optional(),
   agentId: z.string().uuid('Agent is required'),
   branchSecret: z.string().min(8, 'Branch Secret must be at least 8 characters'),
-  address: z.string().trim().min(5, 'Address is required'),
+  address: z.string().trim().max(200).optional(),
   channel: z.enum(['regular', 'premium']),
   minStake: z.string().refine((v) => !Number.isNaN(Number(v)) && Number(v) >= 0, {
     message: 'Min Stake must be a valid non-negative number',
@@ -128,6 +130,27 @@ export function Branches() {
     [agentUsers]
   );
   const findBranch = (id: string) => rows.find((b) => b.id === id);
+
+  // Signed-in user context. When an Agent operates the panel, every branch
+  // they create belongs to themselves, so we lock the Agent field to their
+  // own id (the backend enforces this too — it forces metadata.agent_id to
+  // the caller — but pre-filling keeps the form valid and hides the choice).
+  const currentUser = useAuthStore((s) => s.user);
+  const isAgentUser = currentUser?.role === 'agent';
+
+  useEffect(() => {
+    if (isAgentUser && currentUser?.id) {
+      if (formState.agentId !== currentUser.id) {
+        setFormState((s) => ({ ...s, agentId: currentUser.id }));
+      }
+      return;
+    }
+    // Non-agent admins: if the backend returned exactly one agent, auto-select
+    // it so they don't have to pick from a single-item list.
+    if (agentOptions.length === 1 && !formState.agentId) {
+      setFormState((s) => ({ ...s, agentId: agentOptions[0].id }));
+    }
+  }, [isAgentUser, currentUser?.id, agentOptions, formState.agentId]);
 
   const handleEdit = (id: string) => {
     const branch = findBranch(id);
@@ -181,17 +204,22 @@ export function Branches() {
     setFormError('');
     setSubmitting(true);
     try {
+      // City is optional now, so derive a safe email-host slug that never
+      // produces a malformed address when the city is left blank.
+      const citySlug =
+        (parsed.data.city ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '') ||
+        'branch';
       await usersApi.createUser({
-        email: `${parsed.data.branchId}@${parsed.data.city}.local`,
+        email: `${parsed.data.branchId}@${citySlug}.local`,
         password: parsed.data.branchSecret,
         role: 'branch',
         metadata: {
           branch_id: parsed.data.branchId,
-          city: parsed.data.city,
+          city: parsed.data.city ?? '',
           agent_id: parsed.data.agentId,
           agent_name:
             agentOptions.find((a) => a.id === parsed.data.agentId)?.label ?? '',
-          address: parsed.data.address,
+          address: parsed.data.address ?? '',
           channel: parsed.data.channel,
           min_stake: Number(parsed.data.minStake) || 0,
         },
@@ -407,7 +435,7 @@ export function Branches() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">City</label>
+                <label className="block text-sm font-medium text-gray-700">City <span className="text-gray-400 font-normal">(optional)</span></label>
                 <input
                   type="text"
                   value={formState.city}
@@ -419,11 +447,11 @@ export function Branches() {
                 <label className="block text-sm font-medium text-gray-700">Agent</label>
                 <select
                   value={formState.agentId}
-                  disabled={agentOptions.length === 0}
+                  disabled={isAgentUser || agentOptions.length === 0}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, agentId: e.target.value }))
                   }
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                 >
                   <option value="">
                     {agentOptions.length === 0
@@ -436,12 +464,16 @@ export function Branches() {
                     </option>
                   ))}
                 </select>
-                {agentOptions.length === 0 && (
+                {isAgentUser ? (
+                  <p className="mt-1 text-xs text-gray-500">
+                    This branch will be created under your agent account.
+                  </p>
+                ) : agentOptions.length === 0 ? (
                   <p className="mt-1 text-xs text-amber-600">
                     A Branch must belong to an Agent. Create an Agent on the
                     Agents page first, then come back here.
                   </p>
-                )}
+                ) : null}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Branch Secret</label>
@@ -455,7 +487,7 @@ export function Branches() {
                 />
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700">Address</label>
+                <label className="block text-sm font-medium text-gray-700">Address <span className="text-gray-400 font-normal">(optional)</span></label>
                 <input
                   type="text"
                   value={formState.address}

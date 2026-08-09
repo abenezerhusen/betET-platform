@@ -1,0 +1,65 @@
+# Exclude machine-generated dependency + build artifacts from Cursor's
+# codebase index ("warming up"). None of these are source code, and
+# indexing them wastes time/memory and slows startup + search.
+
+# Node / JS dependencies & build output
+**/node_modules/
+**/dist/
+**/build/
+**/.next/
+**/out/
+**/.turbo/
+**/coverage/
+**/.nyc_output/
+**/.parcel-cache/
+**/.vite/
+**/*.tsbuildinfo
+
+# Lockfiles — huge machine-generated JSON/YAML, never worth indexing
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+
+# Flutter / Android / iOS (mobile agent app)
+**/.dart_tool/
+**/.gradle/
+**/.cxx/
+**/.pub-cache/
+**/Pods/
+**/*.so
+**/*.apk
+**/*.aab
+**/*.jar
+**/*.keystore
+**/*.jks
+
+# Binary assets (images, fonts, audio, video, archives) — not source code,
+# but game-engine slot/keno assets otherwise dominate the index.
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.ico
+**/*.svg
+**/*.woff
+**/*.woff2
+**/*.ttf
+**/*.otf
+**/*.eot
+**/*.mp3
+**/*.wav
+**/*.ogg
+**/*.mp4
+**/*.webm
+**/*.pdf
+**/*.zip
+**/*.gz
+**/*.7z
+
+# Logs, backups & scratch
+logs/
+.logs/
+.tmp-shot/
+backups/
+**/*.log

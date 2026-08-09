@@ -130,9 +130,15 @@ function P2PDepositPanel() {
   const [copied, setCopied] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Open deposit request being tracked (after submit or resumed on mount).
+  // Open deposit request being tracked in the background (after submit or
+  // resumed on mount) so the async agent-SMS matcher can still confirm it.
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>("");
+  // UI phase drives what the panel shows. "incorrect" keeps the entry form
+  // visible so the user can re-check and re-enter their reference.
+  const [phase, setPhase] = useState<
+    "idle" | "incorrect" | "confirmed" | "cancelled"
+  >("idle");
+  const [attempts, setAttempts] = useState(0);
 
   const loadAccounts = () => {
     setLoadingAccounts(true);
@@ -159,9 +165,13 @@ function P2PDepositPanel() {
       const open = (hist.items ?? []).find((i) => i.status === "waiting");
       if (!open) return;
       const s = await walletApi.telebirrDepositStatus(open.id);
-      if (s.status === "waiting") {
+      if (s.status === "confirmed") {
         setRequestId(s.request_id);
-        setStatus(s.status);
+        setPhase("confirmed");
+      } else if (s.status === "waiting") {
+        // Track it only so the background poll can still confirm it and so the
+        // next submit cancels it first — but keep showing the entry form.
+        setRequestId(s.request_id);
       }
     } catch {
       /* ignore */
@@ -174,23 +184,29 @@ function P2PDepositPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isResolved =
-    status === "confirmed" || status === "expired" || status === "cancelled";
+  const isDone = phase === "confirmed" || phase === "cancelled";
 
-  // Poll the request status until the agent SMS is matched.
+  // Keep matching the agent SMS in the background even while the user is being
+  // prompted to re-check their reference, so a slightly-late SMS can still
+  // confirm the deposit on its own ("waiting" keeps working behind the scenes).
   useEffect(() => {
-    if (!requestId || isResolved) return;
+    if (!requestId || isDone) return;
     const t = setInterval(async () => {
       try {
         const s = await walletApi.telebirrDepositStatus(requestId);
-        setStatus(s.status);
-        if (s.status === "confirmed") void refreshWallet();
+        if (s.status === "confirmed") {
+          setPhase("confirmed");
+          void refreshWallet();
+        } else if (s.status === "expired" || s.status === "cancelled") {
+          // This request is dead; drop it but keep the re-check form usable.
+          setRequestId(null);
+        }
       } catch {
         /* ignore transient poll errors */
       }
     }, 5000);
     return () => clearInterval(t);
-  }, [requestId, isResolved, refreshWallet]);
+  }, [requestId, isDone, refreshWallet]);
 
   const account = useMemo(
     () =>
@@ -208,11 +224,17 @@ function P2PDepositPanel() {
   const normalizedRef = reference.trim().toUpperCase();
   const refFormatValid = /^[A-Z0-9]{10}$/.test(normalizedRef);
   const refInvalidFormat = normalizedRef.length > 0 && !refFormatValid;
+  const MAX_ATTEMPTS = 3;
   const canSubmit =
-    Number.isFinite(parsed) && parsed >= 10 && refFormatValid && !busy && !requestId;
+    Number.isFinite(parsed) &&
+    parsed >= 10 &&
+    refFormatValid &&
+    !busy &&
+    phase !== "confirmed" &&
+    phase !== "cancelled";
 
-  const INVALID_REF_MESSAGE =
-    "Invalid Reference Number. The 10-digit reference number you entered is incorrect. Please go back to your Telebirr message, check the reference number carefully, and enter it again.";
+  const INCORRECT_REF_MESSAGE =
+    "The 10-digit reference number you entered is incorrect. Please go back to your Telebirr message, check the reference number carefully, and enter it again.";
 
   const copy = async (text: string) => {
     try {
@@ -252,6 +274,24 @@ function P2PDepositPanel() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  // Best-effort clear of any lingering "waiting" request (e.g. left open in
+  // another tab) so a fresh initiate isn't blocked by open_request_exists.
+  const cancelAllWaiting = async () => {
+    try {
+      const hist = await walletApi.telebirrDepositHistory({ page: 1, limit: 10 });
+      const waiting = (hist.items ?? []).filter((i) => i.status === "waiting");
+      for (const w of waiting) {
+        try {
+          await walletApi.telebirrDepositCancel(w.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   const submit = async () => {
     setErr("");
     if (!account) {
@@ -263,40 +303,72 @@ function P2PDepositPanel() {
       return;
     }
     if (!refFormatValid) {
-      // Reject a wrong / mistyped reference BEFORE creating a request, so it
-      // can never be left hanging in "Waiting".
-      setErr(INVALID_REF_MESSAGE);
+      setErr(INCORRECT_REF_MESSAGE);
       return;
     }
     setBusy(true);
     try {
-      const out = await walletApi.telebirrDepositInitiate({
-        amount: parsed,
-        telebirr_reference: normalizedRef,
-        ...(screenshot ? { screenshot_url: screenshot } : {}),
-      });
-      setRequestId(out.request_id);
-      setStatus(out.confirmed ? "confirmed" : "waiting");
-      if (out.confirmed) void refreshWallet();
-    } catch (e) {
-      // The backend also validates the reference format; surface its
-      // "Invalid Reference Number" message verbatim (no lingering request is
-      // created when the reference is rejected).
-      const msg = (e as Error).message || "Failed to submit deposit.";
-      setErr(/invalid reference/i.test(msg) ? INVALID_REF_MESSAGE : msg);
-    } finally {
-      setBusy(false);
-    }
-  };
+      // A previous incorrect attempt leaves its request "waiting" in the
+      // background; cancel it before re-attempting with the corrected
+      // reference so the single-open-request rule is respected.
+      if (requestId) {
+        try {
+          await walletApi.telebirrDepositCancel(requestId);
+        } catch {
+          /* ignore */
+        }
+        setRequestId(null);
+      }
 
-  const cancel = async () => {
-    if (!requestId) return;
-    setBusy(true);
-    try {
-      await walletApi.telebirrDepositCancel(requestId);
-      setStatus("cancelled");
+      const doInitiate = () =>
+        walletApi.telebirrDepositInitiate({
+          amount: parsed,
+          telebirr_reference: normalizedRef,
+          ...(screenshot ? { screenshot_url: screenshot } : {}),
+        });
+
+      let out;
+      try {
+        out = await doInitiate();
+      } catch (e) {
+        const msg = (e as Error).message || "";
+        if (/open .*request|already have an open/i.test(msg)) {
+          await cancelAllWaiting();
+          out = await doInitiate();
+        } else {
+          throw e;
+        }
+      }
+
+      if (out.confirmed) {
+        setRequestId(out.request_id);
+        setPhase("confirmed");
+        void refreshWallet();
+        return;
+      }
+
+      // The reference did not match an agent payment on this attempt.
+      const nextAttempts = attempts + 1;
+      setAttempts(nextAttempts);
+
+      if (nextAttempts >= MAX_ATTEMPTS) {
+        // Third strike — cancel the request automatically.
+        try {
+          await walletApi.telebirrDepositCancel(out.request_id);
+        } catch {
+          /* ignore */
+        }
+        setRequestId(null);
+        setPhase("cancelled");
+      } else {
+        // Keep the request alive for the background matcher, but prompt the
+        // user to re-check and re-enter the reference.
+        setRequestId(out.request_id);
+        setPhase("incorrect");
+      }
     } catch (e) {
-      setErr((e as Error).message || "Failed to cancel request.");
+      const msg = (e as Error).message || "Failed to submit deposit.";
+      setErr(/invalid reference/i.test(msg) ? INCORRECT_REF_MESSAGE : msg);
     } finally {
       setBusy(false);
     }
@@ -304,7 +376,8 @@ function P2PDepositPanel() {
 
   const reset = () => {
     setRequestId(null);
-    setStatus("");
+    setPhase("idle");
+    setAttempts(0);
     setAmount("");
     setReference("");
     clearScreenshot();
@@ -331,7 +404,7 @@ function P2PDepositPanel() {
         <div className="flex items-center gap-2">
           <Landmark className="w-4 h-4 text-[var(--mezzo-accent-yellow)]" />
           <h3 className="font-semibold text-sm">P2P Transfer Deposit</h3>
-          {!requestId && (
+          {(phase === "idle" || phase === "incorrect") && (
             <button
               type="button"
               onClick={loadAccounts}
@@ -344,58 +417,55 @@ function P2PDepositPanel() {
           )}
         </div>
 
-        {/* ---- Result / tracking view once a request is open ---- */}
-        {requestId ? (
+        {/* ---- Result view once resolved, else the (re-)entry form ---- */}
+        {phase === "confirmed" ? (
           <div className="space-y-3">
-            {status === "confirmed" ? (
-              <div className="px-3 py-2 rounded text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
-                <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>Payment confirmed — your wallet has been credited.</span>
-              </div>
-            ) : status === "expired" ? (
+            <div className="px-3 py-2 rounded text-sm bg-green-500/15 border border-green-500/40 text-green-400 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>Payment confirmed — your wallet has been credited.</span>
+            </div>
+            <Button
+              onClick={reset}
+              className="w-full h-9 text-black font-semibold"
+              style={{ background: "var(--mezzo-accent-green)" }}
+            >
+              Make another deposit
+            </Button>
+          </div>
+        ) : phase === "cancelled" ? (
+          <div className="space-y-3">
+            <div className="px-3 py-2 rounded text-sm bg-red-500/15 border border-red-500/40 text-red-400">
+              <span className="font-semibold">Request cancelled.</span> The
+              reference number could not be verified after {MAX_ATTEMPTS}{" "}
+              attempts. Please double-check the 10-digit transaction number in
+              your Telebirr SMS and start a new request.
+            </div>
+            <Button
+              onClick={reset}
+              className="w-full h-9 text-black font-semibold"
+              style={{ background: "var(--mezzo-accent-green)" }}
+            >
+              Start over
+            </Button>
+          </div>
+        ) : (
+          /* ---- Entry form (idle or awaiting a corrected reference) ---- */
+          <>
+            {phase === "incorrect" && (
               <div className="px-3 py-2 rounded text-sm bg-red-500/15 border border-red-500/40 text-red-400">
-                <span className="font-semibold">Invalid Reference Number.</span>{" "}
-                No Telebirr payment matched the reference you entered. Please go
-                back to your Telebirr message, check the 10-digit transaction
-                number carefully, and start a new request with the correct
-                reference.
-              </div>
-            ) : status === "cancelled" ? (
-              <div className="px-3 py-2 rounded text-sm bg-gray-500/15 border border-gray-500/40 text-gray-300">
-                Request cancelled.
-              </div>
-            ) : (
-              <div className="px-3 py-2 rounded text-xs bg-blue-500/10 border border-blue-500/30 text-blue-300 flex items-start gap-2">
-                <RefreshCw className="w-3.5 h-3.5 mt-0.5 animate-spin flex-shrink-0" />
-                <span>
-                  Waiting for the agent to report your Telebirr payment. We&apos;re
-                  matching your reference automatically — keep this open.
+                <span className="font-semibold">
+                  The 10-digit reference number you entered is incorrect.
+                </span>{" "}
+                Please go back to your Telebirr message, check the reference
+                number carefully, and enter it again.
+                <span className="block mt-1 text-[11px] text-red-300/90">
+                  Attempt {attempts} of {MAX_ATTEMPTS} — the request is
+                  cancelled automatically after {MAX_ATTEMPTS} incorrect
+                  attempts.
                 </span>
               </div>
             )}
 
-            {!isResolved ? (
-              <Button
-                variant="outline"
-                onClick={() => void cancel()}
-                disabled={busy}
-                className="w-full h-9 border-gray-700 bg-transparent text-white hover:bg-gray-800 text-xs"
-              >
-                Cancel request
-              </Button>
-            ) : (
-              <Button
-                onClick={reset}
-                className="w-full h-9 text-black font-semibold"
-                style={{ background: "var(--mezzo-accent-green)" }}
-              >
-                {status === "confirmed" ? "Make another deposit" : "Start over"}
-              </Button>
-            )}
-          </div>
-        ) : (
-          /* ---- Entry form ---- */
-          <>
             <p className="text-xs text-gray-400">
               Send the amount to the Telebirr agent below, then paste the
               Telebirr reference from your payment SMS. Your wallet is credited
@@ -573,7 +643,11 @@ function P2PDepositPanel() {
               className="w-full h-9 text-black font-semibold disabled:opacity-50"
               style={{ background: "var(--mezzo-accent-green)" }}
             >
-              {busy ? "Submitting…" : "I've Sent — Submit Deposit"}
+              {busy
+                ? "Submitting…"
+                : phase === "incorrect"
+                  ? "Re-check & Submit"
+                  : "I've Sent — Submit Deposit"}
             </Button>
           </>
         )}

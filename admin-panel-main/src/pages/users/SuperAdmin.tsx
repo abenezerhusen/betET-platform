@@ -413,6 +413,8 @@ export function SuperAdmin() {
                 <label className="block text-sm font-medium text-gray-700">Username</label>
                 <input
                   type="text"
+                  name="superadmin_username_new"
+                  autoComplete="off"
                   value={createForm.username}
                   onChange={(e) => setCreateForm((s) => ({ ...s, username: e.target.value }))}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -441,6 +443,8 @@ export function SuperAdmin() {
                 <label className="block text-sm font-medium text-gray-700">New Password</label>
                 <input
                   type="password"
+                  name="superadmin_password_new"
+                  autoComplete="new-password"
                   value={createForm.password}
                   onChange={(e) => setCreateForm((s) => ({ ...s, password: e.target.value }))}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -451,6 +455,8 @@ export function SuperAdmin() {
                 <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
                 <input
                   type="password"
+                  name="superadmin_confirm_password_new"
+                  autoComplete="new-password"
                   value={createForm.confirmPassword}
                   onChange={(e) =>
                     setCreateForm((s) => ({ ...s, confirmPassword: e.target.value }))

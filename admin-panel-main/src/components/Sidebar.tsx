@@ -10,6 +10,10 @@ interface MenuItem {
   path?: string;
   /** Section 22 — permission ID gating this entry. */
   perm?: string;
+  /** Optional umbrella permissions that also reveal this entry (OR fallback). */
+  anyOf?: string[];
+  /** When set, only show this entry for the listed roles (e.g. agent-only). */
+  rolesOnly?: string[];
   children?: MenuItem[];
 }
 
@@ -19,6 +23,15 @@ interface MenuItem {
  * section auto-hides when every child is gated out.
  */
 const menuItems: MenuItem[] = [
+  // Agent-only shop dashboard. Hidden for every other role so the existing
+  // admin/superadmin sidebar is unchanged.
+  {
+    title: 'Dashboard',
+    icon: <LayoutDashboard size={20} />,
+    path: '/agent-dashboard',
+    perm: 'dashboard.agent.view',
+    rolesOnly: ['agent'],
+  },
   {
     title: 'Dashboard',
     icon: <LayoutDashboard size={20} />,
@@ -42,9 +55,9 @@ const menuItems: MenuItem[] = [
       { title: 'Referrals', path: '/promotions/referrals', perm: 'promotions.referrals.view', icon: <ChevronRight size={16} /> },
       { title: 'Bonus Engine', path: '/promotions/bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
       { title: 'Affiliates', path: '/promotions/affiliates', perm: 'promotions.affiliates.view', icon: <ChevronRight size={16} /> },
-      { title: 'Cash Out Boost', path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
-      { title: 'Registration Bonus', path: '/promotions/registration-bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
-      { title: 'Rain Bonus', path: '/promotions/rain-bonus', perm: 'promotions.bonus.view', icon: <ChevronRight size={16} /> },
+      { title: 'Cash Out Boost', path: '/promotions/cashout-boost', perm: 'promotions.cashout.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
+      { title: 'Registration Bonus', path: '/promotions/registration-bonus', perm: 'promotions.registration_bonus.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
+      { title: 'Rain Bonus', path: '/promotions/rain-bonus', perm: 'promotions.rain.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
     ],
   },
   {
@@ -178,20 +191,27 @@ const menuItems: MenuItem[] = [
  */
 function filterMenu(
   items: MenuItem[],
-  has: (id: string) => boolean
+  has: (id: string) => boolean,
+  role?: string
 ): MenuItem[] {
+  const visible = (item: MenuItem): boolean => {
+    if (item.rolesOnly && (!role || !item.rolesOnly.includes(role))) {
+      return false;
+    }
+    if (!item.perm) return true;
+    if (has(item.perm)) return true;
+    return (item.anyOf ?? []).some((p) => has(p));
+  };
   const out: MenuItem[] = [];
   for (const item of items) {
     if (item.children && item.children.length > 0) {
-      const visibleChildren = item.children.filter(
-        (c) => !c.perm || has(c.perm)
-      );
+      const visibleChildren = item.children.filter(visible);
       if (visibleChildren.length > 0) {
         out.push({ ...item, children: visibleChildren });
       }
       continue;
     }
-    if (!item.perm || has(item.perm)) {
+    if (visible(item)) {
       out.push(item);
     }
   }
@@ -280,7 +300,7 @@ export function Sidebar({
   // deps catches both the initial login and any token refresh that
   // updated the embedded permission claim.
   const visible = useMemo(
-    () => filterMenu(menuItems, hasPermission),
+    () => filterMenu(menuItems, hasPermission, user?.role),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user?.role, user?.permissions?.join('|')]
   );

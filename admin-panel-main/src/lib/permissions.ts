@@ -54,6 +54,12 @@ const administratorCatalog: Permission[] = [
   { id: 'promotions.referrals.manage', name: 'Manage Referrals', description: 'Configure the referral program', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.bonus.view', name: 'View Bonus Engine', description: 'View bonus engine configuration', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.bonus.manage', name: 'Manage Bonus Engine', description: 'Configure bonus rules and campaigns', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.registration_bonus.view', name: 'View Registration Bonus', description: 'View the registration (sign-up) bonus configuration', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.registration_bonus.manage', name: 'Manage Registration Bonus', description: 'Enable/disable and configure the registration (sign-up) bonus', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.cashout.view', name: 'View Cash Out Boost', description: 'View the cash out boost promotion configuration', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.cashout.manage', name: 'Manage Cash Out Boost', description: 'Enable/disable and configure the cash out boost promotion', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.rain.view', name: 'View Rain Bonus', description: 'View the rain bonus configuration and history', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.rain.manage', name: 'Manage Rain Bonus', description: 'Enable/disable, configure and schedule the rain bonus', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.affiliates.view', name: 'View Affiliates', description: 'View affiliates list', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.affiliates.manage', name: 'Manage Affiliates', description: 'Create / edit affiliates', category: 'Promotions', scopes: adminScopes },
 
@@ -138,7 +144,9 @@ const administratorCatalog: Permission[] = [
   { id: 'p2p.logs', name: 'View P2P Logs', description: 'Access P2P logs / monitoring', category: 'P2P System', scopes: adminScopes },
 
   /* Games ------------------------------------------------------------------- */
-  { id: 'games.view', name: 'View Games', description: 'View games management page', category: 'Games', scopes: adminScopes },
+  { id: 'games.view', name: 'View Game List', description: 'View the games management list page', category: 'Games', scopes: adminScopes },
+  { id: 'games.settings.view', name: 'View Game Settings', description: 'View per-game settings (min/max bet, max win, limits)', category: 'Games', scopes: adminScopes },
+  { id: 'games.settings.manage', name: 'Manage Game Settings', description: 'Edit per-game settings: minimum bet, maximum bet and maximum win amount', category: 'Games', scopes: adminScopes },
   { id: 'games.rtp.view', name: 'View RTP Management', description: 'Open RTP management', category: 'Games', scopes: adminScopes },
   { id: 'games.rtp.edit', name: 'Edit RTP Values', description: 'Adjust RTP values per game / client', category: 'Games', scopes: adminScopes },
   { id: 'games.activity.view', name: 'View Game Activity', description: 'Monitor internal game bets, wins and losses per player', category: 'Games', scopes: adminScopes },

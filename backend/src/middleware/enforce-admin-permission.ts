@@ -86,12 +86,18 @@ const PROMO_VIEW = [
   'promotions.raffles.view',
   'promotions.referrals.view',
   'promotions.bonus.view',
+  'promotions.registration_bonus.view',
+  'promotions.cashout.view',
+  'promotions.rain.view',
   'promotions.affiliates.view',
 ];
 const PROMO_MANAGE = [
   'promotions.raffles.manage',
   'promotions.referrals.manage',
   'promotions.bonus.manage',
+  'promotions.registration_bonus.manage',
+  'promotions.cashout.manage',
+  'promotions.rain.manage',
   'promotions.affiliates.manage',
 ];
 const PROMO_ALL = [...PROMO_VIEW, ...PROMO_MANAGE];
@@ -186,8 +192,8 @@ const RULES: Rule[] = [
   { re: /^\/game-activity(\/|$)/, read: ['games.activity.view'], write: ['games.activity.view'] },
   {
     re: /^\/games(\/|$)/,
-    read: ['games.view', 'games.rtp.view', 'games.activity.view'],
-    write: ['games.view', 'games.rtp.edit'],
+    read: ['games.view', 'games.settings.view', 'games.settings.manage', 'games.rtp.view', 'games.activity.view'],
+    write: ['games.view', 'games.settings.manage', 'games.rtp.edit'],
   },
   both(/^\/game-picks(\/|$)/, ['settings.game_picks']),
 
@@ -217,7 +223,11 @@ const RULES: Rule[] = [
   // Promotions (bonuses, raffles, referrals, affiliates, and ops-mounted
   // promotion config endpoints: referral-config / cashout-boost /
   // registration-bonus).
-  { re: /^\/bonuses(\/|$)/, read: ['promotions.bonus.view'], write: ['promotions.bonus.manage'] },
+  {
+    re: /^\/bonuses(\/|$)/,
+    read: ['promotions.bonus.view', 'promotions.registration_bonus.view', 'promotions.cashout.view', 'promotions.rain.view'],
+    write: ['promotions.bonus.manage', 'promotions.registration_bonus.manage', 'promotions.cashout.manage', 'promotions.rain.manage'],
+  },
   { re: /^\/promotions(\/|$)/, read: PROMO_VIEW, write: PROMO_ALL },
   { re: /^\/raffles(\/|$)/, read: ['promotions.raffles.view'], write: ['promotions.raffles.manage'] },
   { re: /^\/affiliates(\/|$)/, read: ['promotions.affiliates.view'], write: ['promotions.affiliates.manage'] },
@@ -260,6 +270,10 @@ const RULES: Rule[] = [
 
   // Dashboard (KPIs).
   both(/^\/dashboard(\/|$)/, ['dashboard.view', 'dashboard.kpi', 'dashboard.charts']),
+
+  // Agent Dashboard (agent-scoped shop KPIs). Agents hold `dashboard.agent.view`
+  // via their baseline; full admins with `dashboard.view` can also open it.
+  both(/^\/agent-dashboard(\/|$)/, ['dashboard.agent.view', 'dashboard.view']),
 ];
 
 function isReadMethod(method: string): boolean {

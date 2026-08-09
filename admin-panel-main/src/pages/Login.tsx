@@ -68,7 +68,12 @@ export function Login() {
     setLoginError('');
     try {
       await login(username, password);
-      navigate('/dashboard');
+      // Route to the landing resolver instead of hard-coding /dashboard: it
+      // sends each account to the first page their permissions allow. Super
+      // admins / admins still land on /dashboard; restricted roles (e.g. an
+      // agent without dashboard.view) land on their first accessible page
+      // instead of hitting Access Denied.
+      navigate('/');
     } catch (error) {
       const message =
         error instanceof Error && error.message

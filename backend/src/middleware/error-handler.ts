@@ -23,10 +23,20 @@ export function errorHandler(
   }
 
   if (err instanceof ZodError) {
+    // Surface the first specific issue (field + reason) in `message` so the
+    // client can show a useful toast instead of a bare "Invalid input". The
+    // full issue list is still returned in `details` for debugging.
+    const issues = err.issues ?? [];
+    const first = issues[0];
+    const fieldPath =
+      first && Array.isArray(first.path) && first.path.length
+        ? first.path.join('.')
+        : '';
+    const detail = first?.message ?? 'Invalid input';
     res.status(400).json({
       error: 'validation_error',
-      message: 'Invalid input',
-      details: err.errors,
+      message: fieldPath ? `${fieldPath}: ${detail}` : detail,
+      details: issues,
     });
     return;
   }

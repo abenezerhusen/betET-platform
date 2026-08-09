@@ -9,6 +9,7 @@ import { RequirePermission } from './components/RequirePermission';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
+import { AgentDashboard } from './pages/agent-dashboard/AgentDashboard';
 import { OfflineCashReport } from './pages/reports/OfflineCashReport';
 import { OnlineCashReport } from './pages/reports/OnlineCashReport';
 import { PayableReport } from './pages/reports/PayableReport';
@@ -106,8 +107,18 @@ function ProtectedLayout({ children }: { children: React.ReactNode }) {
  * any authenticated admin (currently only `/dashboard` defaults to that
  * via `dashboard.view`).
  */
-const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.ReactNode }> = [
+const gatedRoutes: ReadonlyArray<{
+  path: string;
+  perm: string;
+  /** Optional umbrella permissions that also grant access (OR fallback). */
+  anyOf?: string[];
+  element: React.ReactNode;
+}> = [
   { path: '/dashboard', perm: 'dashboard.view', element: <Dashboard /> },
+  // Agent-scoped shop dashboard. Listed right after /dashboard so the landing
+  // resolver sends agents here (they lack dashboard.view but hold
+  // dashboard.agent.view) while full admins still land on /dashboard.
+  { path: '/agent-dashboard', perm: 'dashboard.agent.view', element: <AgentDashboard /> },
 
   /* Reports */
   { path: '/reports/offline-cash', perm: 'reports.offline_cash', element: <OfflineCashReport /> },
@@ -119,9 +130,9 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/promotions/referrals', perm: 'promotions.referrals.view', element: <Referrals /> },
   { path: '/promotions/bonus', perm: 'promotions.bonus.view', element: <BonusEngine /> },
   { path: '/promotions/affiliates', perm: 'promotions.affiliates.view', element: <Affiliates /> },
-  { path: '/promotions/cashout-boost', perm: 'promotions.bonus.view', element: <CashoutPromotion /> },
-  { path: '/promotions/registration-bonus', perm: 'promotions.bonus.view', element: <RegistrationBonus /> },
-  { path: '/promotions/rain-bonus', perm: 'promotions.bonus.view', element: <RainBonus /> },
+  { path: '/promotions/cashout-boost', perm: 'promotions.cashout.view', anyOf: ['promotions.bonus.view'], element: <CashoutPromotion /> },
+  { path: '/promotions/registration-bonus', perm: 'promotions.registration_bonus.view', anyOf: ['promotions.bonus.view'], element: <RegistrationBonus /> },
+  { path: '/promotions/rain-bonus', perm: 'promotions.rain.view', anyOf: ['promotions.bonus.view'], element: <RainBonus /> },
 
   /* Users */
   { path: '/users/super-admin', perm: 'users.super_admin.view', element: <SuperAdmin /> },
@@ -200,6 +211,28 @@ const gatedRoutes: ReadonlyArray<{ path: string; perm: string; element: React.Re
   { path: '/apis', perm: 'apis.view', element: <ApisIntegrations /> },
 ];
 
+/**
+ * Landing redirect. Instead of always sending the user to `/dashboard`
+ * (which requires the `dashboard.view` permission), route them to the
+ * first page their assigned permissions actually allow. This prevents the
+ * "assigned a role but immediately see Access Denied" trap for admins whose
+ * role does not include dashboard access. Falls back to `/unauthorized`
+ * only when the account genuinely has no accessible page.
+ */
+function DefaultRedirect() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const target = gatedRoutes.find(
+    (r) => hasPermission(r.perm) || (r.anyOf ?? []).some((p) => hasPermission(p))
+  );
+  return <Navigate to={target ? target.path : '/unauthorized'} replace />;
+}
+
 function App() {
   return (
     <Router>
@@ -219,13 +252,15 @@ function App() {
             path={r.path}
             element={
               <ProtectedLayout>
-                <RequirePermission perm={r.perm}>{r.element}</RequirePermission>
+                <RequirePermission perm={r.perm} anyOf={r.anyOf}>
+                  {r.element}
+                </RequirePermission>
               </ProtectedLayout>
             }
           />
         ))}
 
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<DefaultRedirect />} />
       </Routes>
     </Router>
   );

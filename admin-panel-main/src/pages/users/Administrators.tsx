@@ -469,6 +469,8 @@ export function Administrators() {
                 <label className="block text-sm font-medium text-gray-700">Username</label>
                 <input
                   type="text"
+                  name="admin_username_new"
+                  autoComplete="off"
                   value={formState.username}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, username: e.target.value }))
@@ -513,6 +515,8 @@ export function Administrators() {
                 <label className="block text-sm font-medium text-gray-700">New Password</label>
                 <input
                   type="password"
+                  name="admin_password_new"
+                  autoComplete="new-password"
                   value={formState.password}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, password: e.target.value }))
@@ -524,6 +528,8 @@ export function Administrators() {
                 <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
                 <input
                   type="password"
+                  name="admin_confirm_password_new"
+                  autoComplete="new-password"
                   value={formState.confirmPassword}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, confirmPassword: e.target.value }))

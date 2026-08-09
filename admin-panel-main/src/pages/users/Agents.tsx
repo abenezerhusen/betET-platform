@@ -76,7 +76,12 @@ const createAgentSchema = z
     lastName: z.string().trim().optional(),
     username: z.string().trim().optional(),
     email: z.string().trim().email().optional().or(z.literal('')),
-    phone: z.string().trim().min(8).optional().or(z.literal('')),
+    phone: z
+      .string()
+      .trim()
+      .min(7, 'Phone number must be at least 7 digits')
+      .optional()
+      .or(z.literal('')),
     agentType: z.enum(['regular', 'pos']),
     password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
     confirmPassword: z.string().optional().or(z.literal('')),

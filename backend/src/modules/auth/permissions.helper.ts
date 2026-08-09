@@ -40,6 +40,31 @@ const ROLE_FALLBACKS: Record<string, string[]> = {
   super_admin: [SUPERADMIN_WILDCARD],
 };
 
+/**
+ * Agents operate the Admin Panel but must only ever see and manage their OWN
+ * sub-tree (their branches + sales staff). The Admin Panel pages / routes /
+ * backend API gate on the *admin* permission catalog (`users.branches.*`,
+ * `users.sales.*`), whereas the agent Role Settings modal grants *agent*-scope
+ * IDs (`list_sales`, `agent.branches.manage`, …). Those two catalogs don't
+ * line up, so an agent would otherwise be locked out of every page.
+ *
+ * We reconcile this by granting every `agent` a fixed baseline of admin-catalog
+ * permissions that unlock exactly the two pages they need — Branches and Sales.
+ * This baseline is SAFE because the data itself is scoped to the agent's
+ * sub-tree in `admin/users.service.ts` (list is filtered by `metadata.agent_id
+ * = <agent>`, creation forces `agent_id = <agent>`, and every single-record
+ * action is guarded to the agent's own branches/sales). The baseline grants no
+ * access to global dashboards, other agents, admins, reports, settings, etc.
+ */
+export const AGENT_ADMIN_BASELINE: string[] = [
+  'users.branches.view',
+  'users.branches.manage',
+  'users.sales.view',
+  'users.sales.manage',
+  // Agent-scoped shop dashboard (read-only KPIs for the agent's own sub-tree).
+  'dashboard.agent.view',
+];
+
 export async function loadPermissionsForRole(
   client: PoolClient,
   tenantId: string,
@@ -89,6 +114,15 @@ export async function loadEffectivePermissionsForUser(
   // Super admin shortcut.
   if (ROLE_FALLBACKS[user.role]) return ROLE_FALLBACKS[user.role];
 
+  // Agents always receive the sub-tree management baseline (see
+  // AGENT_ADMIN_BASELINE) in ADDITION to any per-user override / role row,
+  // so they can always reach their own Branches + Sales pages. The data
+  // they see through those pages is scoped to their own agent id server-side.
+  const withAgentBaseline = (perms: string[]): string[] =>
+    user.role === 'agent'
+      ? Array.from(new Set([...perms, ...AGENT_ADMIN_BASELINE]))
+      : perms;
+
   const md = (user.metadata ?? {}) as Record<string, unknown>;
   const override = md.permissions;
   if (Array.isArray(override)) {
@@ -97,12 +131,12 @@ export async function loadEffectivePermissionsForUser(
     // user has no admin-panel surface area". We only fall back to the
     // role row when the override is absent altogether.
     if (filtered.length > 0 || md.permissions !== undefined) {
-      return filtered;
+      return withAgentBaseline(filtered);
     }
   }
 
   const rolePerms = await loadPermissionsForRole(client, tenantId, user.role);
-  if (rolePerms.length > 0) return rolePerms;
+  if (rolePerms.length > 0) return withAgentBaseline(rolePerms);
 
   // `tenant_admin` is a FULL administrator by default. Unless the operator
   // explicitly restricts it (via a `roles` row or a per-user override handled
@@ -111,7 +145,9 @@ export async function loadEffectivePermissionsForUser(
   // intent in ROLE_FALLBACKS and keeps frontend/backend gating consistent.
   if (user.role === 'tenant_admin') return [SUPERADMIN_WILDCARD];
 
-  return rolePerms;
+  // Agent created without any role row / override still gets the baseline so
+  // they can manage their own sub-tree out of the box.
+  return withAgentBaseline(rolePerms);
 }
 
 /** Returns true if the JWT-embedded permission list covers `required`. */

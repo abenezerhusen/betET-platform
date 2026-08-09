@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Root ignore for the betET platform monorepo.
+#
+# Search tools (ripgrep / Cursor) honour .gitignore. Excluding the generated
+# dependency + build directories below keeps repo-wide searches fast and cheap
+# instead of crawling hundreds of thousands of generated/binary files.
+# These are all machine-generated artifacts and should never be committed.
+# ---------------------------------------------------------------------------
+
+# Node / JS dependencies & build output (backend, admin-panel, user-panel,
+# cashier-panel, game-engine)
+**/node_modules/
+**/dist/
+**/build/
+**/.next/
+**/out/
+**/.turbo/
+**/coverage/
+**/.nyc_output/
+**/.parcel-cache/
+**/.vite/
+**/*.tsbuildinfo
+
+# Flutter / Android (M-info-app)
+**/.dart_tool/
+**/.gradle/
+**/.cxx/
+**/*.so
+**/android/local.properties
+
+# Logs & scratch
+logs/
+.logs/
+.tmp-shot/
+**/*.log
+
+# Env files (never commit secrets)
+**/.env
+**/.env.*
+!**/.env.example

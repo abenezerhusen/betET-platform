@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
@@ -74,7 +74,12 @@ const createSalesSchema = z
     lastName: z.string().trim().optional(),
     username: z.string().trim().optional(),
     email: z.string().trim().email().optional().or(z.literal('')),
-    phone: z.string().trim().min(8).optional().or(z.literal('')),
+    phone: z
+      .string()
+      .trim()
+      .min(7, 'Phone number must be at least 7 digits')
+      .optional()
+      .or(z.literal('')),
     agentId: z.string().uuid('Agent is required'),
     branchId: z.string().uuid('Branch is required'),
     channel: z.enum(['retail', 'online']),
@@ -163,6 +168,26 @@ export function Sales() {
       });
   }, [branchUsers, formState.agentId]);
   const findUser = (id: string) => rows.find((u) => u.id === id);
+
+  // Signed-in user context. When an Agent operates the panel, every sales
+  // account they create belongs to themselves, so we lock the Agent field to
+  // their own id (the backend also forces metadata.agent_id to the caller).
+  const currentUser = useAuthStore((s) => s.user);
+  const isAgentUser = currentUser?.role === 'agent';
+
+  useEffect(() => {
+    if (isAgentUser && currentUser?.id) {
+      if (formState.agentId !== currentUser.id) {
+        setFormState((s) => ({ ...s, agentId: currentUser.id, branchId: '' }));
+      }
+      return;
+    }
+    // Non-agent admins: if the backend returned exactly one agent, auto-select
+    // it to streamline sales creation.
+    if (agentOptions.length === 1 && !formState.agentId) {
+      setFormState((s) => ({ ...s, agentId: agentOptions[0].id }));
+    }
+  }, [isAgentUser, currentUser?.id, agentOptions, formState.agentId]);
 
   const handleViewDetails = (id: string) => {
     const u = findUser(id);
@@ -460,6 +485,8 @@ export function Sales() {
                 <label className="block text-sm font-medium text-gray-700">Username</label>
                 <input
                   type="text"
+                  name="sales_username_new"
+                  autoComplete="off"
                   value={formState.username}
                   onChange={(e) => setFormState((s) => ({ ...s, username: e.target.value }))}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -487,10 +514,11 @@ export function Sales() {
                 <label className="block text-sm font-medium text-gray-700">Agent</label>
                 <select
                   value={formState.agentId}
+                  disabled={isAgentUser}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, agentId: e.target.value, branchId: '' }))
                   }
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                 >
                   <option value="">Select Agent</option>
                   {agentOptions.map((a) => (
@@ -499,6 +527,11 @@ export function Sales() {
                     </option>
                   ))}
                 </select>
+                {isAgentUser && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    This sales account will be created under your agent account.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Branch</label>
@@ -543,6 +576,8 @@ export function Sales() {
                 <label className="block text-sm font-medium text-gray-700">New Password</label>
                 <input
                   type="password"
+                  name="sales_password_new"
+                  autoComplete="new-password"
                   value={formState.password}
                   onChange={(e) => setFormState((s) => ({ ...s, password: e.target.value }))}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -552,6 +587,8 @@ export function Sales() {
                 <label className="block text-sm font-medium text-gray-700">Confirm Password</label>
                 <input
                   type="password"
+                  name="sales_confirm_password_new"
+                  autoComplete="new-password"
                   value={formState.confirmPassword}
                   onChange={(e) =>
                     setFormState((s) => ({ ...s, confirmPassword: e.target.value }))

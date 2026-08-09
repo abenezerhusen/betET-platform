@@ -23,10 +23,10 @@ export function Unauthorized() {
         </p>
         <div className="flex items-center justify-center gap-2">
           <Link
-            to="/dashboard"
+            to="/"
             className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
           >
-            Back to Dashboard
+            Go to my home page
           </Link>
           <Link
             to="/login"

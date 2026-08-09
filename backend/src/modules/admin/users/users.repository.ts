@@ -105,6 +105,17 @@ export async function listUsers(
      * surface both `sales` and `cashier` retail-staff accounts in one list.
      */
     roles?: string[] | null;
+    /**
+     * Agent sub-tree scoping: when set, only rows whose
+     * `metadata.agent_id` equals this id are returned. Used to restrict an
+     * agent to their own branches / sales staff.
+     */
+    agentId?: string | null;
+    /**
+     * Restrict to a single user id. Used to let an agent resolve only their
+     * own `agent` record (e.g. for a self dropdown) without exposing others.
+     */
+    onlyId?: string | null;
     status: string | null;
     kycStatus: string | null;
     search: string | null;
@@ -137,6 +148,14 @@ export async function listUsers(
   if (roleList) {
     filters.push(`u.role = ANY($${i++}::text[])`);
     values.push(roleList);
+  }
+  if (params.agentId) {
+    filters.push(`u.metadata->>'agent_id' = $${i++}`);
+    values.push(params.agentId);
+  }
+  if (params.onlyId) {
+    filters.push(`u.id = $${i++}`);
+    values.push(params.onlyId);
   }
   if (params.excludeOfflineStaffRoles) {
     const placeholders = OFFLINE_STAFF_ROLES.map(() => `$${i++}`);
