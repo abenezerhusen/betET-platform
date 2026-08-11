@@ -2,7 +2,17 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { TabGroup } from '../../components/TabGroup';
-import { Target, TrendingUp, Users, Clock } from 'lucide-react';
+import {
+  Target,
+  TrendingUp,
+  Users,
+  Clock,
+  Trophy,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  Plus,
+} from 'lucide-react';
 import { toast } from '../../lib/toast';
 import * as gamePicksApi from '../../lib/api/gamePicks';
 import { useAuthStore } from '../../store/auth';
@@ -47,6 +57,196 @@ const tabs = [
   { id: 'completed', label: 'Completed' },
   { id: 'analysis', label: 'Analysis' },
 ];
+
+/**
+ * Top Leagues configuration — admin-selected leagues (from the synchronized
+ * database, never hardcoded) that rank first on the sports board and get
+ * odds-pricing priority. Add / remove / enable / disable / reorder.
+ */
+function TopLeaguesSection() {
+  const isAuth = useAuthStore((s) => s.isAuthenticated);
+  const [leagues, setLeagues] = useState<gamePicksApi.TopLeague[]>([]);
+  const [available, setAvailable] = useState<gamePicksApi.AvailableLeague[]>([]);
+  const [newLeague, setNewLeague] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [rows, avail] = await Promise.all([
+        gamePicksApi.listTopLeagues(),
+        gamePicksApi.listAvailableLeagues(),
+      ]);
+      setLeagues(rows ?? []);
+      setAvailable(avail ?? []);
+    } catch (err) {
+      toast(`Failed to load top leagues: ${(err as Error).message ?? err}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuth) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuth]);
+
+  const add = async () => {
+    const league = newLeague.trim();
+    if (!league) return;
+    setBusy(true);
+    try {
+      await gamePicksApi.addTopLeague(league);
+      setNewLeague('');
+      await load();
+      toast(`Added "${league}" to top leagues.`);
+    } catch (err) {
+      toast(`Failed to add league: ${(err as Error).message ?? err}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (l: gamePicksApi.TopLeague) => {
+    setBusy(true);
+    try {
+      await gamePicksApi.updateTopLeague(l.id, { enabled: !l.enabled });
+      await load();
+    } catch (err) {
+      toast(`Failed to update league: ${(err as Error).message ?? err}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const move = async (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= leagues.length) return;
+    const ids = leagues.map((l) => l.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    setBusy(true);
+    try {
+      const rows = await gamePicksApi.reorderTopLeagues(ids);
+      setLeagues(rows ?? []);
+    } catch (err) {
+      toast(`Failed to reorder: ${(err as Error).message ?? err}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (l: gamePicksApi.TopLeague) => {
+    setBusy(true);
+    try {
+      await gamePicksApi.deleteTopLeague(l.id);
+      await load();
+      toast(`Removed "${l.league}" from top leagues.`);
+    } catch (err) {
+      toast(`Failed to remove league: ${(err as Error).message ?? err}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-6 space-y-4">
+      <div className="flex items-center space-x-3">
+        <Trophy className="h-6 w-6 text-green-600" />
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Top Leagues</h2>
+          <p className="text-sm text-gray-500">
+            Leagues shown first on the sports board and priced with priority.
+            Picked from the leagues actually synchronized from the data
+            provider. Order sets display priority (top = first).
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          list="top-league-options"
+          value={newLeague}
+          onChange={(e) => setNewLeague(e.target.value)}
+          placeholder="e.g. England - Premier League"
+          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:ring-green-500"
+        />
+        <datalist id="top-league-options">
+          {available
+            .filter((a) => !leagues.some((l) => l.league === a.league))
+            .map((a) => (
+              <option key={a.league} value={a.league}>
+                {`${a.events} events`}
+              </option>
+            ))}
+        </datalist>
+        <button
+          onClick={add}
+          disabled={busy || !newLeague.trim()}
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+        >
+          <Plus size={16} />
+          Add League
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : leagues.length === 0 ? (
+        <p className="text-sm text-gray-500">
+          No top leagues configured — the platform default ordering applies.
+        </p>
+      ) : (
+        <ul className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+          {leagues.map((l, idx) => (
+            <li key={l.id} className="flex items-center gap-3 px-4 py-2.5">
+              <span className="w-6 text-xs text-gray-400 text-right">{idx + 1}.</span>
+              <span
+                className={`flex-1 text-sm ${l.enabled ? 'text-gray-900' : 'text-gray-400 line-through'}`}
+              >
+                {l.league}
+              </span>
+              <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={l.enabled}
+                  disabled={busy}
+                  onChange={() => toggle(l)}
+                  className="h-4 w-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                />
+                {l.enabled ? 'Enabled' : 'Disabled'}
+              </label>
+              <button
+                onClick={() => move(idx, -1)}
+                disabled={busy || idx === 0}
+                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30"
+                title="Move up"
+              >
+                <ArrowUp size={14} />
+              </button>
+              <button
+                onClick={() => move(idx, 1)}
+                disabled={busy || idx === leagues.length - 1}
+                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-30"
+                title="Move down"
+              >
+                <ArrowDown size={14} />
+              </button>
+              <button
+                onClick={() => remove(l)}
+                disabled={busy}
+                className="p-1.5 rounded hover:bg-red-50 text-red-500 disabled:opacity-30"
+                title="Remove"
+              >
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const StatCard = ({ icon: Icon, title, value, trend }: { icon: any, title: string, value: string, trend?: string }) => (
   <div className="bg-white p-6 rounded-lg shadow-sm">
@@ -215,6 +415,8 @@ export function GamePicks() {
       <div className="bg-white rounded-lg shadow">
         <DataTable columns={columns} data={filteredRows} />
       </div>
+
+      <TopLeaguesSection />
     </div>
   );
 }

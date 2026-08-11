@@ -188,16 +188,25 @@ router.get(
                 COALESCE(ev.away_score, 0)::int AS away_score,
                 COALESCE((ev.stats->>'minute')::int, 0) AS minute,
                 ev.is_featured,
-                -- Top-5 world leagues rank first on the default board; every
-                -- other league falls back to 100 (then ordered by kickoff).
-                CASE lower(ev.league)
-                  WHEN 'england - premier league' THEN 0
-                  WHEN 'spain - laliga'           THEN 1
-                  WHEN 'germany - bundesliga'      THEN 2
-                  WHEN 'italy - serie a'           THEN 3
-                  WHEN 'france - ligue 1'          THEN 4
-                  ELSE 100
-                END AS league_priority,
+                -- Admin-configured Top Leagues (Game Picks → Top Leagues) rank
+                -- first by their configured priority; the previous hardcoded
+                -- top-5 stays as the fallback for unconfigured tenants; every
+                -- other league falls back last (then ordered by kickoff).
+                COALESCE(
+                  (SELECT tl.priority FROM top_leagues tl
+                    WHERE tl.tenant_id = ev.tenant_id
+                      AND tl.enabled = true
+                      AND lower(tl.league) = lower(ev.league)
+                    LIMIT 1),
+                  CASE lower(ev.league)
+                    WHEN 'england - premier league' THEN 10000
+                    WHEN 'spain - laliga'           THEN 10001
+                    WHEN 'germany - bundesliga'      THEN 10002
+                    WHEN 'italy - serie a'           THEN 10003
+                    WHEN 'france - ligue 1'          THEN 10004
+                    ELSE 20000
+                  END
+                ) AS league_priority,
                 COALESCE((SELECT COUNT(DISTINCT bl.bet_id)::int
                             FROM sports_markets m
                             JOIN sports_selections s ON s.market_id = m.id

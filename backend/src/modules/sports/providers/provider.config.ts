@@ -124,9 +124,14 @@ export function presentConfig(row: SportsProviderRow | null) {
     last_events_sync_at: row?.last_events_sync_at
       ? new Date(row.last_events_sync_at).toISOString()
       : null,
+    last_results_sync_at: row?.last_results_sync_at
+      ? new Date(row.last_results_sync_at).toISOString()
+      : null,
     last_error: row?.last_error ?? null,
     events_synced: row?.events_synced ?? 0,
     odds_synced: row?.odds_synced ?? 0,
+    results_finalized: row?.results_finalized ?? 0,
+    tickets_settled: row?.tickets_settled ?? 0,
     updated_at: row?.updated_at ? new Date(row.updated_at).toISOString() : null,
   };
 }

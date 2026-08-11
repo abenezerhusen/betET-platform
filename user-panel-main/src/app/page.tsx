@@ -206,6 +206,9 @@ function backendMatchToHome(row: sportsApi.SportsMatchRow): HomeMatch {
   // so the typed `number` field arrives as e.g. "1.50". Coerce eagerly
   // so the MatchCard's `.toFixed(2)` calls don't crash on a string.
   const toNum = (v: unknown, fallback = 0): number => {
+    // Number(null) / Number('') coerce to 0, which would render as a fake
+    // "0.00" odd — treat absent values as missing so the fallback applies.
+    if (v == null || v === '') return fallback;
     const n = typeof v === 'number' ? v : Number(v);
     return Number.isFinite(n) ? n : fallback;
   };

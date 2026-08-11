@@ -24,7 +24,9 @@ import { logger } from '../../../infrastructure/logger';
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import {
   handleEventCancelled,
+  handleEventPostponed,
   settleBetFromLegs,
+  writeAuditLog,
 } from '../../admin/settlement/settlement.service';
 import { mapStatus } from './odds-api.normalizer';
 import { gradeSelection } from './market-grading';
@@ -55,6 +57,38 @@ const MAX_RESULT_PAGES = 4;
  * after results — so draining a big backlog never starves live pricing.
  */
 const RESULTS_BUDGET_RESERVE = 15;
+/**
+ * When the backlog spans weeks, fetch settled fixtures in bounded time slices
+ * starting at the OLDEST still-open kickoff, so every cycle makes guaranteed
+ * forward progress instead of re-reading the same first pages of a 45-day
+ * window forever (the failure mode that left thousands of past-kickoff events
+ * permanently stuck `scheduled`/`live`).
+ */
+const RESULTS_SLICE_HOURS = 7 * 24;
+/** Targeted per-event result resolution (events that carry pending bets). */
+const TARGETED_FETCH_LIMIT = 15;
+const TARGETED_MIN_AGE_HOURS = 4;
+const TARGETED_RECHECK_MINUTES = 60;
+/** Wait applied when the provider reports a fixture as postponed. */
+const POSTPONED_DEFAULT_WAIT_HOURS = 72;
+
+/**
+ * Scores arrive as JSON numbers per the provider spec, but odds fields are
+ * strings and payloads vary by sport/plan — parse tolerantly so a stringly
+ * "2" never silently blocks settlement of a finished match.
+ */
+function toScore(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Per-tenant re-entrancy guard: the results pass can be triggered by the
+ * background loop AND the admin (Sync Now / Run Auto-Settle) at the same
+ * time. Settlement itself is idempotent, but overlapping passes would burn
+ * double request budget for nothing.
+ */
+const resultsInFlight = new Set<string>();
 
 /**
  * Grade every still-open selection of a finished event from its final score
@@ -96,6 +130,343 @@ async function gradeEventFromScore(
 }
 
 /**
+ * Shared "grade → propagate → settle" step for a set of already-scored events.
+ *
+ * 1. Mark markets settled only when ALL their selections are graded (so a
+ *    partially-resolvable market never falsely settles a leg).
+ * 2. Propagate graded selection results onto still-pending bet legs.
+ * 3. Settle every ticket whose legs are now ALL terminal via the existing
+ *    wallet-crediting engine. Idempotent (skips non-pending tickets / already
+ *    settled), errors flagged for review — never throws for one bad ticket.
+ *
+ * Reused by BOTH the provider-driven pass (newly finalized events) and the
+ * local backfill pass (events already flipped to `finished` by the live feed
+ * but never graded). Returns the number of tickets settled this call.
+ */
+async function gradeAndSettleFinishedEventIds(
+  c: PoolClient,
+  tenantId: string,
+  eventIds: string[]
+): Promise<number> {
+  if (eventIds.length === 0) return 0;
+
+  await c.query(
+    `UPDATE sports_markets sm
+        SET status = 'settled', settled_at = now()
+      WHERE sm.event_id = ANY($1) AND sm.status <> 'settled'
+        AND NOT EXISTS (
+          SELECT 1 FROM sports_selections s
+           WHERE s.market_id = sm.id AND s.result IS NULL
+        )`,
+    [eventIds]
+  );
+
+  const affected = await c.query<{ bet_id: string }>(
+    `UPDATE sportsbook_bet_legs leg
+        SET status = sel.result,
+            selection_status = CASE sel.result
+              WHEN 'won' THEN 'won'
+              WHEN 'lost' THEN 'lost'
+              ELSE 'voided'
+            END,
+            settled_odds = CASE WHEN sel.result = 'void'
+                                THEN 1.00 ELSE leg.odds_at_placement END,
+            settled_at = now()
+       FROM sports_selections sel
+      WHERE leg.selection_id = sel.id
+        AND leg.status = 'pending'
+        AND sel.result IS NOT NULL
+        AND sel.market_id IN (
+          SELECT id FROM sports_markets WHERE event_id = ANY($1)
+        )
+      RETURNING leg.bet_id`,
+    [eventIds]
+  );
+
+  const betIds = [...new Set(affected.rows.map((r) => r.bet_id))];
+  let settled = 0;
+  for (const betId of betIds) {
+    // Only settle when the WHOLE ticket is terminal (parlays wait for all legs).
+    const pend = await c.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n
+         FROM sportsbook_bet_legs
+        WHERE bet_id = $1 AND status = 'pending'`,
+      [betId]
+    );
+    if (Number(pend.rows[0]?.n ?? 0) > 0) continue;
+    const b = await c.query<{ status: string }>(
+      `SELECT status FROM sportsbook_bets WHERE id = $1`,
+      [betId]
+    );
+    if (!b.rows[0] || b.rows[0].status !== 'pending') continue;
+    try {
+      await settleBetFromLegs(c, {
+        tenantId,
+        betId,
+        actorId: null,
+        reason: 'auto_settle_real_result',
+      });
+      settled += 1;
+    } catch (err) {
+      logger.warn({ err, betId, tenantId }, 'auto-settle failed');
+      await c.query(
+        `UPDATE sportsbook_bets
+            SET settlement_status = 'error',
+                settlement_error = $1,
+                review_required = true
+          WHERE id = $2`,
+        [String(err instanceof Error ? err.message : err), betId]
+      );
+    }
+  }
+  return settled;
+}
+
+/**
+ * LOCAL backfill pass — settle events that are ALREADY `finished` with a final
+ * score recorded but whose tickets are still pending. This covers the gap where
+ * a match was flipped to `finished` by the live-events feed (score present) yet
+ * never graded/settled, so the provider-driven pass below — which only inspects
+ * `scheduled`/`live` events — would skip it forever and strand its tickets.
+ *
+ * Needs NO provider request, so it also runs when the API is rate-limited/down
+ * and via the admin manual trigger even with the provider disabled. Bounded and
+ * targeted (only finished events that still have pending legs). Never throws.
+ */
+export async function settleAlreadyFinishedEvents(
+  tenantId: string
+): Promise<{ finalized: number; settled: number }> {
+  try {
+    return await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      const ev = await c.query<{ id: string; home_score: number; away_score: number }>(
+        `SELECT DISTINCT e.id, e.home_score, e.away_score
+           FROM sports_events e
+          WHERE e.tenant_id = $1
+            AND e.status = 'finished'
+            AND e.home_score IS NOT NULL
+            AND e.away_score IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+                FROM sportsbook_bet_legs leg
+                JOIN sports_selections s ON s.id = leg.selection_id
+                JOIN sports_markets m ON m.id = s.market_id
+               WHERE m.event_id = e.id AND leg.status = 'pending'
+            )
+          LIMIT 500`,
+        [tenantId]
+      );
+      if (ev.rows.length === 0) return { finalized: 0, settled: 0 };
+
+      const eventIds: string[] = [];
+      for (const row of ev.rows) {
+        // Grade any still-ungraded selections from the recorded final score.
+        await gradeEventFromScore(c, row.id, row.home_score, row.away_score);
+        eventIds.push(row.id);
+      }
+      const settled = await gradeAndSettleFinishedEventIds(c, tenantId, eventIds);
+      return { finalized: eventIds.length, settled };
+    });
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'settleAlreadyFinishedEvents failed');
+    return { finalized: 0, settled: 0 };
+  }
+}
+
+/**
+ * Void + refund all pending legs of the given cancelled events via the
+ * EXISTING settlement engine, then make market/selection state consistent.
+ * Returns the number of events cancelled.
+ */
+async function applyCancelledEvents(
+  tenantId: string,
+  internalEventIds: string[]
+): Promise<number> {
+  let cancelled = 0;
+  const cancelledEventIds: string[] = [];
+  for (const eventId of internalEventIds) {
+    try {
+      await handleEventCancelled({ tenantId, eventId, actorId: null });
+      cancelledEventIds.push(eventId);
+      cancelled += 1;
+    } catch (err) {
+      logger.warn({ err, tenantId, eventId }, 'odds-sync: event-cancel void failed');
+    }
+  }
+  if (cancelledEventIds.length > 0) {
+    await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      await c.query(
+        `UPDATE sports_markets SET status = 'cancelled', settled_at = now()
+          WHERE event_id = ANY($1) AND status NOT IN ('cancelled', 'settled')`,
+        [cancelledEventIds]
+      );
+      await c.query(
+        `UPDATE sports_selections SET result = 'void'
+          WHERE result IS NULL
+            AND market_id IN (SELECT id FROM sports_markets WHERE event_id = ANY($1))`,
+        [cancelledEventIds]
+      );
+    });
+  }
+  return cancelled;
+}
+
+/** Stamp metadata.result_checked_at so targeted fetches back off per event. */
+async function touchResultChecked(
+  tenantId: string,
+  eventIds: string[]
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  await withTenantClient({ tenantId, bypassRls: true }, (c) =>
+    c.query(
+      `UPDATE sports_events
+          SET metadata = COALESCE(metadata, '{}'::jsonb)
+                || jsonb_build_object('result_checked_at', now()),
+              updated_at = now()
+        WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+      [tenantId, eventIds]
+    )
+  );
+}
+
+/**
+ * TARGETED result resolution — one GET /events/{id} per fixture that carries
+ * PENDING BETS but is still open past kickoff. This is the money-first safety
+ * net: even when the windowed settled feed misses an event (sport mismatch,
+ * backlog truncation, provider hiccup), any fixture someone actually bet on
+ * is resolved individually, oldest first.
+ *
+ * Handles every provider verdict safely:
+ *   settled   → record score, grade, settle tickets
+ *   cancelled → void legs + refund via the existing engine
+ *   postponed → mark postponed (expiry loop voids it after the wait window)
+ *   pending with a future date → fixture was rescheduled; update kickoff
+ *   unknown/404 → back off (stamped) — the overdue-flagging pass surfaces it
+ */
+async function resolveEventsWithPendingBets(
+  tenantId: string,
+  client: OddsApiClient,
+  budget: RequestBudget
+): Promise<{ finalized: number; settled: number; cancelled: number }> {
+  const due = await withTenantClient({ tenantId, bypassRls: true }, (c) =>
+    c.query<{ id: string; pid: string }>(
+      `SELECT DISTINCT e.id, e.metadata->>'provider_event_id' AS pid, e.starts_at
+         FROM sports_events e
+        WHERE e.tenant_id = $1
+          AND e.metadata ? 'provider_event_id'
+          AND e.status IN ('scheduled', 'live')
+          AND e.starts_at < now() - make_interval(hours => $2)
+          AND (
+            e.metadata->>'result_checked_at' IS NULL
+            OR (e.metadata->>'result_checked_at')::timestamptz
+               < now() - make_interval(mins => $3)
+          )
+          AND EXISTS (
+            SELECT 1
+              FROM sportsbook_bet_legs leg
+              JOIN sports_selections s ON s.id = leg.selection_id
+              JOIN sports_markets m ON m.id = s.market_id
+             WHERE m.event_id = e.id AND leg.status = 'pending'
+          )
+        ORDER BY e.starts_at ASC
+        LIMIT $4`,
+      [tenantId, TARGETED_MIN_AGE_HOURS, TARGETED_RECHECK_MINUTES, TARGETED_FETCH_LIMIT]
+    )
+  );
+  if (due.rows.length === 0) return { finalized: 0, settled: 0, cancelled: 0 };
+
+  const finishedByInternalId = new Map<string, { home: number; away: number }>();
+  const cancelledInternalIds: string[] = [];
+  const postponedInternalIds: string[] = [];
+  const rescheduled: Array<{ id: string; startsAt: string }> = [];
+  const checkedIds: string[] = [];
+
+  for (const row of due.rows) {
+    if (budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
+    let event;
+    try {
+      event = await client.getEventById(row.pid, budget);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ err, tenantId, pid: row.pid }, 'odds-sync: targeted result fetch failed');
+      if (msg.includes('429') || msg.includes('rate_limited') || msg.includes('budget')) break;
+      continue;
+    }
+    checkedIds.push(row.id);
+    if (!event) continue; // 404 — unknown upstream; overdue flagging will surface it
+
+    const st = mapStatus(event.status);
+    if (st === 'finished') {
+      const h = toScore(event.scores?.home);
+      const a = toScore(event.scores?.away);
+      if (h !== null && a !== null) {
+        finishedByInternalId.set(row.id, { home: h, away: a });
+      }
+    } else if (st === 'cancelled') {
+      cancelledInternalIds.push(row.id);
+    } else if (st === 'postponed') {
+      postponedInternalIds.push(row.id);
+    } else if (st === 'scheduled' && event.date) {
+      const newStart = new Date(event.date);
+      if (!Number.isNaN(newStart.getTime()) && newStart.getTime() > Date.now()) {
+        rescheduled.push({ id: row.id, startsAt: newStart.toISOString() });
+      }
+    }
+  }
+
+  await touchResultChecked(tenantId, checkedIds);
+
+  let finalized = 0;
+  let settled = 0;
+  if (finishedByInternalId.size > 0) {
+    const outcome = await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      const eventIds: string[] = [];
+      for (const [id, sc] of finishedByInternalId) {
+        await c.query(
+          `UPDATE sports_events
+              SET home_score = $2, away_score = $3, status = 'finished', updated_at = now()
+            WHERE id = $1 AND status <> 'finished'`,
+          [id, sc.home, sc.away]
+        );
+        await gradeEventFromScore(c, id, sc.home, sc.away);
+        eventIds.push(id);
+      }
+      const n = await gradeAndSettleFinishedEventIds(c, tenantId, eventIds);
+      return { finalized: eventIds.length, settled: n };
+    });
+    finalized = outcome.finalized;
+    settled = outcome.settled;
+  }
+
+  const cancelled = await applyCancelledEvents(tenantId, cancelledInternalIds);
+
+  for (const id of postponedInternalIds) {
+    try {
+      await handleEventPostponed({
+        tenantId,
+        eventId: id,
+        waitHours: POSTPONED_DEFAULT_WAIT_HOURS,
+        actorId: null,
+      });
+    } catch (err) {
+      logger.warn({ err, tenantId, eventId: id }, 'odds-sync: event-postpone failed');
+    }
+  }
+
+  if (rescheduled.length > 0) {
+    await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      for (const r of rescheduled) {
+        await c.query(
+          `UPDATE sports_events SET starts_at = $2, updated_at = now() WHERE id = $1`,
+          [r.id, r.startsAt]
+        );
+      }
+    });
+  }
+
+  return { finalized, settled, cancelled };
+}
+
+/**
  * Run the results + auto-settlement pass for one tenant. Safe no-op when there
  * is nothing to finalize; never throws to the caller.
  */
@@ -105,9 +476,46 @@ export async function settleFinishedResults(
   budget: RequestBudget,
   cfg: ResolvedProviderConfig
 ): Promise<ResultsOutcome> {
-  // 1) Which sports have past-kickoff fixtures still open? Only those are worth
-  //    a request. (Covers score-recording for every recently-finished match,
-  //    not just ones with bets.)
+  if (resultsInFlight.has(tenantId)) {
+    return { finalized: 0, settled: 0, cancelled: 0 };
+  }
+  resultsInFlight.add(tenantId);
+  try {
+    return await runResultsPass(tenantId, client, budget, cfg);
+  } finally {
+    resultsInFlight.delete(tenantId);
+  }
+}
+
+async function runResultsPass(
+  tenantId: string,
+  client: OddsApiClient,
+  budget: RequestBudget,
+  cfg: ResolvedProviderConfig
+): Promise<ResultsOutcome> {
+  void cfg; // config gates activation upstream; sports below come from the DB
+  // 0) LOCAL backfill (no provider request): settle any event already marked
+  //    `finished` with a score but whose tickets are still pending — the gap
+  //    the provider pass below cannot reach (it only looks at scheduled/live).
+  const local = await settleAlreadyFinishedEvents(tenantId);
+
+  // 0.5) TARGETED pass — fixtures with pending bets are resolved individually
+  //      first, so tickets with money on them never wait for (or get lost in)
+  //      the windowed backlog drain below.
+  let targeted = { finalized: 0, settled: 0, cancelled: 0 };
+  try {
+    targeted = await resolveEventsWithPendingBets(tenantId, client, budget);
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'odds-sync: targeted results pass failed');
+  }
+
+  // 1) Which sports have past-kickoff fixtures still open? Only those are
+  //    worth a request. Uses the sport slugs AS STORED (they come from the
+  //    provider's own sport.slug at import) — never the admin-configured
+  //    list, whose spellings can differ (e.g. `mixed-martial-arts` vs `mma`)
+  //    and would silently exclude whole sports from results forever.
+  //    Events older than the max lookback are excluded so a handful of
+  //    ancient unresolvable fixtures can't pin the window in the past.
   const needing = await withTenantClient({ tenantId }, async (c) => {
     const r = await c.query<{ sport: string; oldest: Date | null }>(
       `SELECT lower(sport) AS sport, min(starts_at) AS oldest
@@ -116,46 +524,49 @@ export async function settleFinishedResults(
           AND metadata ? 'provider_event_id'
           AND status IN ('scheduled', 'live')
           AND starts_at < now()
+          AND starts_at > now() - make_interval(hours => $2)
         GROUP BY lower(sport)`,
-      [tenantId]
+      [tenantId, MAX_RESULTS_LOOKBACK_HOURS]
     );
     return r.rows;
   });
 
-  const sportsNeeding = needing.map((row) => row.sport);
-  const sports = cfg.sports.filter((s) => sportsNeeding.includes(s.toLowerCase()));
-  if (sports.length === 0) return { finalized: 0, settled: 0, cancelled: 0 };
-
-  // How far back must we look? Cover the OLDEST still-open past-kickoff event
-  // (so nothing stays permanently unsettled once it finishes), but never look
-  // back further than MAX_RESULTS_LOOKBACK_HOURS in a single pass, and always
-  // at least the default RESULTS_LOOKBACK_HOURS window.
-  const oldestOpenMs = needing
-    .map((row) => (row.oldest ? new Date(row.oldest).getTime() : null))
-    .filter((v): v is number => v !== null)
-    .reduce((min, v) => (v < min ? v : min), Number.POSITIVE_INFINITY);
+  if (needing.length === 0) {
+    return {
+      finalized: local.finalized + targeted.finalized,
+      settled: local.settled + targeted.settled,
+      cancelled: targeted.cancelled,
+    };
+  }
 
   // 2) Fetch finished + cancelled fixtures (HTTP, outside any transaction).
   //    Odds-API status vocabulary is pending | live | settled | cancelled —
   //    FINISHED games come back as `settled` (with final `scores`), abandoned
   //    ones as `cancelled`. Both are pulled in ONE call per sport to stay
   //    inside the request budget.
+  //
+  //    Windowing: per sport, start at that sport's OLDEST still-open kickoff
+  //    (never further back than the hard cap) and read a bounded time slice.
+  //    Resolving the slice moves the oldest-open marker forward, so each
+  //    cycle drains the backlog front-to-back with guaranteed progress.
   const nowMs = Date.now();
   const floorMs = nowMs - RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
   const maxBackMs = nowMs - MAX_RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
-  const fromMs = Number.isFinite(oldestOpenMs)
-    ? Math.min(floorMs, Math.max(oldestOpenMs, maxBackMs))
-    : floorMs;
-  const fromIso = new Date(fromMs).toISOString();
-  const toIso = new Date(nowMs).toISOString();
   const finalById = new Map<string, { home: number; away: number }>();
   const cancelledIds = new Set<string>();
 
   let stop = false;
-  for (const sport of sports) {
+  for (const row of needing) {
     if (stop || budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
-    // Paginate the settled feed so a multi-week backlog is drained across
-    // cycles instead of being truncated at the first 5000 rows.
+    const sport = row.sport;
+    const oldestMs = row.oldest ? new Date(row.oldest).getTime() : floorMs;
+    const fromMs = Math.min(floorMs, Math.max(oldestMs, maxBackMs));
+    const toMs = Math.min(fromMs + RESULTS_SLICE_HOURS * 60 * 60 * 1000, nowMs);
+    const fromIso = new Date(fromMs).toISOString();
+    const toIso = new Date(toMs).toISOString();
+
+    // Paginate the settled feed so a dense slice is drained across cycles
+    // instead of being truncated at the first 5000 rows.
     for (let page = 0; page < MAX_RESULT_PAGES; page += 1) {
       if (budget.remaining() <= RESULTS_BUDGET_RESERVE) {
         stop = true;
@@ -182,7 +593,7 @@ export async function settleFinishedResults(
         logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
         // Rate limited / provider unavailable — stop this cycle; whatever we
         // already collected is still applied, the rest retries next cycle.
-        if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited')) {
+        if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited') || msg.includes('budget')) {
           stop = true;
         }
         break;
@@ -193,9 +604,9 @@ export async function settleFinishedResults(
           cancelledIds.add(String(e.id));
           continue;
         }
-        const h = e.scores?.home;
-        const a = e.scores?.away;
-        if (typeof h === 'number' && typeof a === 'number') {
+        const h = toScore(e.scores?.home);
+        const a = toScore(e.scores?.away);
+        if (h !== null && a !== null) {
           finalById.set(String(e.id), { home: h, away: a });
         }
       }
@@ -204,7 +615,11 @@ export async function settleFinishedResults(
   }
 
   if (finalById.size === 0 && cancelledIds.size === 0) {
-    return { finalized: 0, settled: 0, cancelled: 0 };
+    return {
+      finalized: local.finalized + targeted.finalized,
+      settled: local.settled + targeted.settled,
+      cancelled: targeted.cancelled,
+    };
   }
 
   // 3) Record scores, grade, and auto-settle — one short transaction.
@@ -241,82 +656,9 @@ export async function settleFinishedResults(
 
     if (eventIds.length === 0) return { finalized: 0, settled: 0 as number };
 
-    // Mark settled only the markets whose selections are ALL graded — so a
-    // market we couldn't fully resolve stays open (and never falsely settles a
-    // leg). With normalizer/grader in lockstep this settles everything we
-    // published.
-    await c.query(
-      `UPDATE sports_markets sm
-          SET status = 'settled', settled_at = now()
-        WHERE sm.event_id = ANY($1) AND sm.status <> 'settled'
-          AND NOT EXISTS (
-            SELECT 1 FROM sports_selections s
-             WHERE s.market_id = sm.id AND s.result IS NULL
-          )`,
-      [eventIds]
-    );
-
-    // Propagate graded results onto pending legs.
-    const affected = await c.query<{ bet_id: string }>(
-      `UPDATE sportsbook_bet_legs leg
-          SET status = sel.result,
-              selection_status = CASE sel.result
-                WHEN 'won' THEN 'won'
-                WHEN 'lost' THEN 'lost'
-                ELSE 'voided'
-              END,
-              settled_odds = CASE WHEN sel.result = 'void'
-                                  THEN 1.00 ELSE leg.odds_at_placement END,
-              settled_at = now()
-         FROM sports_selections sel
-        WHERE leg.selection_id = sel.id
-          AND leg.status = 'pending'
-          AND sel.result IS NOT NULL
-          AND sel.market_id IN (
-            SELECT id FROM sports_markets WHERE event_id = ANY($1)
-          )
-        RETURNING leg.bet_id`,
-      [eventIds]
-    );
-
-    const betIds = [...new Set(affected.rows.map((r) => r.bet_id))];
-    let settled = 0;
-    for (const betId of betIds) {
-      // Only settle when the WHOLE ticket is terminal (parlays wait for all
-      // legs). Leave still-pending multis for a later cycle.
-      const pend = await c.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n
-           FROM sportsbook_bet_legs
-          WHERE bet_id = $1 AND status = 'pending'`,
-        [betId]
-      );
-      if (Number(pend.rows[0]?.n ?? 0) > 0) continue;
-      const b = await c.query<{ status: string }>(
-        `SELECT status FROM sportsbook_bets WHERE id = $1`,
-        [betId]
-      );
-      if (!b.rows[0] || b.rows[0].status !== 'pending') continue;
-      try {
-        await settleBetFromLegs(c, {
-          tenantId,
-          betId,
-          actorId: null,
-          reason: 'auto_settle_real_result',
-        });
-        settled += 1;
-      } catch (err) {
-        logger.warn({ err, betId, tenantId }, 'auto-settle failed');
-        await c.query(
-          `UPDATE sportsbook_bets
-              SET settlement_status = 'error',
-                  settlement_error = $1,
-                  review_required = true
-            WHERE id = $2`,
-          [String(err instanceof Error ? err.message : err), betId]
-        );
-      }
-    }
-
+    // Grade → propagate → settle the freshly finalized events (shared helper,
+    // identical to the local backfill pass so behaviour stays in lockstep).
+    const settled = await gradeAndSettleFinishedEventIds(c, tenantId, eventIds);
     return { finalized: eventIds.length, settled };
   });
 
@@ -334,35 +676,92 @@ export async function settleFinishedResults(
         [tenantId, [...cancelledIds]]
       )
     );
-    const cancelledEventIds: string[] = [];
-    for (const row of rows.rows) {
-      try {
-        await handleEventCancelled({ tenantId, eventId: row.id, actorId: null });
-        cancelledEventIds.push(row.id);
-        cancelled += 1;
-      } catch (err) {
-        logger.warn(
-          { err, tenantId, eventId: row.id },
-          'odds-sync: event-cancel void failed'
-        );
-      }
-    }
-    if (cancelledEventIds.length > 0) {
-      await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
-        await c.query(
-          `UPDATE sports_markets SET status = 'cancelled', settled_at = now()
-            WHERE event_id = ANY($1) AND status NOT IN ('cancelled', 'settled')`,
-          [cancelledEventIds]
-        );
-        await c.query(
-          `UPDATE sports_selections SET result = 'void'
-            WHERE result IS NULL
-              AND market_id IN (SELECT id FROM sports_markets WHERE event_id = ANY($1))`,
-          [cancelledEventIds]
-        );
-      });
-    }
+    cancelled = await applyCancelledEvents(
+      tenantId,
+      rows.rows.map((r) => r.id)
+    );
   }
 
-  return { finalized: scored.finalized, settled: scored.settled, cancelled };
+  return {
+    finalized: scored.finalized + local.finalized + targeted.finalized,
+    settled: scored.settled + local.settled + targeted.settled,
+    cancelled: cancelled + targeted.cancelled,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Overdue-ticket flagging (no provider request, no money movement)          */
+/* -------------------------------------------------------------------------- */
+
+/** Flag tickets for admin review once their event is this long past kickoff
+ *  with no resolvable result (still scheduled/live, or not provider-linked). */
+const REVIEW_AFTER_HOURS = 48;
+
+/**
+ * Surface stuck tickets instead of leaving them invisible: any PENDING ticket
+ * with a pending leg whose event kicked off > REVIEW_AFTER_HOURS ago and is
+ * still unresolved (event stuck `scheduled`/`live`, or a seed/manual event
+ * with no provider mapping at all) is flagged `review_required` +
+ * `awaiting_settlement` so it appears in the Manual Settlement → Errors queue.
+ *
+ * NEVER moves money and NEVER guesses a result — resolution stays with the
+ * targeted/windowed result passes or an admin. Idempotent: already-flagged
+ * tickets are skipped. Returns the number of tickets newly flagged.
+ */
+export async function flagOverdueUnresolvedTickets(
+  tenantId: string
+): Promise<number> {
+  try {
+    return await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      const flagged = await c.query<{ id: string; settlement_status: string | null }>(
+        `UPDATE sportsbook_bets b
+            SET review_required = true,
+                settlement_status = CASE
+                  WHEN b.settlement_status IS NULL
+                    OR b.settlement_status IN ('pending', 'live')
+                  THEN 'awaiting_settlement'
+                  ELSE b.settlement_status
+                END,
+                updated_at = now()
+          WHERE b.tenant_id = $1
+            AND b.status = 'pending'
+            AND b.review_required = false
+            AND COALESCE(b.settlement_status, 'pending')
+                NOT IN ('postponed', 'manual_review', 'error')
+            AND EXISTS (
+              SELECT 1
+                FROM sportsbook_bet_legs leg
+                JOIN sports_selections s ON s.id = leg.selection_id
+                JOIN sports_markets m ON m.id = s.market_id
+                JOIN sports_events e ON e.id = m.event_id
+               WHERE leg.bet_id = b.id
+                 AND leg.status = 'pending'
+                 AND e.starts_at < now() - make_interval(hours => $2)
+                 AND (
+                   e.status IN ('scheduled', 'live')
+                   OR NOT (e.metadata ? 'provider_event_id')
+                 )
+            )
+          RETURNING b.id, b.settlement_status`,
+        [tenantId, REVIEW_AFTER_HOURS]
+      );
+
+      for (const row of flagged.rows) {
+        await writeAuditLog(c, {
+          tenantId,
+          betId: row.id,
+          actorId: null,
+          action: 'flag_awaiting_result',
+          newStatus: row.settlement_status ?? 'awaiting_settlement',
+          settlementReason:
+            `Event unresolved ${REVIEW_AFTER_HOURS}h after kickoff — ` +
+            'flagged for admin review (no result available from provider).',
+        });
+      }
+      return flagged.rows.length;
+    });
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'flagOverdueUnresolvedTickets failed');
+    return 0;
+  }
 }

@@ -275,7 +275,14 @@ router.get(
                   ELSE ROUND((COUNT(*) FILTER (WHERE b.status='lost')::numeric * 100) / COUNT(b.id), 2)
                 END AS win_rate,
                 ev.status,
-                ev.starts_at
+                ev.starts_at,
+                -- Real synchronized result (provider results sync / live feed /
+                -- admin entry) + settlement progress of the tickets on it.
+                ev.home_score,
+                ev.away_score,
+                ev.updated_at AS result_synced_at,
+                COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'pending')::int AS pending_tickets,
+                COUNT(DISTINCT b.id) FILTER (WHERE b.status IN ('won','lost','void','cashout'))::int AS settled_tickets
            FROM sports_events ev
            LEFT JOIN sportsbook_bet_legs bl ON bl.selection_id IN (
              SELECT s.id FROM sports_selections s
@@ -284,7 +291,8 @@ router.get(
            )
            LEFT JOIN sportsbook_bets b ON b.id = bl.bet_id
            ${where}
-         GROUP BY ev.id, ev.home_team, ev.away_team, ev.league, ev.status, ev.starts_at
+         GROUP BY ev.id, ev.home_team, ev.away_team, ev.league, ev.status, ev.starts_at,
+                  ev.home_score, ev.away_score, ev.updated_at
          ORDER BY ev.starts_at DESC
          LIMIT $${i++} OFFSET $${i++}`,
         [...values, q.limit, offset]

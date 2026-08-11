@@ -48,3 +48,50 @@ export function setAdminGamePickResult(id: string, input: { result: 'Won' | 'Los
 export function deleteAdminGamePick(id: string) {
   return http.delete<{ id: string }>(`/api/admin/game-picks/${id}`);
 }
+
+/* ------------------------------------------------------------------ */
+/* Top Leagues configuration                                           */
+/* ------------------------------------------------------------------ */
+
+export interface TopLeague {
+  id: string;
+  league: string;
+  enabled: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvailableLeague {
+  league: string;
+  events: number;
+}
+
+export function listTopLeagues() {
+  return http.get<TopLeague[]>('/api/admin/game-picks/top-leagues');
+}
+
+export function listAvailableLeagues(search?: string) {
+  return http.get<AvailableLeague[]>('/api/admin/game-picks/top-leagues/available', {
+    query: search ? { search } : undefined,
+  });
+}
+
+export function addTopLeague(league: string) {
+  return http.post<TopLeague>('/api/admin/game-picks/top-leagues', { league });
+}
+
+export function updateTopLeague(
+  id: string,
+  input: { enabled?: boolean; priority?: number }
+) {
+  return http.put<TopLeague>(`/api/admin/game-picks/top-leagues/${id}`, input);
+}
+
+export function reorderTopLeagues(ids: string[]) {
+  return http.post<TopLeague[]>('/api/admin/game-picks/top-leagues/reorder', { ids });
+}
+
+export function deleteTopLeague(id: string) {
+  return http.delete<{ id: string }>(`/api/admin/game-picks/top-leagues/${id}`);
+}

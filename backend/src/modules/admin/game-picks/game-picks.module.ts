@@ -155,6 +155,172 @@ router.patch(
   })
 );
 
+/* -------------------------------------------------------------------------- */
+/*  Top Leagues configuration                                                 */
+/*                                                                            */
+/*  Admin-managed list of "top leagues" used by Game Picks and the public     */
+/*  sports board ordering (and by the odds sync as pricing priority). Not     */
+/*  hardcoded: leagues are picked from those actually present in the          */
+/*  synchronized database. Falls back to platform defaults when empty.        */
+/* -------------------------------------------------------------------------- */
+
+const topLeagueCreateSchema = z.object({
+  league: z.string().trim().min(1).max(200),
+});
+const topLeagueUpdateSchema = z.object({
+  enabled: z.boolean().optional(),
+  priority: z.coerce.number().int().min(0).max(10000).optional(),
+});
+const topLeagueReorderSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+});
+
+const TOP_LEAGUE_COLS =
+  'id, league, enabled, priority, created_at, updated_at';
+
+// All /top-leagues/* paths are two segments deep, so they can never collide
+// with the single-segment '/:id' pick routes registered above.
+router.get(
+  '/top-leagues',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const rows = await client.query(
+        `SELECT ${TOP_LEAGUE_COLS} FROM top_leagues
+          WHERE tenant_id = $1
+          ORDER BY priority ASC, created_at ASC`,
+        [tenantId]
+      );
+      return rows.rows;
+    });
+  })
+);
+
+/** Distinct leagues present in the synchronized events DB — the picker source. */
+router.get(
+  '/top-leagues/available',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const search = String((req.query.search as string) ?? '').trim();
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const values: unknown[] = [tenantId];
+      let filter = '';
+      if (search) {
+        values.push(`%${search}%`);
+        filter = 'AND league ILIKE $2';
+      }
+      const rows = await client.query<{ league: string; events: string }>(
+        `SELECT league, COUNT(*)::text AS events
+           FROM sports_events
+          WHERE tenant_id = $1 AND league IS NOT NULL ${filter}
+          GROUP BY league
+          ORDER BY COUNT(*) DESC, league ASC
+          LIMIT 100`,
+        values
+      );
+      return rows.rows.map((r) => ({ league: r.league, events: Number(r.events) }));
+    });
+  })
+);
+
+router.post(
+  '/top-leagues',
+  wrapStatus(201, async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = topLeagueCreateSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const row = await client.query(
+        `INSERT INTO top_leagues (tenant_id, league, enabled, priority)
+         VALUES ($1, $2, true,
+                 COALESCE((SELECT MAX(priority) + 1 FROM top_leagues WHERE tenant_id = $1), 0))
+         ON CONFLICT (tenant_id, league) DO UPDATE SET enabled = true, updated_at = now()
+         RETURNING ${TOP_LEAGUE_COLS}`,
+        [tenantId, body.league]
+      );
+      return row.rows[0];
+    });
+  })
+);
+
+router.put(
+  '/top-leagues/:id',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const { id } = idParam.parse(req.params);
+    const body = topLeagueUpdateSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      let i = 1;
+      if (body.enabled !== undefined) {
+        sets.push(`enabled = $${i++}`);
+        values.push(body.enabled);
+      }
+      if (body.priority !== undefined) {
+        sets.push(`priority = $${i++}`);
+        values.push(body.priority);
+      }
+      if (!sets.length) throw new ConflictError('Nothing to update');
+      values.push(id, tenantId);
+      const row = await client.query(
+        `UPDATE top_leagues SET ${sets.join(', ')}, updated_at = now()
+          WHERE id = $${i++} AND tenant_id = $${i}
+          RETURNING ${TOP_LEAGUE_COLS}`,
+        values
+      );
+      if (!row.rows[0]) throw new NotFoundError('Top league not found');
+      return row.rows[0];
+    });
+  })
+);
+
+/** Reorder: array of ids in the desired display order (priority = index). */
+router.post(
+  '/top-leagues/reorder',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = topLeagueReorderSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      await client.query(
+        `UPDATE top_leagues t
+            SET priority = v.ord, updated_at = now()
+           FROM (SELECT unnest($2::uuid[]) AS id,
+                        generate_series(0, array_length($2::uuid[], 1) - 1) AS ord) v
+          WHERE t.id = v.id AND t.tenant_id = $1`,
+        [tenantId, body.ids]
+      );
+      const rows = await client.query(
+        `SELECT ${TOP_LEAGUE_COLS} FROM top_leagues
+          WHERE tenant_id = $1 ORDER BY priority ASC, created_at ASC`,
+        [tenantId]
+      );
+      return rows.rows;
+    });
+  })
+);
+
+router.delete(
+  '/top-leagues/:id',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const { id } = idParam.parse(req.params);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      const del = await client.query(
+        `DELETE FROM top_leagues WHERE id = $1 AND tenant_id = $2 RETURNING id`,
+        [id, tenantId]
+      );
+      if (!del.rows[0]) throw new NotFoundError('Top league not found');
+      return { id };
+    });
+  })
+);
+
 router.delete(
   '/:id',
   wrap(async (req) => {

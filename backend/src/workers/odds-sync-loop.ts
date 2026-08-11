@@ -23,19 +23,28 @@ import { resolveConfig } from '../modules/sports/providers/provider.config';
 import { runSync } from '../modules/sports/providers/sync.service';
 
 const TICK_MS = 30 * 1000; // base scheduler tick
+/**
+ * Results + auto-settlement cadence. Independent of (and faster than) the
+ * prematch interval so finished matches settle within minutes — the pass is a
+ * cheap no-op when nothing needs finalizing, and its provider requests are
+ * still bounded by the shared hourly budget.
+ */
+const RESULTS_INTERVAL_SECONDS = 5 * 60;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+
+type Phase = 'prematch' | 'live' | 'results';
 
 /** In-memory per-tenant/phase last-run epoch (ms). Reset on process restart. */
 const lastRun = new Map<string, number>();
 
-function due(tenantId: string, phase: 'prematch' | 'live', intervalSeconds: number): boolean {
+function due(tenantId: string, phase: Phase, intervalSeconds: number): boolean {
   const key = `${tenantId}:${phase}`;
   const last = lastRun.get(key) ?? 0;
   return Date.now() - last >= intervalSeconds * 1000;
 }
 
-function markRun(tenantId: string, phase: 'prematch' | 'live'): void {
+function markRun(tenantId: string, phase: Phase): void {
   lastRun.set(`${tenantId}:${phase}`, Date.now());
 }
 
@@ -50,6 +59,16 @@ async function runForTenant(tenantId: string): Promise<void> {
   const row = await withTenantClient({ tenantId }, (c) => getConfig(c, tenantId));
   const cfg = resolveConfig(row);
   if (!cfg.active) return; // not enabled / no key for this tenant
+
+  // Results FIRST: recording final scores + settling real tickets always gets
+  // budget priority over pricing/import work on a tight hourly quota.
+  if (due(tenantId, 'results', RESULTS_INTERVAL_SECONDS)) {
+    markRun(tenantId, 'results');
+    const res = await runSync(tenantId, { phase: 'results' });
+    if (res.resultsFinalized || res.ticketsSettled || res.eventsCancelled) {
+      logger.info({ tenantId, ...res }, 'odds-sync: results cycle');
+    }
+  }
 
   if (due(tenantId, 'live', cfg.liveIntervalSeconds)) {
     markRun(tenantId, 'live');

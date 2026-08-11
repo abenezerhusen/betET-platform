@@ -35,8 +35,11 @@ export interface SportsProviderRow {
   last_success_at: Date | null;
   last_error: string | null;
   last_events_sync_at: Date | null;
+  last_results_sync_at: Date | null;
   events_synced: number;
   odds_synced: number;
+  results_finalized: number;
+  tickets_settled: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -122,8 +125,11 @@ export interface SyncStatePatch {
   lastSuccessAt?: boolean;
   lastError?: string | null;
   lastEventsSyncAt?: boolean;
+  lastResultsSyncAt?: boolean;
   eventsSyncedDelta?: number;
   oddsSyncedDelta?: number;
+  resultsFinalizedDelta?: number;
+  ticketsSettledDelta?: number;
 }
 
 export async function setSyncState(
@@ -141,6 +147,7 @@ export async function setSyncState(
   if (patch.lastRunAt) sets.push(`last_run_at = now()`);
   if (patch.lastSuccessAt) sets.push(`last_success_at = now()`);
   if (patch.lastEventsSyncAt) sets.push(`last_events_sync_at = now()`);
+  if (patch.lastResultsSyncAt) sets.push(`last_results_sync_at = now()`);
   if (patch.lastError !== undefined) {
     sets.push(`last_error = $${i++}`);
     values.push(patch.lastError);
@@ -152,6 +159,14 @@ export async function setSyncState(
   if (patch.oddsSyncedDelta) {
     sets.push(`odds_synced = odds_synced + $${i++}`);
     values.push(patch.oddsSyncedDelta);
+  }
+  if (patch.resultsFinalizedDelta) {
+    sets.push(`results_finalized = results_finalized + $${i++}`);
+    values.push(patch.resultsFinalizedDelta);
+  }
+  if (patch.ticketsSettledDelta) {
+    sets.push(`tickets_settled = tickets_settled + $${i++}`);
+    values.push(patch.ticketsSettledDelta);
   }
   if (sets.length === 0) return;
   await client.query(

@@ -21,6 +21,9 @@ import {
   snapshotToConfig,
   type PayoutBreakdown,
 } from '../../bets/sportsbook-tax';
+import { applyLossCashback } from '../../promotions/loss-cashback';
+import { accrueAffiliateOnBetSettle } from '../../promotions/affiliate-hooks';
+import { resetUserStreak } from '../streaks/streaks.module';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -499,7 +502,7 @@ export async function settleBetFromLegs(
             compensation_bonus_amount = $9,
             winning_tax_amount = $10,
             final_payout = $11,
-            tax_amount = $10,
+            tax_amount = $12,
             updated_at = now()
       WHERE id = $7`,
     [
@@ -514,6 +517,9 @@ export async function settleBetFromLegs(
       newStatus === 'won' ? bonusAmount : null,
       newStatus === 'won' ? winTaxAmount : null,
       newStatus === 'won' ? finalPayout : null,
+      // tax_amount is NOT NULL DEFAULT 0 — writing NULL here aborted every
+      // lost/void settlement and stranded those tickets as pending.
+      newStatus === 'won' ? winTaxAmount : 0,
     ]
   );
 
@@ -537,6 +543,39 @@ export async function settleBetFromLegs(
     payout: credit,
     currency,
   });
+
+  // Post-settlement hooks — same side-effects the admin match-result path
+  // applies, now guaranteed on EVERY settlement route (auto results sync,
+  // cancelled events, postponed expiry, manual settle). Fired detached in
+  // their own transactions so a hook failure never blocks or rolls back the
+  // settlement itself; guarded by the terminal-status check above so a
+  // duplicate settle attempt can never fire them twice.
+  if (newStatus === 'lost') {
+    void resetUserStreak({
+      tenantId: params.tenantId,
+      userId: bet.user_id,
+      reason: 'loss',
+    });
+    // Per-ticket "Cashback for Losses" — idempotent inside (checks the
+    // existing bonus_credit transaction for this bet before crediting).
+    void applyLossCashback({
+      tenantId: params.tenantId,
+      betId: params.betId,
+      userId: bet.user_id,
+      stake,
+      currency,
+      walletId: null, // resolved from the user's primary wallet inside
+    });
+  }
+  if (newStatus === 'lost' || newStatus === 'won') {
+    void accrueAffiliateOnBetSettle({
+      tenantId: params.tenantId,
+      userId: bet.user_id,
+      betId: params.betId,
+      stake,
+      payout: newStatus === 'won' ? credit : 0,
+    });
+  }
 
   return { status: settlementStatus, credit };
 }

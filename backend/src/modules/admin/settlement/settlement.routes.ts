@@ -27,6 +27,11 @@ import { z } from 'zod';
 import { getAdminScope, requireScopedTenantId } from '../admin-shared';
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { NotFoundError, BadRequestError } from '../../../http/errors/http-error';
+import { env } from '../../../config/env';
+import { getConfig } from '../../sports/providers/provider.repository';
+import { resolveConfig } from '../../sports/providers/provider.config';
+import { runSync } from '../../sports/providers/sync.service';
+import { settleAlreadyFinishedEvents } from '../../sports/providers/results.service';
 import {
   listSettlementTickets,
   getSettlementTicket,
@@ -687,12 +692,105 @@ router.post(
       const scope = getAdminScope(req);
       const tenantId = requireScopedTenantId(scope);
 
-      const count = await expirePostponedSelections({
+      // Resolve the provider config so we can run the REAL results + settlement
+      // pass on demand (emergency/admin trigger). This is what actually fetches
+      // finished-match results from the provider and settles tickets — the
+      // background odds-sync loop does the same, but only when
+      // DATA_PROVIDER=odds_api. Running it here works regardless of the master
+      // switch as long as the provider is enabled and a key is present.
+      const cfgRow = await withTenantClient({ tenantId }, (c) => getConfig(c, tenantId));
+      const cfg = resolveConfig(cfgRow);
+
+      // Diagnostics: the fixtures that SHOULD settle (past-kickoff, still open)
+      // and how many tickets are still pending — so we can see immediately
+      // whether the problem is "no finished events detected" (provider side) or
+      // "the loop never ran" (config side).
+      const diagnostics = await withTenantClient({ tenantId }, async (c) => {
+        const openPast = await c.query<{ sport: string; n: string; oldest: Date | null }>(
+          `SELECT lower(sport) AS sport, COUNT(*)::text AS n, min(starts_at) AS oldest
+             FROM sports_events
+            WHERE tenant_id = $1 AND metadata ? 'provider_event_id'
+              AND status IN ('scheduled','live') AND starts_at < now()
+            GROUP BY lower(sport)
+            ORDER BY n DESC`,
+          [tenantId]
+        );
+        const pending = await c.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM sportsbook_bets
+            WHERE tenant_id = $1 AND status = 'pending'`,
+          [tenantId]
+        );
+        const finishedNoScore = await c.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM sports_events
+            WHERE tenant_id = $1 AND status = 'finished'
+              AND (home_score IS NULL OR away_score IS NULL)`,
+          [tenantId]
+        );
+        return {
+          past_kickoff_open_events: openPast.rows.reduce((s, r) => s + Number(r.n), 0),
+          past_kickoff_by_sport: openPast.rows.map((r) => ({
+            sport: r.sport,
+            count: Number(r.n),
+            oldest: r.oldest,
+          })),
+          pending_tickets: Number(pending.rows[0]?.n ?? 0),
+          finished_without_score: Number(finishedNoScore.rows[0]?.n ?? 0),
+        };
+      });
+
+      // Run the actual results + finished-match settlement pass through the
+      // sync orchestrator's `results` phase — SAME code path and SAME shared
+      // per-tenant hourly request budget as the background loop, so repeated
+      // admin clicks can never mint a fresh budget and blow the provider cap.
+      let results = { finalized: 0, settled: 0, cancelled: 0 };
+      let resultsError: string | null = null;
+      if (cfg.enabled && cfg.apiKey.length > 0) {
+        const r = await runSync(tenantId, { phase: 'results', force: true });
+        results = {
+          finalized: r.resultsFinalized ?? 0,
+          settled: r.ticketsSettled ?? 0,
+          cancelled: r.eventsCancelled ?? 0,
+        };
+        resultsError = r.skipped ?? null;
+      } else {
+        // Provider off/keyless: we can't fetch NEW results, but we can still
+        // settle events already marked finished-with-score whose tickets are
+        // stranded on pending (the common production gap).
+        const localOnly = await settleAlreadyFinishedEvents(tenantId);
+        results = {
+          finalized: localOnly.finalized,
+          settled: localOnly.settled,
+          cancelled: 0,
+        };
+        resultsError = cfg.apiKey.length === 0 ? 'no_api_key' : 'provider_disabled';
+      }
+
+      // Also expire any postponed tickets whose wait elapsed (previous behaviour).
+      const postponedProcessed = await expirePostponedSelections({
         tenantId,
         actorId: scope.actorId,
       });
 
-      res.json({ success: true, processed: count });
+      res.json({
+        success: true,
+        // Backwards-compatible field the admin toaster shows. Now reflects the
+        // REAL number of tickets settled this run (finished-match settlements
+        // + postponed expiries) instead of only the postponed count.
+        processed: results.settled + postponedProcessed,
+        provider: {
+          data_provider: env.DATA_PROVIDER,
+          background_loop_active: env.DATA_PROVIDER === 'odds_api' && cfg.active,
+          enabled: cfg.enabled,
+          has_api_key: cfg.apiKey.length > 0,
+          active: cfg.active,
+          bookmaker: cfg.bookmaker,
+          configured_sports: cfg.sports,
+        },
+        diagnostics,
+        results,
+        results_error: resultsError,
+        postponed_processed: postponedProcessed,
+      });
     } catch (err) {
       next(err);
     }

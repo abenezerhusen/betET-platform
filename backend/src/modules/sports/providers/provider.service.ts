@@ -39,7 +39,70 @@ export async function getStatus(req: Request) {
     { tenantId, bypassRls: scope.bypassRls },
     (client) => repo.getConfig(client, tenantId)
   );
-  return presentConfig(row);
+
+  // Live pipeline health counts — lets the admin see AT A GLANCE where the
+  // provider → events → odds → results → settlement chain is stuck instead
+  // of only cumulative sync counters. Cheap indexed aggregates; best-effort
+  // (a stats failure never breaks the settings page).
+  let stats: Record<string, number | string | null> = {};
+  try {
+    stats = await withTenantClient({ tenantId, bypassRls: true }, async (c) => {
+      const ev = await c.query<{
+        total: string;
+        leagues: string;
+        upcoming: string;
+        live: string;
+        finished: string;
+        awaiting_results: string;
+      }>(
+        `SELECT COUNT(*)::text AS total,
+                COUNT(DISTINCT league)::text AS leagues,
+                COUNT(*) FILTER (WHERE status = 'scheduled' AND starts_at > now())::text AS upcoming,
+                COUNT(*) FILTER (WHERE status = 'live')::text AS live,
+                COUNT(*) FILTER (WHERE status = 'finished')::text AS finished,
+                COUNT(*) FILTER (
+                  WHERE status IN ('scheduled','live') AND starts_at < now()
+                )::text AS awaiting_results
+           FROM sports_events
+          WHERE tenant_id = $1`,
+        [tenantId]
+      );
+      const withOdds = await c.query<{ n: string }>(
+        `SELECT COUNT(DISTINCT event_id)::text AS n
+           FROM sports_markets
+          WHERE tenant_id = $1 AND status = 'open'`,
+        [tenantId]
+      );
+      const tickets = await c.query<{ unsettled: string; review: string; last_settled: Date | null }>(
+        `SELECT COUNT(*) FILTER (WHERE status = 'pending')::text AS unsettled,
+                COUNT(*) FILTER (WHERE review_required = true AND status = 'pending')::text AS review,
+                MAX(settled_at) AS last_settled
+           FROM sportsbook_bets
+          WHERE tenant_id = $1`,
+        [tenantId]
+      );
+      const e = ev.rows[0];
+      const t = tickets.rows[0];
+      return {
+        events_total: Number(e?.total ?? 0),
+        leagues_total: Number(e?.leagues ?? 0),
+        events_upcoming: Number(e?.upcoming ?? 0),
+        events_live: Number(e?.live ?? 0),
+        events_completed: Number(e?.finished ?? 0),
+        events_awaiting_results: Number(e?.awaiting_results ?? 0),
+        events_with_odds: Number(withOdds.rows[0]?.n ?? 0),
+        unsettled_tickets: Number(t?.unsettled ?? 0),
+        tickets_needing_review: Number(t?.review ?? 0),
+        last_settlement_at: t?.last_settled
+          ? new Date(t.last_settled).toISOString()
+          : null,
+      };
+    });
+  } catch {
+    stats = {};
+  }
+
+  return { ...presentConfig(row), stats };
 }
 
 export async function saveConfig(req: Request, input: ProviderConfigInput) {
@@ -123,14 +186,19 @@ export async function syncNow(req: Request) {
   const { tenantId } = scopeOf(req);
   // `force` lets the admin pull data on demand even while the env master
   // switch is still `mock`, provided the row is enabled and a key exists.
+  // Results run FIRST so settling real tickets gets budget priority.
+  const results = await runSync(tenantId, { phase: 'results', force: true });
   const prematch = await runSync(tenantId, { phase: 'prematch', force: true });
   const live = await runSync(tenantId, { phase: 'live', force: true });
   const status = await getStatus(req);
   return {
+    results,
     prematch,
     live,
     events_upserted: prematch.eventsUpserted + live.eventsUpserted,
     odds_upserted: prematch.oddsUpserted + live.oddsUpserted,
+    results_finalized: results.resultsFinalized ?? 0,
+    tickets_settled: results.ticketsSettled ?? 0,
     status,
   };
 }

@@ -179,6 +179,25 @@ export class OddsApiClient {
     return Array.isArray(data) ? data : [];
   }
 
+  /**
+   * GET /events/{id} — single event with its current status + scores.
+   * Used for TARGETED result resolution of fixtures that carry pending bets
+   * but fell outside the windowed settled feed. Returns null on 404 (event
+   * unknown/removed upstream) so the caller can flag the ticket for review.
+   */
+  async getEventById(
+    eventId: string | number,
+    budget?: RequestBudget
+  ): Promise<OddsApiEvent | null> {
+    try {
+      const data = await this.getJson<OddsApiEvent>(`/events/${eventId}`, {}, budget);
+      return data && typeof data === 'object' && data.id != null ? data : null;
+    } catch (err) {
+      if (err instanceof Error && err.message === 'odds_api_http_404') return null;
+      throw err;
+    }
+  }
+
   /** GET /odds?eventId=&bookmakers= */
   async getOdds(
     eventId: string | number,

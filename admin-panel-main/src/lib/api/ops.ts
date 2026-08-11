@@ -10,6 +10,11 @@ export interface MatchStatsRow {
   win_rate: number;
   status: string;
   starts_at: string;
+  home_score: number | null;
+  away_score: number | null;
+  result_synced_at: string | null;
+  pending_tickets: number;
+  settled_tickets: number;
 }
 
 export function listMatchStats(query: {

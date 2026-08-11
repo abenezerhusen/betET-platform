@@ -155,7 +155,8 @@ export function SportsDataProvider() {
       const r = await api.syncNow();
       hydrate(r.status);
       toast(
-        `Sync done — ${r.events_upserted} events, ${r.odds_upserted} odds updated`
+        `Sync done — ${r.events_upserted} events, ${r.odds_upserted} odds, ` +
+          `${r.results_finalized ?? 0} results, ${r.tickets_settled ?? 0} tickets settled`
       );
     } catch {
       toast('Manual sync failed', 'error');
@@ -255,6 +256,76 @@ export function SportsDataProvider() {
             <p className="font-semibold">Last sync error</p>
             <p className="break-words">{status.last_error}</p>
           </div>
+        </div>
+      )}
+
+      {/* Pipeline health — provider → events → odds → results → settlement */}
+      {status?.stats && (
+        <div className="bg-white rounded-lg shadow-sm p-6 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Sync &amp; Settlement Pipeline</h2>
+            <p className="text-sm text-gray-500">
+              Live counts across the whole chain so a stuck stage is visible
+              immediately. “Awaiting results” are past-kickoff matches without a
+              final result yet; tickets flagged for review appear under Manual
+              Settlement → Errors.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            <StatCard
+              icon={Database}
+              title="Leagues"
+              value={String(status.stats.leagues_total ?? 0)}
+              tone="blue"
+            />
+            <StatCard
+              icon={CheckCircle2}
+              title="Events with Odds"
+              value={String(status.stats.events_with_odds ?? 0)}
+              tone="green"
+            />
+            <StatCard
+              icon={Activity}
+              title="Live Events"
+              value={String(status.stats.events_live ?? 0)}
+              tone="blue"
+            />
+            <StatCard
+              icon={CheckCircle2}
+              title="Completed Events"
+              value={String(status.stats.events_completed ?? 0)}
+              tone="green"
+            />
+            <StatCard
+              icon={Clock}
+              title="Awaiting Results"
+              value={String(status.stats.events_awaiting_results ?? 0)}
+              tone={(status.stats.events_awaiting_results ?? 0) > 0 ? 'amber' : 'green'}
+            />
+            <StatCard
+              icon={Clock}
+              title="Unsettled Tickets"
+              value={String(status.stats.unsettled_tickets ?? 0)}
+              tone={(status.stats.unsettled_tickets ?? 0) > 0 ? 'amber' : 'green'}
+            />
+            <StatCard
+              icon={AlertTriangle}
+              title="Tickets Needing Review"
+              value={String(status.stats.tickets_needing_review ?? 0)}
+              tone={(status.stats.tickets_needing_review ?? 0) > 0 ? 'red' : 'green'}
+            />
+            <StatCard
+              icon={CheckCircle2}
+              title="Tickets Auto-Settled"
+              value={String(status.tickets_settled ?? 0)}
+              tone="green"
+            />
+          </div>
+          <p className="text-xs text-gray-400">
+            Last result sync: {fmt(status.last_results_sync_at)} · Last
+            settlement: {fmt(status.stats.last_settlement_at ?? null)} · Results
+            finalized (total): {status.results_finalized ?? 0}
+          </p>
         </div>
       )}
 

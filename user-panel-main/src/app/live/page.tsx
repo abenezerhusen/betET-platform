@@ -68,6 +68,8 @@ function toLiveCard(row: sportsApi.SportsMatchRow): LiveCard {
   // Postgres NUMERIC arrives as `string` from node-pg. Coerce and keep NaN
   // for anything the provider didn't price → MatchCard renders "—" (no mock).
   const asOdd = (v: unknown): number => {
+    // Number(null) / Number('') coerce to 0 → fake "0.00"; keep NaN → "—".
+    if (v == null || v === "") return NaN;
     const n = typeof v === "number" ? v : Number(v);
     return Number.isFinite(n) ? n : NaN;
   };

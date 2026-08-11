@@ -9,6 +9,8 @@ import { sportsApi } from "@/lib/api";
 // All odds come straight from the provider. Missing values become NaN so the
 // MatchCard renders "—" instead of any fabricated placeholder.
 const asOdd = (v: unknown): number => {
+  // Number(null) / Number('') coerce to 0 → fake "0.00"; keep NaN → "—".
+  if (v == null || v === "") return NaN;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : NaN;
 };

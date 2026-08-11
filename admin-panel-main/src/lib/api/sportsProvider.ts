@@ -31,10 +31,28 @@ export interface ProviderStatus {
   last_run_at: string | null;
   last_success_at: string | null;
   last_events_sync_at: string | null;
+  last_results_sync_at: string | null;
   last_error: string | null;
   events_synced: number;
   odds_synced: number;
+  results_finalized: number;
+  tickets_settled: number;
   updated_at: string | null;
+  /** Live pipeline health counts (best-effort; may be absent on error). */
+  stats?: PipelineStats;
+}
+
+export interface PipelineStats {
+  events_total?: number;
+  leagues_total?: number;
+  events_upcoming?: number;
+  events_live?: number;
+  events_completed?: number;
+  events_awaiting_results?: number;
+  events_with_odds?: number;
+  unsettled_tickets?: number;
+  tickets_needing_review?: number;
+  last_settlement_at?: string | null;
 }
 
 export interface ProviderConfigInput {
@@ -58,18 +76,24 @@ export interface TestResult {
 }
 
 export interface SyncPhaseResult {
-  phase: 'prematch' | 'live';
+  phase: 'prematch' | 'live' | 'results';
   eventsUpserted: number;
   oddsUpserted: number;
   requestsRemaining: number;
+  resultsFinalized?: number;
+  ticketsSettled?: number;
+  eventsCancelled?: number;
   skipped?: string;
 }
 
 export interface SyncResult {
+  results?: SyncPhaseResult;
   prematch: SyncPhaseResult;
   live: SyncPhaseResult;
   events_upserted: number;
   odds_upserted: number;
+  results_finalized?: number;
+  tickets_settled?: number;
   status: ProviderStatus;
 }
 

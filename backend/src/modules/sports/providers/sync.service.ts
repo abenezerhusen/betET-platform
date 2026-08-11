@@ -10,7 +10,11 @@
  *  - Completely inert unless a caller invokes it (the worker only does so when
  *    DATA_PROVIDER=odds_api + provider enabled + key present).
  *
- * Two phases:
+ * Three phases:
+ *  - results:  fetch finished/cancelled fixtures → record final scores → grade
+ *    → auto-settle tickets (wallet-crediting). Scheduled INDEPENDENTLY of the
+ *    other phases so settlement never waits on (or gets starved by) the
+ *    fixture/odds import cadence.
  *  - prematch: GET /events per sport (upcoming within the window) → upsert
  *    events, then refresh odds for events whose prices are stale.
  *  - live:     GET /events/live (one request, all sports) → upsert live events
@@ -30,7 +34,7 @@ import { settleFinishedResults } from './results.service';
 import * as repo from './provider.repository';
 import type { OddsApiEvent } from './odds-api.types';
 
-export type SyncPhase = 'prematch' | 'live';
+export type SyncPhase = 'prematch' | 'live' | 'results';
 
 export interface SyncResult {
   phase: SyncPhase;
@@ -128,6 +132,30 @@ async function upsertEventBatch(
   );
 }
 
+/**
+ * Effective priority leagues for odds fetching: the admin-configured Top
+ * Leagues (Game Picks → Top Leagues) when present, merged with the hardcoded
+ * defaults as a fallback so unconfigured tenants keep the previous behaviour.
+ */
+async function getPriorityLeagues(tenantId: string): Promise<string[]> {
+  try {
+    const rows = await withTenantClient({ tenantId }, (c) =>
+      c.query<{ league: string }>(
+        `SELECT league FROM top_leagues
+          WHERE tenant_id = $1 AND enabled = true
+          ORDER BY priority ASC`,
+        [tenantId]
+      )
+    );
+    const configured = rows.rows.map((r) => r.league);
+    return configured.length > 0
+      ? [...new Set([...configured, ...PRIORITY_LEAGUES])]
+      : PRIORITY_LEAGUES;
+  } catch {
+    return PRIORITY_LEAGUES;
+  }
+}
+
 /** Refresh odds for provider events whose prices are stale. */
 async function syncOdds(
   tenantId: string,
@@ -135,13 +163,14 @@ async function syncOdds(
   client: OddsApiClient,
   budget: RequestBudget
 ): Promise<number> {
+  const priorityLeagues = await getPriorityLeagues(tenantId);
   const due = await withTenantClient({ tenantId }, (c) =>
     repo.listEventsNeedingOdds(c, tenantId, {
       liveIntervalSeconds: cfg.liveIntervalSeconds,
       prematchIntervalSeconds: cfg.prematchIntervalSeconds,
       windowHours: cfg.syncWindowHours,
       limit: MAX_EVENTS_PER_ODDS_RUN,
-      priorityLeagues: PRIORITY_LEAGUES,
+      priorityLeagues,
     })
   );
   if (due.length === 0) return 0;
@@ -380,15 +409,37 @@ export async function runSync(
   let ticketsSettled = 0;
   let eventsCancelled = 0;
   try {
-    // ---- Results + auto-settlement (prematch cycle only) -------------------
-    // Runs FIRST so settling real tickets + recording final scores gets budget
-    // priority over importing brand-new fixtures/odds on a tight quota. It is a
-    // cheap no-op when no sport has past-kickoff open fixtures to finalize.
-    if (opts.phase === 'prematch') {
+    // ---- Phase: results + auto-settlement ----------------------------------
+    // Scheduled on its OWN interval by the worker (and run first by the admin
+    // Sync Now), so recording final scores + settling real tickets never
+    // competes with — or waits for — the fixture/odds import cadence. Cheap
+    // no-op when no sport has past-kickoff open fixtures to finalize.
+    if (opts.phase === 'results') {
       const r = await settleFinishedResults(tenantId, client, budget, cfg);
       resultsFinalized = r.finalized;
       ticketsSettled = r.settled;
       eventsCancelled = r.cancelled;
+
+      await withTenantClient({ tenantId }, (c) =>
+        repo.setSyncState(c, tenantId, {
+          status: 'ok',
+          lastSuccessAt: true,
+          lastError: null,
+          lastResultsSyncAt: true,
+          resultsFinalizedDelta: resultsFinalized,
+          ticketsSettledDelta: ticketsSettled,
+        })
+      );
+
+      return {
+        phase: opts.phase,
+        eventsUpserted: 0,
+        oddsUpserted: 0,
+        requestsRemaining: budget.remaining(),
+        resultsFinalized,
+        ticketsSettled,
+        eventsCancelled,
+      };
     }
 
     // ---- Phase: events -----------------------------------------------------

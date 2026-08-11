@@ -74,11 +74,15 @@ export function MatchCard({
   // strings (pg's default), and some mock fixtures use `null` for
   // missing markets. Always render via this helper so a stray
   // non-number never crashes the page with `.toFixed is not a function`.
+  // Number(null) / Number('') coerce to 0 — a missing odd must show the
+  // "—" fallback, never a fake "0.00" price.
   const fmt = (v: unknown, fallback = "—"): string => {
+    if (v == null || v === "") return fallback;
     const n = typeof v === "number" ? v : Number(v);
-    return Number.isFinite(n) ? n.toFixed(2) : fallback;
+    return Number.isFinite(n) && n > 0 ? n.toFixed(2) : fallback;
   };
   const num = (v: unknown, fallback = 0): number => {
+    if (v == null || v === "") return fallback;
     const n = typeof v === "number" ? v : Number(v);
     return Number.isFinite(n) ? n : fallback;
   };
@@ -128,6 +132,8 @@ export function MatchCard({
 
   const handleOddClick = (oddType: string, oddValue: number, market: string) => {
     if (isStarted) return;
+    // Unpriced selection (provider didn't supply this market) — not bettable.
+    if (!Number.isFinite(oddValue) || oddValue <= 1) return;
 
     const betId = `${homeTeam}-${awayTeam}-${oddType}`;
 

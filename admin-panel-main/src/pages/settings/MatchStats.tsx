@@ -18,6 +18,13 @@ interface MatchStatData {
   avgOdds: number;
   winRate: number;
   status: string;
+  /** "H - A" once the real result is synchronized; '—' otherwise. */
+  score: string;
+  resultSyncedAt: string | null;
+  pendingTickets: number;
+  settledTickets: number;
+  /** "3/5 settled" style summary; '—' when the match has no tickets. */
+  settlement: string;
 }
 
 const tabs = [
@@ -89,16 +96,29 @@ export function MatchStats() {
         if (cancelled) return;
         const items = Array.isArray(statsRes) ? statsRes : [];
         setRows(
-          items.map((m) => ({
-            id: m.match_id,
-            match: m.match,
-            league: m.league,
-            totalBets: Number(m.total_bets ?? 0),
-            totalStake: Number(m.total_stake ?? 0),
-            avgOdds: Number(m.avg_odds ?? 0),
-            winRate: Number(m.win_rate ?? 0),
-            status: m.status,
-          }))
+          items.map((m) => {
+            const pending = Number(m.pending_tickets ?? 0);
+            const settled = Number(m.settled_tickets ?? 0);
+            const total = pending + settled;
+            return {
+              id: m.match_id,
+              match: m.match,
+              league: m.league,
+              totalBets: Number(m.total_bets ?? 0),
+              totalStake: Number(m.total_stake ?? 0),
+              avgOdds: Number(m.avg_odds ?? 0),
+              winRate: Number(m.win_rate ?? 0),
+              status: m.status,
+              score:
+                m.home_score != null && m.away_score != null
+                  ? `${m.home_score} - ${m.away_score}`
+                  : '—',
+              resultSyncedAt: m.result_synced_at ?? null,
+              pendingTickets: pending,
+              settledTickets: settled,
+              settlement: total === 0 ? '—' : `${settled}/${total} settled`,
+            };
+          })
         );
         setSummary(summaryRes);
       })
@@ -223,6 +243,28 @@ export function MatchStats() {
           columns={[
             { header: 'Match', accessor: 'match' as const },
             { header: 'League', accessor: 'league' as const },
+            // Completed / Analysis show the REAL synchronized result +
+            // settlement progress; other tabs keep the original layout.
+            ...(activeTab === 'completed' || activeTab === 'analysis'
+              ? [
+                  { header: 'Score', accessor: 'score' as const },
+                  {
+                    header: 'Settlement',
+                    accessor: 'settlement' as const,
+                    render: (_value: unknown, row: MatchStatData) => (
+                      <span
+                        className={
+                          row.pendingTickets > 0
+                            ? 'text-amber-600 font-medium'
+                            : 'text-gray-700'
+                        }
+                      >
+                        {row.settlement}
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
             { header: 'Total Bets', accessor: 'totalBets' as const },
             { header: 'Total Stake', accessor: 'totalStake' as const },
             { header: 'Avg Odds', accessor: 'avgOdds' as const },
