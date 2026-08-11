@@ -49,7 +49,7 @@ export interface SyncResult {
 const EVENTS_PER_SPORT = 5000; // provider page ceiling
 const MAX_PAGES_PER_SPORT = 4; // paginate dense sports (football) weeks ahead
 const ODDS_MULTI_CHUNK = 10; // /odds/multi ceiling (counts as 1 request)
-const MAX_EVENTS_PER_ODDS_RUN = 200; // bound odds requests per cycle (budget)
+const MAX_EVENTS_PER_ODDS_RUN = 300; // bound odds requests per cycle (budget)
 
 // Re-importing 27k fixtures every 15 min starves the tight request budget and
 // leaves nothing for ODDS. Fixtures barely change, so refresh the catalogue at
@@ -260,6 +260,80 @@ export async function ensureEventOdds(
     // Rate-limited / upstream hiccup — never break the detail response.
     logger.warn({ err, tenantId, eventId }, 'ensureEventOdds: on-demand price failed');
     return false;
+  }
+}
+
+/**
+ * ON-DEMAND pricing for a whole LEAGUE, used when a user opens a league board.
+ *
+ * Prices up to one /odds/multi chunk (10 fixtures = ONE provider request) of
+ * that league's soonest UNPRICED fixtures so the board shows real odds right
+ * away instead of appearing empty while the background worker catches up (the
+ * fix for under-covered leagues like Australia having events but no odds).
+ *
+ * Cheap and self-limiting:
+ *   - no-op unless the provider is active,
+ *   - only touches fixtures whose odds are missing/stale (fresh ones cost 0),
+ *   - a single request (guarded by the shared per-tenant hourly budget),
+ *   - never throws — the caller still returns whatever is stored.
+ *
+ * Returns the number of selections written this call.
+ */
+export async function ensureLeagueOdds(
+  tenantId: string,
+  league: string
+): Promise<number> {
+  try {
+    const row = await withTenantClient({ tenantId }, (c) =>
+      repo.getConfig(c, tenantId)
+    );
+    const cfg = resolveConfig(row);
+    if (!cfg.active) return 0;
+
+    const due = await withTenantClient({ tenantId }, (c) =>
+      repo.listLeagueEventsNeedingOdds(c, tenantId, league, {
+        liveIntervalSeconds: cfg.liveIntervalSeconds,
+        prematchIntervalSeconds: cfg.prematchIntervalSeconds,
+        windowHours: cfg.syncWindowHours,
+        limit: ODDS_MULTI_CHUNK, // one request prices up to 10 fixtures
+      })
+    );
+    if (due.length === 0) return 0;
+
+    const budget = getTenantBudget(tenantId, cfg.maxRequestsPerHour);
+    if (budget.remaining() <= 0) return 0;
+
+    const client = new OddsApiClient({ apiUrl: cfg.apiUrl, apiKey: cfg.apiKey });
+    const idByProvider = new Map<string, string>();
+    for (const d of due) idByProvider.set(String(d.provider_event_id), d.id);
+
+    let oddsUpserted = 0;
+    const responses = await client.getOddsMulti(
+      due.map((d) => d.provider_event_id),
+      cfg.bookmaker,
+      budget
+    );
+    await withTenantClient({ tenantId }, async (c) => {
+      for (const resp of responses) {
+        const ourId = idByProvider.get(String(resp.id));
+        if (!ourId) continue;
+        const markets = normalizeOdds(resp, cfg.bookmaker);
+        if (markets.length > 0) {
+          oddsUpserted += await repo.upsertMarkets(c, tenantId, ourId, markets);
+        }
+      }
+      // Stamp every requested fixture (even empty ones) so we don't re-hammer
+      // them on the next league open within the freshness window.
+      await repo.touchOddsSynced(
+        c,
+        tenantId,
+        due.map((d) => d.id)
+      );
+    });
+    return oddsUpserted;
+  } catch (err) {
+    logger.warn({ err, tenantId, league }, 'ensureLeagueOdds: on-demand league price failed');
+    return 0;
   }
 }
 

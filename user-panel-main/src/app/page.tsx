@@ -318,6 +318,12 @@ function HomePageInner() {
   // times and odds are the real ones — never mock placeholders.
   const [sidebarMatches, setSidebarMatches] = useState<HomeMatch[]>([]);
   const [leagueLoading, setLeagueLoading] = useState(false);
+  // League BOARD view (sidebar menu click) — shows a league's upcoming matches
+  // as the standard MatchCard feed (same card style as the home board),
+  // distinct from the single-match detail opened by the "More Markets" (+N)
+  // button. Null when we're not viewing a league board.
+  const [leagueBoardMatches, setLeagueBoardMatches] = useState<HomeMatch[]>([]);
+  const [leagueBoardName, setLeagueBoardName] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<string[]>(["main", "toQualify", "matchResult", "1up", "2up"]);
   // Real markets for the currently opened fixture (fetched from /matches/:id).
   // Drives the detail panel's market list so the odds/markets shown match the
@@ -477,11 +483,18 @@ function HomePageInner() {
     setSelectedLeague(fullLeagueName);
     setExpandedSections(["main", ...sport.bettingMarkets.map((m) => m.key)]);
     setSidebarMatches([]);
-    // With a preselected match (side-bets click) open the detail view right
-    // away; deep-links wait for the fetch so we don't flash empty odds.
+    // "MORE MARKETS" flow: a tap on a specific fixture's "+N" button carries
+    // that exact match as `preselect`. Open ONLY that match's detail — its full
+    // market book loads via GET /matches/:id — and DO NOT list the rest of the
+    // league. This keeps More-Markets = one specific match (never a list of
+    // other same-league matches). The sidebar "league click" flow has no
+    // preselect and still loads the whole league below.
     if (preselect) {
+      setSidebarMatches([preselect]);
       setSelectedMatch(preselect);
       setShowDetailedView(true);
+      setLeagueLoading(false);
+      return;
     }
     setLeagueLoading(true);
     try {
@@ -529,6 +542,40 @@ function HomePageInner() {
     }
   };
 
+  // LEAGUE BOARD: a sidebar menu click (no specific match) opens the league's
+  // upcoming + live fixtures as the standard MatchCard feed — the same card
+  // style as the home board — organised by that single league. This is the
+  // "click England → Premier League" flow; it does NOT open the single-match
+  // drill-down (that stays reserved for the "More Markets" +N button).
+  const openLeagueBoard = async (fullLeagueName: string, sport: Sport) => {
+    setSelectedSport(sport);
+    setSelectedLeague(fullLeagueName);
+    // Leaving the single-match detail view; show the board instead.
+    setShowDetailedView(false);
+    setSelectedMatch(null);
+    setSidebarMatches([]);
+    setLeagueBoardName(fullLeagueName);
+    setLeagueBoardMatches([]);
+    setLeagueLoading(true);
+    try {
+      const [up, live] = await Promise.all([
+        sportsApi
+          .listSportsMatches({ league: fullLeagueName, status: "upcoming", limit: 100 })
+          .then((r) => r.items ?? [])
+          .catch(() => []),
+        sportsApi
+          .listSportsMatches({ league: fullLeagueName, status: "live", limit: 50 })
+          .then((r) => r.items ?? [])
+          .catch(() => []),
+      ]);
+      // Live first, then upcoming by soonest kickoff — matches the feed order.
+      const mapped = [...live, ...up].map(backendMatchToHome);
+      setLeagueBoardMatches(mapped);
+    } finally {
+      setLeagueLoading(false);
+    }
+  };
+
   // Pre-mount the time filters are skipped (they call `Date.now()`); the full
   // list renders identically on server + first client paint, then filtering
   // applies once mounted.
@@ -569,6 +616,8 @@ function HomePageInner() {
       setSelectedMatch(null);
       setSidebarMatches([]);
       setSelectedLeague("");
+      setLeagueBoardName(null);
+      setLeagueBoardMatches([]);
       return;
     }
 
@@ -590,7 +639,15 @@ function HomePageInner() {
         ? pendingPreselectRef.current
         : undefined;
     pendingPreselectRef.current = null;
-    void loadLeagueMatches(fullLeagueName, sport, preselect, matchId ?? undefined);
+    if (matchId) {
+      // A specific fixture (More Markets +N or a match deep-link) → open its
+      // detail view with the full market book.
+      void loadLeagueMatches(fullLeagueName, sport, preselect, matchId);
+    } else {
+      // A league menu click (England → Premier League) → show that league's
+      // upcoming matches as the standard MatchCard board.
+      void openLeagueBoard(fullLeagueName, sport);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -624,6 +681,73 @@ function HomePageInner() {
     : selectedLeague
       ? matches.filter(m => m.league === selectedLeague)
       : [];
+
+  // LEAGUE BOARD view — a sidebar league click renders the league's upcoming
+  // matches as the same MatchCard feed used on the home board (identical card
+  // style: Match Result 1/X/2, Double chance, Both Score, +N). Rendered before
+  // the single-match detail so tapping +N here still opens that match.
+  if (leagueBoardName && !showDetailedView) {
+    return (
+      <div className="flex min-h-[calc(100vh-180px)]">
+        <LeftSidebarSports />
+
+        <div className="flex-1 min-w-0 overflow-hidden" style={{ background: "var(--mezzo-bg-primary)" }}>
+          {/* League header */}
+          <div
+            className="flex items-center justify-between px-4 py-3 border-b"
+            style={{ background: "var(--mezzo-bg-secondary)", borderColor: "var(--mezzo-border)" }}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <img src={leagueFlagFor(leagueBoardName)} alt="" className="w-5 h-3.5 rounded-sm" />
+              <h2 className="text-sm font-bold text-[var(--mezzo-accent-green)] truncate">
+                {leagueBoardName}
+              </h2>
+            </div>
+            <button
+              onClick={() => {
+                loadedLeagueKeyRef.current = null;
+                router.push("/");
+              }}
+              className="text-xs text-gray-400 hover:text-white shrink-0"
+            >
+              ← Home
+            </button>
+          </div>
+
+          {/* Column headers — same as the home board (desktop only) */}
+          <div
+            className="hidden lg:flex items-center px-4 py-2 text-xs text-gray-500 font-medium"
+            style={{ background: "var(--mezzo-bg-secondary)" }}
+          >
+            <div className="flex-1">Match Result</div>
+            <div className="w-[140px] text-center">Double chance</div>
+            <div className="w-[100px] text-center">Both Score</div>
+            <div className="w-24 text-right"></div>
+          </div>
+
+          <div className="overflow-auto max-h-[calc(100vh-240px)]">
+            {leagueLoading && leagueBoardMatches.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-gray-400">Loading matches…</div>
+            ) : leagueBoardMatches.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-gray-400">
+                No upcoming matches for this league right now.
+              </div>
+            ) : (
+              leagueBoardMatches.map((match, index) => (
+                <MatchCard
+                  key={`league-${match.homeTeam}-${match.awayTeam}-${index}`}
+                  {...match}
+                  onSideBetsClick={() => handleSideBetsClick(match)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        <Betslip />
+      </div>
+    );
+  }
 
   if (showDetailedView && selectedMatch) {
     return (

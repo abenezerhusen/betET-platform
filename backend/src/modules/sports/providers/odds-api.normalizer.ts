@@ -58,6 +58,25 @@ function minuteOf(event: OddsApiEvent): number | null {
   return typeof m === 'number' && Number.isFinite(m) ? m : null;
 }
 
+/**
+ * Prettify a provider league slug into a display name when the provider
+ * omits `league.name`. e.g. "england-premier-league" → "England Premier
+ * League". Prevents fixtures that DO have league data (under `slug`) from
+ * being stored with a NULL league and surfacing as "Unknown League".
+ */
+function prettifyLeagueSlug(slug: string | undefined): string | null {
+  const s = (slug ?? '').trim();
+  if (!s) return null;
+  return s
+    .replace(/[_/]+/g, '-')
+    .split('-')
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .map((w) => (w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ')
+    .trim() || null;
+}
+
 export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
   const home = (event.home ?? '').trim();
   const away = (event.away ?? '').trim();
@@ -68,7 +87,13 @@ export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
   return {
     providerEventId: String(event.id),
     sport,
-    league: (event.league?.name ?? '').trim() || null,
+    // Prefer the provider's display name; fall back to a prettified slug so a
+    // fixture that carries league data under `slug` is never stored as NULL
+    // (which the frontend renders as "Unknown League").
+    league:
+      (event.league?.name ?? '').trim() ||
+      prettifyLeagueSlug(event.league?.slug) ||
+      null,
     homeTeam: home,
     awayTeam: away,
     startsAt: new Date(startsAt).toISOString(),

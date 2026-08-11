@@ -431,6 +431,59 @@ export async function listEventsNeedingOdds(
   return r.rows;
 }
 
+/**
+ * Provider-sourced events for ONE league whose odds are missing/stale — used
+ * for on-demand pre-pricing when a user opens that league board. Ordered by
+ * soonest kickoff so the fixtures the user sees first get real odds first.
+ */
+export async function listLeagueEventsNeedingOdds(
+  client: PoolClient,
+  tenantId: string,
+  league: string,
+  opts: {
+    liveIntervalSeconds: number;
+    prematchIntervalSeconds: number;
+    windowHours: number;
+    limit: number;
+  }
+): Promise<EventNeedingOdds[]> {
+  const r = await client.query<EventNeedingOdds>(
+    `SELECT id,
+            metadata->>'provider_event_id' AS provider_event_id,
+            status
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata ? 'provider_event_id'
+        AND lower(league) = lower($6)
+        AND status IN ('scheduled', 'live')
+        AND (
+          (status = 'live' AND (
+             metadata->>'odds_synced_at' IS NULL
+             OR (metadata->>'odds_synced_at')::timestamptz < now() - make_interval(secs => $2)
+          ))
+          OR
+          (status = 'scheduled'
+             AND starts_at < now() + make_interval(hours => $4)
+             AND starts_at > now() - interval '3 hours'
+             AND (
+               metadata->>'odds_synced_at' IS NULL
+               OR (metadata->>'odds_synced_at')::timestamptz < now() - make_interval(secs => $3)
+             ))
+        )
+      ORDER BY (status = 'live') DESC, starts_at ASC
+      LIMIT $5`,
+    [
+      tenantId,
+      opts.liveIntervalSeconds,
+      opts.prematchIntervalSeconds,
+      opts.windowHours,
+      opts.limit,
+      league,
+    ]
+  );
+  return r.rows;
+}
+
 /** Stamp metadata.odds_synced_at = now() for the given events. */
 export async function touchOddsSynced(
   client: PoolClient,

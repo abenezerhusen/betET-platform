@@ -5,7 +5,7 @@ import { BadRequestError, NotFoundError } from '../../http/errors/http-error';
 import { authenticateToken } from '../../middleware/authenticate';
 import * as swagger from '../../swagger/registry';
 import { env } from '../../config/env';
-import { ensureEventOdds } from './providers/sync.service';
+import { ensureEventOdds, ensureLeagueOdds } from './providers/sync.service';
 
 const router = Router();
 
@@ -79,6 +79,13 @@ router.get(
     const q = listQuery.parse(req.query);
     const offset = (q.page - 1) * q.limit;
     const status = mapStatus(q.status);
+    // Opening a specific league board pre-prices that league's soonest
+    // unpriced fixtures (one provider request, budget-guarded, best-effort) so
+    // real odds appear immediately instead of the league looking empty while
+    // the background worker catches up. No-op for the general/home board.
+    if (q.league) {
+      await ensureLeagueOdds(tenantId, q.league).catch(() => {});
+    }
     return withTenantClient({ tenantId }, async (client) => {
       const filters = ['ev.tenant_id = $1'];
       const values: unknown[] = [tenantId];
@@ -128,7 +135,14 @@ router.get(
         `SELECT COUNT(*)::text AS count FROM sports_events ev ${where}`,
         values
       );
-      const orderBy = q.sort === 'popularity' ? 'total_bets DESC, ev.starts_at ASC' : 'ev.starts_at ASC';
+      // Default board ordering surfaces the world's top-5 football leagues
+      // first (Premier League, LaLiga, Bundesliga, Serie A, Ligue 1), then
+      // everything else by soonest kickoff. `popularity` keeps its existing
+      // bet-count ordering. `league_priority` is computed in the SELECT below.
+      const orderBy =
+        q.sort === 'popularity'
+          ? 'total_bets DESC, ev.starts_at ASC'
+          : 'league_priority ASC, ev.starts_at ASC';
       // The 1x2 markets on a fixture share the same `home_selection_id`,
       // `draw_selection_id` and `away_selection_id` across every screen
       // that lets a player pick from the headline odds (home page,
@@ -174,6 +188,16 @@ router.get(
                 COALESCE(ev.away_score, 0)::int AS away_score,
                 COALESCE((ev.stats->>'minute')::int, 0) AS minute,
                 ev.is_featured,
+                -- Top-5 world leagues rank first on the default board; every
+                -- other league falls back to 100 (then ordered by kickoff).
+                CASE lower(ev.league)
+                  WHEN 'england - premier league' THEN 0
+                  WHEN 'spain - laliga'           THEN 1
+                  WHEN 'germany - bundesliga'      THEN 2
+                  WHEN 'italy - serie a'           THEN 3
+                  WHEN 'france - ligue 1'          THEN 4
+                  ELSE 100
+                END AS league_priority,
                 COALESCE((SELECT COUNT(DISTINCT bl.bet_id)::int
                             FROM sports_markets m
                             JOIN sports_selections s ON s.market_id = m.id
