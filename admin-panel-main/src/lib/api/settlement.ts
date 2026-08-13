@@ -117,6 +117,8 @@ export interface ListResponse<T> {
 
 export function listSettlementTickets(params: {
   filter?: 'unsettled' | 'errors' | 'all';
+  /** Coupon (SBK-…), ticket code, bet UUID, phone or email — server-side. */
+  search?: string;
   page?: number;
   limit?: number;
 }) {

@@ -10,6 +10,9 @@ export interface ListUsersQuery {
   status?: string;
   kyc_status?: string;
   search?: string;
+  /** Registration-date range (created_at), ISO strings. */
+  from?: string;
+  to?: string;
   /** Include aggregated wallet balance, bonus_balance, locked_balance per user. */
   with_balance?: boolean;
   /** Include total_won and last_bet_at per user. */

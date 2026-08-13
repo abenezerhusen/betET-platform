@@ -68,3 +68,36 @@ export function getIp(req: Request): string | null {
 export function getUa(req: Request): string | null {
   return req.header('user-agent') ?? null;
 }
+
+/* ------------------------------------------------------------------ */
+/* Format-tolerant phone search                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Phones are stored in mixed formats (+2519…, 2519…, 09…) while admins
+ * search in whichever format they know — so a plain `phone ILIKE '%x%'`
+ * only matches when the two formats happen to align. These helpers compare
+ * DIGITS ONLY and strip the Ethiopian country code / trunk 0 from the
+ * search input, so `0911…`, `+251911…`, and `251911…` all find the same
+ * user regardless of the stored representation.
+ *
+ * Usage: pair `phoneSearchPattern(input)` (the bind value) with
+ * `phoneDigitsSql(column, $n)` (the WHERE fragment). Keep the original
+ * ILIKE clause ORed alongside so non-Ethiopian or partial searches keep
+ * their existing behaviour.
+ */
+export function phoneSearchPattern(input: string): string | null {
+  const digits = String(input ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  let d = digits;
+  // Full international form → significant subscriber digits.
+  if (d.length >= 12 && d.startsWith('251')) d = d.slice(3);
+  // Trunk prefix (09… local form) — not present in +2519… stored numbers.
+  if (d.startsWith('0')) d = d.slice(1);
+  return `%${d || digits}%`;
+}
+
+/** WHERE fragment: digits-only comparison of a phone column. */
+export function phoneDigitsSql(column: string, paramIdx: number): string {
+  return `regexp_replace(COALESCE(${column}, ''), '\\D', '', 'g') LIKE $${paramIdx}`;
+}

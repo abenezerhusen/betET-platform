@@ -75,6 +75,9 @@ export const listUsersSchema = z
     status: z.enum(STATUS_VALUES).optional(),
     kyc_status: z.enum(KYC_VALUES).optional(),
     search: z.string().trim().max(255).optional(),
+    /** Registration-date range (created_at), used by the Online Users page. */
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
     /** When true, joins wallet aggregates (balance/bonus_balance/locked) per user. */
     with_balance: z.coerce.boolean().optional(),
     /** When true, includes total_won and last_bet_at computed from bets/sportsbook_bets. */

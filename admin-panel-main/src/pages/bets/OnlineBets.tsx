@@ -11,11 +11,12 @@
  *   - Cancel Ticket (only when status === 'pending'; refunds stake)
  *   - Export CSV (current filtered list)
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { Eye, FileText, X, Slash } from 'lucide-react';
 import { downloadCsv, todayStamp } from '../../lib/csv';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import * as betsApi from '../../lib/api/bets';
 import { useAuthStore } from '../../store/auth';
@@ -277,9 +278,15 @@ export function OnlineBets() {
     betsApi
       .listBets({
         type: 'online',
-        from: startDate.toISOString(),
-        to: endDate.toISOString(),
-        phone: phoneNumber || undefined,
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
+        phone: phoneNumber.trim() || undefined,
+        // Server-side search matches UUID, SBK-XXXXXXXX coupon code,
+        // TKT-XXXXXXXX ticket code and printed receipt code — searching
+        // the whole dataset, not just the loaded page.
+        search: betIdFilter.trim() || undefined,
+        min_stake: minStake !== '' ? Number(minStake) : undefined,
+        max_stake: maxStake !== '' ? Number(maxStake) : undefined,
         status:
           (LABEL_TO_STATUS[selectedStatus] as betsApi.BetStatus | undefined) ||
           undefined,
@@ -311,25 +318,17 @@ export function OnlineBets() {
     startDate,
     endDate,
     phoneNumber,
+    betIdFilter,
+    minStake,
+    maxStake,
     selectedStatus,
     selectedPaidStatus,
     selectedPaymentType,
     reloadTick,
   ]);
 
-  const filteredData = useMemo(() => {
-    return rows.filter((row) => {
-      if (
-        betIdFilter &&
-        !row.betId.toLowerCase().includes(betIdFilter.toLowerCase()) &&
-        !row.id.toLowerCase().includes(betIdFilter.toLowerCase())
-      )
-        return false;
-      if (minStake && row.stake < Number(minStake)) return false;
-      if (maxStake && row.stake > Number(maxStake)) return false;
-      return true;
-    });
-  }, [rows, betIdFilter, minStake, maxStake]);
+  // All filters are applied server-side now; rows arrive pre-filtered.
+  const filteredData = rows;
 
   const handleViewSlip = async (id: string) => {
     setSlip({ bet: null, loading: true });

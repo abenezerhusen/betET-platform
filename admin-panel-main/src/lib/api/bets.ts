@@ -90,6 +90,10 @@ export interface ListBetsQuery {
   from?: string;
   to?: string;
   search?: string;
+  min_stake?: number;
+  max_stake?: number;
+  branch_search?: string;
+  cashier_search?: string;
   page?: number;
   limit?: number;
   [key: string]: string | number | boolean | null | undefined;

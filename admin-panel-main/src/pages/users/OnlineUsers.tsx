@@ -18,6 +18,7 @@ import type { AdminUser } from '../../lib/api/types';
 import { useAuthStore } from '../../store/auth';
 import { UserPlus, FileDown, FileUp, Download, Shield } from 'lucide-react';
 import { CountBadge } from '../../components/CountBadge';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface OnlineUserData {
   id: string;
@@ -137,6 +138,14 @@ export function OnlineUsers() {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  // Debounced copy of the phone/search input so the list isn't refetched on
+  // every keystroke (the fetch below also runs on a 15s polling interval).
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(phoneNumber.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [phoneNumber]);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
@@ -161,6 +170,12 @@ export function OnlineUsers() {
           role: 'online_user',
           page: 1,
           limit: 500,
+          // Server-side so matches beyond the 500-row cap are still found.
+          // The backend matches phone (any format), email, username and
+          // full name.
+          search: debouncedSearch || undefined,
+          from: startOfDayIso(startDate),
+          to: endOfDayIso(endDate),
           with_balance: true,
           with_activity: true,
         })
@@ -190,7 +205,7 @@ export function OnlineUsers() {
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [isAuthenticated, tick]);
+  }, [isAuthenticated, tick, debouncedSearch, startDate, endDate]);
 
   const rows = useMemo(() => items.map(toRow), [items]);
 
@@ -243,47 +258,19 @@ export function OnlineUsers() {
         filtered = rows;
     }
 
-    if (phoneNumber) {
-      const needle = phoneNumber.trim().toLowerCase();
-      // Digits-only variant so a formatted/pasted number (e.g. a mobile
-      // keyboard autofilling "+251 92 400 4654") still matches the stored
-      // "+251924004654". Ignores spaces, dashes and parentheses.
-      const digitNeedle = needle.replace(/\D/g, '');
-      if (needle) {
-        filtered = filtered.filter((u) => {
-          const phone = String(u.phone ?? '').toLowerCase();
-          const email = String(u.email ?? '').toLowerCase();
-          const name = String(u.name ?? '').toLowerCase();
-          return (
-            phone.includes(needle) ||
-            email.includes(needle) ||
-            name.includes(needle) ||
-            (digitNeedle.length > 0 &&
-              phone.replace(/\D/g, '').includes(digitNeedle))
-          );
-        });
-      }
-    }
+    // Phone/email/name search and the registration-date range are applied
+    // SERVER-SIDE (see the listUsers call above) so they cover the whole
+    // dataset, not just the 500 rows loaded here. Only the tab, status and
+    // member-type facets — which are UI-level groupings of the loaded set —
+    // remain client-side.
     if (selectedStatus) {
       filtered = filtered.filter((u) => u.status === selectedStatus);
     }
     if (selectedType) {
       filtered = filtered.filter((u) => u.memberType === selectedType);
     }
-    // Date range filter — applied client-side against the user's
-    // dateJoined (created_at). The backend listUsers endpoint does not
-    // support date filtering, so we do it here. Both bounds inclusive.
-    const fromMs = startDate.getTime();
-    const inclusiveTo = new Date(endDate.getTime());
-    inclusiveTo.setHours(23, 59, 59, 999);
-    const toMsInclusive = inclusiveTo.getTime();
-    filtered = filtered.filter((u) => {
-      const ts = u.joinedTimestamp;
-      if (ts == null || !Number.isFinite(ts)) return true;
-      return ts >= fromMs && ts <= toMsInclusive;
-    });
     return filtered;
-  }, [rows, activeTab, phoneNumber, selectedStatus, selectedType, startDate, endDate]);
+  }, [rows, activeTab, selectedStatus, selectedType]);
 
   // Total + per-status counts for the header badge. Computed from the
   // unfiltered list so the totals reflect the whole tenant, not just the

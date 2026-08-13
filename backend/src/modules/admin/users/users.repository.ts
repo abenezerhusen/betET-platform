@@ -1,5 +1,7 @@
 import type { PoolClient } from 'pg';
 
+import { phoneSearchPattern, phoneDigitsSql } from '../admin-shared';
+
 export interface AdminUserRow {
   id: string;
   tenant_id: string;
@@ -119,6 +121,9 @@ export async function listUsers(
     status: string | null;
     kycStatus: string | null;
     search: string | null;
+    /** Registration-date range on users.created_at. */
+    from?: Date | null;
+    to?: Date | null;
     limit: number;
     offset: number;
     withBalance?: boolean;
@@ -171,11 +176,29 @@ export async function listUsers(
     values.push(params.kycStatus);
   }
   if (params.search) {
+    // Digits-only phone comparison so +2519…, 2519… and 09… inputs all
+    // match regardless of the stored phone format.
+    const digitsPattern = phoneSearchPattern(params.search);
+    const phonePart = digitsPattern
+      ? ` OR ${phoneDigitsSql('u.phone', i + 1)}`
+      : '';
     filters.push(
-      `(u.email::text ILIKE $${i} OR u.phone ILIKE $${i} OR u.metadata->>'username' ILIKE $${i} OR u.metadata->>'full_name' ILIKE $${i})`
+      `(u.email::text ILIKE $${i} OR u.phone ILIKE $${i} OR u.metadata->>'username' ILIKE $${i} OR u.metadata->>'full_name' ILIKE $${i}${phonePart})`
     );
     values.push(`%${params.search}%`);
     i++;
+    if (digitsPattern) {
+      values.push(digitsPattern);
+      i++;
+    }
+  }
+  if (params.from) {
+    filters.push(`u.created_at >= $${i++}`);
+    values.push(params.from);
+  }
+  if (params.to) {
+    filters.push(`u.created_at <= $${i++}`);
+    values.push(params.to);
   }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 

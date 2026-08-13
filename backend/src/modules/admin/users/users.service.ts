@@ -233,6 +233,8 @@ export async function listUsers(req: Request, params: ListUsersQuery) {
         status: params.status ?? null,
         kycStatus: params.kyc_status ?? null,
         search: params.search ?? null,
+        from: params.from ?? null,
+        to: params.to ?? null,
         limit: params.limit,
         offset,
         withBalance: params.with_balance ?? false,

@@ -18,6 +18,7 @@
     "migrate:down": "node-pg-migrate down -m \"/migrations/*.js\" --use-glob",
     "seed": "tsx src/scripts/seed.ts",
     "seed:owner": "tsx src/scripts/seed-owner.ts",
+    "settle:stuck": "tsx src/scripts/settle-stuck-bets.ts",
     "setup": "npm run migrate && npm run seed",
     "reset-db": "node-pg-migrate down -m \"/migrations/*.js\" --use-glob -j && npm run migrate && npm run seed"
   },

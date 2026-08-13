@@ -58,3 +58,27 @@ export function toIso(d: Date | string | null | undefined): string | undefined {
   if (typeof d === 'string') return d;
   return d.toISOString();
 }
+
+/**
+ * Date-range boundaries for ?from=/?to= filters.
+ *
+ * Date pickers emit a Date at LOCAL midnight. Sending that raw for `to` makes
+ * the backend's `col <= $to` cut the range off at the START of the selected
+ * end day (and, in UTC+3, even earlier once converted to UTC) — so a same-day
+ * From/To range returned almost nothing. Always send From as local
+ * 00:00:00.000 and To as local 23:59:59.999 so the whole selected day is
+ * included in the admin's own timezone.
+ */
+export function startOfDayIso(d: Date | null | undefined): string | undefined {
+  if (!d) return undefined;
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x.toISOString();
+}
+
+export function endOfDayIso(d: Date | null | undefined): string | undefined {
+  if (!d) return undefined;
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x.toISOString();
+}

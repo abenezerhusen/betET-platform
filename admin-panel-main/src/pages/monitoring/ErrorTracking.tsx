@@ -20,7 +20,7 @@ import { toast } from '../../lib/toast';
 import * as logsApi from '../../lib/api/logs';
 import * as monitoringApi from '../../lib/api/monitoring';
 import { useAuthStore } from '../../store/auth';
-import { toIso, formatInteger, formatPercent } from '../../lib/format';
+import { formatInteger, formatPercent, startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface ErrorData {
   id: string;
@@ -197,8 +197,8 @@ export function ErrorTracking() {
     };
     logsApi
       .listErrorLogs({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         source: selectedType || undefined,
         level: selectedSeverity ? levelMap[selectedSeverity] : undefined,
         resolved:

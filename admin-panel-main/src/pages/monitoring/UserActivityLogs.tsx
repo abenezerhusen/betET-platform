@@ -17,7 +17,7 @@ import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import * as logsApi from '../../lib/api/logs';
 import { useAuthStore } from '../../store/auth';
-import { formatInteger, toIso } from '../../lib/format';
+import { formatInteger, startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface ActivityLogData {
   id: string;
@@ -115,8 +115,8 @@ export function UserActivityLogs() {
     setLoading(true);
     logsApi
       .listActivityLogs({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         actor_id: selectedUser.trim() || undefined,
         action_prefix: selectedAction.trim() || undefined,
         page: 1,

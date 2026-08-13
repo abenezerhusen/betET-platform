@@ -25,7 +25,38 @@ import { z } from 'zod';
 
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { BadRequestError } from '../../../http/errors/http-error';
-import { getAdminScope } from '../admin-shared';
+import {
+  getAdminScope,
+  phoneSearchPattern,
+  phoneDigitsSql,
+} from '../admin-shared';
+
+/**
+ * Build a format-tolerant phone match group: raw ILIKE on every column plus
+ * a digits-only comparison on the phone columns (so +2519…, 2519… and 09…
+ * inputs all match regardless of the stored format). Pushes the bind values
+ * and returns the SQL group and the next parameter index.
+ */
+function phoneMatchGroup(
+  values: unknown[],
+  i: number,
+  input: string,
+  phoneColumns: string[],
+  extraIlikeColumns: string[] = []
+): { sql: string; next: number } {
+  const all = [...phoneColumns, ...extraIlikeColumns];
+  const raw = all.map((c) => `${c} ILIKE $${i}`).join(' OR ');
+  const digitsPattern = phoneSearchPattern(input);
+  if (digitsPattern) {
+    const digits = phoneColumns
+      .map((c) => phoneDigitsSql(c, i + 1))
+      .join(' OR ');
+    values.push(`%${input}%`, digitsPattern);
+    return { sql: `(${raw} OR ${digits})`, next: i + 2 };
+  }
+  values.push(`%${input}%`);
+  return { sql: `(${raw})`, next: i + 1 };
+}
 
 /* ========================================================================== */
 /* DTOs                                                                       */
@@ -184,11 +215,15 @@ async function listBranchTransactions(
         values.push(query.status);
       }
       if (query.phone) {
-        filters.push(
-          `(u.phone ILIKE $${i} OR u.email ILIKE $${i} OR ct.metadata->>'phone' ILIKE $${i})`
+        const g = phoneMatchGroup(
+          values,
+          i,
+          query.phone,
+          ['u.phone', `ct.metadata->>'phone'`],
+          ['u.email']
         );
-        values.push(`%${query.phone}%`);
-        i++;
+        filters.push(g.sql);
+        i = g.next;
       }
       if (query.reason) {
         filters.push(`(ct.metadata->>'reason') ILIKE $${i++}`);
@@ -314,9 +349,9 @@ async function listOnlineTransactions(
         values.push(query.status);
       }
       if (query.phone) {
-        filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
-        values.push(`%${query.phone}%`);
-        i++;
+        const g = phoneMatchGroup(values, i, query.phone, ['u.phone'], ['u.email']);
+        filters.push(g.sql);
+        i = g.next;
       }
       if (query.bank) {
         filters.push(
@@ -445,9 +480,9 @@ async function listWalletTransactions(
         values.push(query.user_id);
       }
       if (query.phone) {
-        filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
-        values.push(`%${query.phone}%`);
-        i++;
+        const g = phoneMatchGroup(values, i, query.phone, ['u.phone'], ['u.email']);
+        filters.push(g.sql);
+        i = g.next;
       }
       if (query.reason) {
         filters.push(
@@ -464,18 +499,14 @@ async function listWalletTransactions(
       }
       if (query.sender_phone) {
         // Match transfer_out rows whose owner phone fits.
-        filters.push(
-          `(t.type = 'transfer_out' AND (u.phone ILIKE $${i} OR u.email ILIKE $${i}))`
-        );
-        values.push(`%${query.sender_phone}%`);
-        i++;
+        const g = phoneMatchGroup(values, i, query.sender_phone, ['u.phone'], ['u.email']);
+        filters.push(`(t.type = 'transfer_out' AND ${g.sql})`);
+        i = g.next;
       }
       if (query.receiver_phone) {
-        filters.push(
-          `(t.type = 'transfer_in' AND (u.phone ILIKE $${i} OR u.email ILIKE $${i}))`
-        );
-        values.push(`%${query.receiver_phone}%`);
-        i++;
+        const g = phoneMatchGroup(values, i, query.receiver_phone, ['u.phone'], ['u.email']);
+        filters.push(`(t.type = 'transfer_in' AND ${g.sql})`);
+        i = g.next;
       }
       if (query.search) {
         filters.push(
@@ -619,9 +650,9 @@ async function listAdminDeposits(
         values.push(query.user_id);
       }
       if (query.phone) {
-        filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
-        values.push(`%${query.phone}%`);
-        i++;
+        const g = phoneMatchGroup(values, i, query.phone, ['u.phone'], ['u.email']);
+        filters.push(g.sql);
+        i = g.next;
       }
       if (query.search) {
         filters.push(

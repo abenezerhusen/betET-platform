@@ -15,7 +15,7 @@ import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import * as gameApi from '../../lib/api/game-activity';
 import { useAuthStore } from '../../store/auth';
-import { formatCurrency, toIso, toNumber } from '../../lib/format';
+import { formatCurrency, toNumber, startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface GameActivityRow {
   id: string;
@@ -100,8 +100,8 @@ export function GameActivity() {
     setLoading(true);
     gameApi
       .listGameActivity({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         phone: phoneNumber || undefined,
         game_id: GAME_LABEL_TO_ID[selectedGame] ?? undefined,
         result: RESULT_LABEL_TO_VALUE[selectedResult] ?? undefined,

@@ -24,14 +24,13 @@ import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import { useAuthStore } from '../../store/auth';
 import { reports } from '../../lib/api';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
 const fmt = (n: string | number | null | undefined) => {
   const v = typeof n === 'string' ? Number(n) : (n ?? 0);
   if (!Number.isFinite(v)) return '0';
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
-
-const toIso = (d: Date) => d.toISOString();
 
 const dayColumns = [
   { header: 'Date', accessor: 'day' as const },
@@ -73,8 +72,8 @@ export function OnlineCashReport() {
     setLoading(true);
     reports
       .onlineCashReport({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         sport: sport || undefined,
       })
       .then((res) => {

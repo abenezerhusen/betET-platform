@@ -21,7 +21,11 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod';
 
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
-import { getAdminScope } from '../admin-shared';
+import {
+  getAdminScope,
+  phoneSearchPattern,
+  phoneDigitsSql,
+} from '../admin-shared';
 
 const querySchema = z
   .object({
@@ -81,16 +85,33 @@ async function listGameBets(req: Request, query: z.infer<typeof querySchema>) {
         values.push(query.user_id);
       }
       if (query.phone) {
-        filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
-        values.push(`%${query.phone}%`);
-        i++;
+        const digitsPattern = phoneSearchPattern(query.phone);
+        if (digitsPattern) {
+          filters.push(
+            `(u.phone ILIKE $${i} OR u.email ILIKE $${i} OR ${phoneDigitsSql('u.phone', i + 1)})`
+          );
+          values.push(`%${query.phone}%`, digitsPattern);
+          i += 2;
+        } else {
+          filters.push(`(u.phone ILIKE $${i} OR u.email ILIKE $${i})`);
+          values.push(`%${query.phone}%`);
+          i++;
+        }
       }
       if (query.search) {
+        const digitsPattern = phoneSearchPattern(query.search);
+        const phonePart = digitsPattern
+          ? ` OR ${phoneDigitsSql('u.phone', i + 1)}`
+          : '';
         filters.push(
-          `(u.phone ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(u.metadata->>'full_name', u.metadata->>'name') ILIKE $${i} OR b.id::text ILIKE $${i})`
+          `(u.phone ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(u.metadata->>'full_name', u.metadata->>'name') ILIKE $${i} OR b.id::text ILIKE $${i}${phonePart})`
         );
         values.push(`%${query.search}%`);
         i++;
+        if (digitsPattern) {
+          values.push(digitsPattern);
+          i++;
+        }
       }
       if (query.min_amount !== undefined) {
         filters.push(`b.amount >= $${i++}`);

@@ -77,6 +77,7 @@ router.get('/tickets', async (req: Request, res: Response, next: NextFunction) =
 
     const query = z.object({
       filter: z.enum(['unsettled', 'errors', 'all']).default('unsettled'),
+      search: z.string().trim().min(1).max(255).optional(),
       page: z.coerce.number().int().min(1).default(1),
       limit: z.coerce.number().int().min(1).max(200).default(50),
     }).parse(req.query);
@@ -84,6 +85,7 @@ router.get('/tickets', async (req: Request, res: Response, next: NextFunction) =
     const result = await listSettlementTickets({
       tenantId,
       filter: query.filter,
+      search: query.search ?? null,
       page: query.page,
       limit: query.limit,
     });

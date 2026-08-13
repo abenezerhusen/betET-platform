@@ -19,6 +19,9 @@ export interface MatchStatsRow {
 
 export function listMatchStats(query: {
   status?: 'live' | 'upcoming' | 'completed';
+  /** Kick-off (starts_at) range, ISO strings. */
+  from?: string;
+  to?: string;
   page?: number;
   limit?: number;
   export?: 'csv';

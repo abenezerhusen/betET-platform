@@ -27,6 +27,7 @@ import { downloadCsv, todayStamp } from '../../lib/csv';
 import { toast } from '../../lib/toast';
 import { useAuthStore } from '../../store/auth';
 import { reports } from '../../lib/api';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
 type ScopeId = reports.PayableScope;
 
@@ -42,8 +43,6 @@ const fmt = (n: string | number | null | undefined) => {
   if (!Number.isFinite(v)) return '0';
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
-
-const toIso = (d: Date) => d.toISOString();
 
 const statusStyles: Record<reports.PayableStatus, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -78,8 +77,8 @@ export function PayableReport() {
     reports
       .payableReport({
         scope: activeTab,
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         status: (statusFilter || undefined) as reports.PayableStatus | undefined,
       })
       .then((res) => {

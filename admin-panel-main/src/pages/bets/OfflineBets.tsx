@@ -4,11 +4,12 @@
  * Same shape as Online Bets but for `channel = 'offline'`. Adds Branch
  * and Cashier columns sourced from joined user metadata on the backend.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DataTable } from '../../components/DataTable';
 import { FilterBar } from '../../components/FilterBar';
 import { Eye, FileText, Slash, X } from 'lucide-react';
 import { downloadCsv, todayStamp } from '../../lib/csv';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import * as betsApi from '../../lib/api/bets';
 import { useAuthStore } from '../../store/auth';
@@ -336,9 +337,17 @@ export function OfflineBets() {
     betsApi
       .listBets({
         type: 'offline',
-        from: startDate.toISOString(),
-        to: endDate.toISOString(),
-        phone: phoneNumber || undefined,
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
+        phone: phoneNumber.trim() || undefined,
+        // Server-side search matches UUID, SBK-XXXXXXXX coupon code,
+        // TKT-XXXXXXXX ticket code and printed receipt code — searching
+        // the whole dataset, not just the loaded page.
+        search: betIdFilter.trim() || undefined,
+        min_stake: minStake !== '' ? Number(minStake) : undefined,
+        max_stake: maxStake !== '' ? Number(maxStake) : undefined,
+        branch_search: branchFilter.trim() || undefined,
+        cashier_search: cashierFilter.trim() || undefined,
         status:
           (LABEL_TO_STATUS[selectedStatus] as betsApi.BetStatus | undefined) ||
           undefined,
@@ -370,39 +379,19 @@ export function OfflineBets() {
     startDate,
     endDate,
     phoneNumber,
+    betIdFilter,
+    minStake,
+    maxStake,
+    branchFilter,
+    cashierFilter,
     selectedStatus,
     selectedPaidStatus,
     selectedPaymentType,
     reloadTick,
   ]);
 
-  const filteredData = useMemo(() => {
-    const needle = betIdFilter.trim().toLowerCase();
-    return rows.filter((row) => {
-      if (needle) {
-        // Match any of: short ID, full UUID, ticket code (TKT-…),
-        // SBK coupon, or the printed receipt code shown on the slip.
-        const haystack = [
-          row.betId,
-          row.id,
-          row.ticketCode,
-          row.raw.ticket_code ?? '',
-          row.raw.printed_ticket_code ?? '',
-          row.raw.coupon_code ?? '',
-        ]
-          .filter(Boolean)
-          .map((s) => String(s).toLowerCase());
-        if (!haystack.some((h) => h.includes(needle))) return false;
-      }
-      if (minStake && row.stake < Number(minStake)) return false;
-      if (maxStake && row.stake > Number(maxStake)) return false;
-      if (branchFilter && !row.branch.toLowerCase().includes(branchFilter.toLowerCase()))
-        return false;
-      if (cashierFilter && !row.cashier.toLowerCase().includes(cashierFilter.toLowerCase()))
-        return false;
-      return true;
-    });
-  }, [rows, betIdFilter, minStake, maxStake, branchFilter, cashierFilter]);
+  // All filters are applied server-side now; rows arrive pre-filtered.
+  const filteredData = rows;
 
   const handleViewSlip = async (id: string) => {
     setSlip({ bet: null, loading: true });

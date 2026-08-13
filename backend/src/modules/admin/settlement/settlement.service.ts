@@ -24,6 +24,7 @@ import {
 import { applyLossCashback } from '../../promotions/loss-cashback';
 import { accrueAffiliateOnBetSettle } from '../../promotions/affiliate-hooks';
 import { resetUserStreak } from '../streaks/streaks.module';
+import { phoneSearchPattern, phoneDigitsSql } from '../admin-shared';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -905,6 +906,8 @@ export async function expirePostponedSelections(params: {
 export async function listSettlementTickets(params: {
   tenantId: string;
   filter: 'unsettled' | 'errors' | 'all';
+  /** Matches coupon/ticket codes, bet UUID, user phone (any format) or email. */
+  search?: string | null;
   page: number;
   limit: number;
 }): Promise<{
@@ -932,13 +935,37 @@ export async function listSettlementTickets(params: {
           AND b.status NOT IN ('won','lost','void','cashout')`;
       }
 
+      // Server-side search so admins find tickets across the whole dataset,
+      // not just the page currently loaded in the UI.
+      const filterValues: unknown[] = [params.tenantId];
+      const search = params.search?.trim();
+      if (search) {
+        let idx = filterValues.length + 1;
+        const digitsPattern = phoneSearchPattern(search);
+        const phonePart = digitsPattern
+          ? ` OR ${phoneDigitsSql('u.phone', idx + 1)}`
+          : '';
+        whereClause += `
+          AND (b.id::text ILIKE $${idx}
+            OR b.coupon_code ILIKE $${idx}
+            OR b.ticket_code ILIKE $${idx}
+            OR b.printed_ticket_code ILIKE $${idx}
+            OR u.phone ILIKE $${idx}
+            OR u.email::text ILIKE $${idx}${phonePart})`;
+        filterValues.push(`%${search}%`);
+        idx++;
+        if (digitsPattern) filterValues.push(digitsPattern);
+      }
+
       const countRow = await client.query<{ total: string }>(
         `SELECT COUNT(*) AS total
            FROM sportsbook_bets b
+           LEFT JOIN users u ON u.id = b.user_id
           WHERE ${whereClause}`,
-        [params.tenantId]
+        filterValues
       );
 
+      const limIdx = filterValues.length + 1;
       const rows = await client.query(
         `SELECT b.id, b.tenant_id, b.user_id, b.channel, b.bet_type,
                 b.stake::text, b.currency, b.potential_payout::text,
@@ -958,8 +985,8 @@ export async function listSettlementTickets(params: {
           WHERE ${whereClause}
           GROUP BY b.id, u.email, u.phone
           ORDER BY b.updated_at DESC
-          LIMIT $2 OFFSET $3`,
-        [params.tenantId, params.limit, offset]
+          LIMIT $${limIdx} OFFSET $${limIdx + 1}`,
+        [...filterValues, params.limit, offset]
       );
 
       return {

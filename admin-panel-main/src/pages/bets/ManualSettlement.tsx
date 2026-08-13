@@ -650,7 +650,17 @@ export default function ManualSettlement() {
   const { hasPermission } = useAuthStore();
   const [filter, setFilter] = useState<'unsettled' | 'errors' | 'all'>('unsettled');
   const [search, setSearch] = useState('');
+  // Debounced copy of `search` so typing doesn't fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [search]);
   const [tickets, setTickets] = useState<SettlementTicket[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -662,7 +672,14 @@ export default function ManualSettlement() {
   const loadTickets = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await settlementApi.listSettlementTickets({ filter, page, limit: LIMIT });
+      // Search is applied server-side so it covers the whole dataset,
+      // not just the 50 rows on the current page.
+      const res = await settlementApi.listSettlementTickets({
+        filter,
+        search: debouncedSearch || undefined,
+        page,
+        limit: LIMIT,
+      });
       setTickets(res.items);
       setTotal(res.total);
     } catch (err: unknown) {
@@ -671,7 +688,7 @@ export default function ManualSettlement() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page]);
+  }, [filter, debouncedSearch, page]);
 
   useEffect(() => {
     void loadTickets();
@@ -716,14 +733,8 @@ export default function ManualSettlement() {
     }
   };
 
-  const filtered = search.trim()
-    ? tickets.filter(
-        (t) =>
-          t.coupon_code.toLowerCase().includes(search.toLowerCase()) ||
-          (t.user_email ?? '').toLowerCase().includes(search.toLowerCase()) ||
-          (t.user_phone ?? '').toLowerCase().includes(search.toLowerCase())
-      )
-    : tickets;
+  // Rows arrive pre-filtered from the server (coupon / phone / email search).
+  const filtered = tickets;
 
   const pages = Math.max(1, Math.ceil(total / LIMIT));
 
@@ -733,7 +744,7 @@ export default function ManualSettlement() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <Activity size={26} className="text-blue-400" />
@@ -764,7 +775,7 @@ export default function ManualSettlement() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-gray-800/60 rounded-xl w-fit border border-gray-700/50">
+      <div className="flex flex-wrap gap-1 p-1 bg-gray-800/60 rounded-xl w-fit max-w-full border border-gray-700/50">
         {([
           { id: 'unsettled', label: 'Unsettled Tickets', icon: <Clock size={14} /> },
           { id: 'errors',    label: 'Settlement Errors', icon: <AlertTriangle size={14} /> },
@@ -796,19 +807,28 @@ export default function ManualSettlement() {
       </div>
 
       {/* Search */}
-      <div className="relative w-72">
+      <div className="relative w-full sm:w-72">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
         <input
-          className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-          placeholder="Search coupon, email, phone..."
+          className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-9 pr-8 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+          placeholder="Search coupon (SBK-…), email, phone..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm leading-none px-1"
+            aria-label="Clear search"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* Table */}
-      <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
-        <table className="w-full">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden overflow-x-auto">
+        <table className="w-full min-w-[720px]">
           <thead>
             <tr className="bg-gray-800/80 text-xs text-gray-400 uppercase tracking-wide">
               <th className="text-left py-3 px-4">Coupon / Time</th>

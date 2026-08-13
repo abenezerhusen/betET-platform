@@ -20,7 +20,7 @@ import { toast } from '../../lib/toast';
 import * as analyticsApi from '../../lib/api/analytics';
 import type { PerformanceMetricRow } from '../../lib/api/monitoring';
 import { useAuthStore } from '../../store/auth';
-import { formatInteger, toIso } from '../../lib/format';
+import { formatInteger, startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface PerformanceData {
   id: string;
@@ -159,8 +159,8 @@ export function PerformanceAnalytics() {
     setLoading(true);
     analyticsApi
       .getPerformanceOverview({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         name: selectedMetric.trim() || undefined,
         top: 10,
       })

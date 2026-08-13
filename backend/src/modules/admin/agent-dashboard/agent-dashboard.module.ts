@@ -31,7 +31,11 @@ import { z } from 'zod';
 
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { ForbiddenError, NotFoundError } from '../../../http/errors/http-error';
-import { getAdminScope } from '../admin-shared';
+import {
+  getAdminScope,
+  phoneSearchPattern,
+  phoneDigitsSql,
+} from '../admin-shared';
 
 /* ========================================================================== */
 /* DTO                                                                        */
@@ -385,11 +389,19 @@ async function listAgentTickets(req: Request, query: TicketsQuery) {
       }
       let searchClause = '';
       if (query.search) {
+        const digitsPattern = phoneSearchPattern(query.search);
+        const phonePart = digitsPattern
+          ? ` OR ${phoneDigitsSql('u.phone', idx + 1)}`
+          : '';
         searchClause = `AND (sc.id::text ILIKE $${idx} OR sc.ticket_code ILIKE $${idx}
           OR sc.coupon_code ILIKE $${idx} OR sc.printed_ticket_code ILIKE $${idx}
-          OR u.phone ILIKE $${idx})`;
+          OR u.phone ILIKE $${idx}${phonePart})`;
         params.push(`%${query.search}%`);
         idx++;
+        if (digitsPattern) {
+          params.push(digitsPattern);
+          idx++;
+        }
       }
       const limIdx = idx++;
       params.push(query.limit);

@@ -22,6 +22,7 @@ import { toast } from '../../lib/toast';
 import { useAuthStore } from '../../store/auth';
 import { reports } from '../../lib/api';
 import { useAdminUsersByRole } from '../../lib/hooks';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
 type ScopeId = 'branch' | 'cashier';
 
@@ -35,8 +36,6 @@ const fmt = (n: string | number | null | undefined) => {
   if (!Number.isFinite(v)) return '0';
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
-
-const toIso = (d: Date) => d.toISOString();
 
 const branchColumns = [
   { header: 'Branch', accessor: 'branch_name' as const },
@@ -119,8 +118,8 @@ export function OfflineCashReport() {
     setLoading(true);
     reports
       .offlineCashReport({
-        from: toIso(startDate),
-        to: toIso(endDate),
+        from: startOfDayIso(startDate),
+        to: endOfDayIso(endDate),
         branch_id: selectedBranchId || undefined,
         cashier_id: selectedCashierId || undefined,
       })

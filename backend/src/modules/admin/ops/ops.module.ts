@@ -13,6 +13,9 @@ const router = Router();
 
 const listQuery = z.object({
   status: z.enum(['live', 'upcoming', 'completed']).optional(),
+  /** Kick-off (starts_at) range for the Match Stats date filter. */
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(200).default(50),
   export: z.enum(['csv']).optional(),
@@ -261,6 +264,14 @@ router.get(
       if (status) {
         filters.push(`ev.status = $${i++}`);
         values.push(status);
+      }
+      if (q.from) {
+        filters.push(`ev.starts_at >= $${i++}`);
+        values.push(q.from);
+      }
+      if (q.to) {
+        filters.push(`ev.starts_at <= $${i++}`);
+        values.push(q.to);
       }
       const where = `WHERE ${filters.join(' AND ')}`;
       const rows = await client.query(

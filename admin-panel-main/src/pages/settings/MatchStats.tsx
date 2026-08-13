@@ -8,6 +8,7 @@ import { toast } from '../../lib/toast';
 import * as opsApi from '../../lib/api/ops';
 import { useAuthStore } from '../../store/auth';
 import { SettleMatchModal } from '../../components/SettleMatchModal';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
 interface MatchStatData {
   id: string;
@@ -66,6 +67,10 @@ export function MatchStats() {
   const [activeTab, setActiveTab] = useState('live');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
+  // The date pickers default to "today" but the list should show ALL
+  // matches until the admin actually picks a date — so only send the
+  // kick-off range to the backend once a date has been touched.
+  const [dateFilterActive, setDateFilterActive] = useState(false);
   const [selectedLeague, setSelectedLeague] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
   const [rows, setRows] = useState<MatchStatData[]>([]);
@@ -87,6 +92,8 @@ export function MatchStats() {
     Promise.all([
       opsApi.listMatchStats({
         status: activeTab === 'analysis' ? 'completed' : (activeTab as 'live' | 'upcoming' | 'completed'),
+        from: dateFilterActive ? startOfDayIso(startDate) : undefined,
+        to: dateFilterActive ? endOfDayIso(endDate) : undefined,
         page: 1,
         limit: 200,
       }),
@@ -129,7 +136,7 @@ export function MatchStats() {
     return () => {
       cancelled = true;
     };
-  }, [isAuth, startDate, endDate, activeTab, reloadTick]);
+  }, [isAuth, startDate, endDate, dateFilterActive, activeTab, reloadTick]);
 
   const filters = [
     { label: 'League', options: Array.from(new Set(rows.map((r) => r.league))).filter(Boolean), value: selectedLeague, onChange: setSelectedLeague },
@@ -227,14 +234,21 @@ export function MatchStats() {
       <FilterBar
         startDate={startDate}
         endDate={endDate}
-        onStartDateChange={setStartDate}
-        onEndDateChange={setEndDate}
+        onStartDateChange={(d) => {
+          setStartDate(d);
+          setDateFilterActive(true);
+        }}
+        onEndDateChange={(d) => {
+          setEndDate(d);
+          setDateFilterActive(true);
+        }}
         filters={filters}
         onClear={() => {
           setSelectedLeague('');
           setSelectedStatus('');
           setStartDate(new Date());
           setEndDate(new Date());
+          setDateFilterActive(false);
         }}
       />
 

@@ -42,6 +42,8 @@ import {
   getAdminScope,
   getIp,
   getUa,
+  phoneSearchPattern,
+  phoneDigitsSql,
 } from '../admin-shared';
 
 /* ========================================================================== */
@@ -79,6 +81,11 @@ const listBetsQuery = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   search: z.string().trim().min(1).optional(),
+  min_stake: z.coerce.number().nonnegative().optional(),
+  max_stake: z.coerce.number().nonnegative().optional(),
+  /** Name-based filters used by the Offline Bets page dropdowns. */
+  branch_search: z.string().trim().min(1).max(255).optional(),
+  cashier_search: z.string().trim().min(1).max(255).optional(),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(500).default(50),
 });
@@ -155,11 +162,23 @@ async function listBets(req: Request, q: ListBetsQuery) {
         values.push(q.jackpot_id);
       }
       if (q.phone) {
-        filters.push(
-          `(u.phone ILIKE $${i} OR b.bet_for_user_phone ILIKE $${i})`
-        );
-        values.push(`%${q.phone}%`);
-        i++;
+        const digitsPattern = phoneSearchPattern(q.phone);
+        if (digitsPattern) {
+          // Digits-only match so +2519…, 2519… and 09… all find the user.
+          filters.push(
+            `(u.phone ILIKE $${i} OR b.bet_for_user_phone ILIKE $${i}
+              OR ${phoneDigitsSql('u.phone', i + 1)}
+              OR ${phoneDigitsSql('b.bet_for_user_phone', i + 1)})`
+          );
+          values.push(`%${q.phone}%`, digitsPattern);
+          i += 2;
+        } else {
+          filters.push(
+            `(u.phone ILIKE $${i} OR b.bet_for_user_phone ILIKE $${i})`
+          );
+          values.push(`%${q.phone}%`);
+          i++;
+        }
       }
       if (q.payment_type) {
         filters.push(`(b.metadata->>'payment_type') = $${i++}`);
@@ -185,6 +204,10 @@ async function listBets(req: Request, q: ListBetsQuery) {
         // SBK-XXXXXXXX coupon, TKT-XXXXXXXX raw ticket code, or the
         // printed receipt code (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}). Also
         // match user phone / email so single-search box keeps working.
+        const searchDigits = phoneSearchPattern(q.search);
+        const phonePart = searchDigits
+          ? `OR ${phoneDigitsSql('u.phone', i + 1)}`
+          : '';
         filters.push(`(
           b.id::text ILIKE $${i}
           OR b.ticket_code ILIKE $${i}
@@ -192,12 +215,49 @@ async function listBets(req: Request, q: ListBetsQuery) {
           OR b.printed_ticket_code ILIKE $${i}
           OR u.phone ILIKE $${i}
           OR u.email::text ILIKE $${i}
+          ${phonePart}
         )`);
         values.push(`%${q.search}%`);
+        i++;
+        if (searchDigits) {
+          values.push(searchDigits);
+          i++;
+        }
+      }
+      if (q.min_stake !== undefined) {
+        filters.push(`b.stake >= $${i++}`);
+        values.push(q.min_stake);
+      }
+      if (q.max_stake !== undefined) {
+        filters.push(`b.stake <= $${i++}`);
+        values.push(q.max_stake);
+      }
+      if (q.branch_search) {
+        filters.push(`(br.metadata->>'name') ILIKE $${i++}`);
+        values.push(`%${q.branch_search}%`);
+      }
+      if (q.cashier_search) {
+        // Match either the placing cashier or the cashier who sold the
+        // ticket — same fallback chain the row display uses.
+        filters.push(`(
+          COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email::text) ILIKE $${i}
+          OR COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email::text) ILIKE $${i}
+        )`);
+        values.push(`%${q.cashier_search}%`);
         i++;
       }
 
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+      // The count/summary queries only join `users u`; the branch/cashier
+      // name filters reference the c/sc/br aliases, so pull those joins in
+      // whenever the filters are active to keep totals consistent.
+      const extraJoins =
+        q.branch_search || q.cashier_search
+          ? `LEFT JOIN users c  ON c.id  = b.cashier_id
+             LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
+             LEFT JOIN users br ON br.id::text = b.branch_id AND br.role = 'branch'`
+          : '';
 
       const allBetsCte = `
         WITH all_bets AS (
@@ -268,6 +328,7 @@ async function listBets(req: Request, q: ListBetsQuery) {
          SELECT COUNT(*)::text AS count
            FROM all_bets b
            LEFT JOIN users u ON u.id = b.user_id
+           ${extraJoins}
            ${where}`,
         values
       );
@@ -329,6 +390,7 @@ async function listBets(req: Request, q: ListBetsQuery) {
            COUNT(*) FILTER (WHERE b.status IN ('cancelled','void'))::text              AS cancelled_count
            FROM all_bets b
            LEFT JOIN users u ON u.id = b.user_id
+           ${extraJoins}
            ${where}`,
         values
       );
