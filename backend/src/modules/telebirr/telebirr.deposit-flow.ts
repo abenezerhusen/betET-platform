@@ -141,6 +141,27 @@ export async function initiateTelebirrDeposit(
           { reason: 'reference_already_claimed' }
         );
       }
+
+      // Reject a reference whose payment was ALREADY consumed (credited /
+      // flagged) — it can never match again, so without this check the
+      // request would sit in "waiting" until expiry even though the
+      // reference is definitively unusable. `pending`/`unmatched` rows are
+      // NOT rejected: those are open payments the initiate flow reconciles
+      // immediately after creating the request.
+      const existingTx = await repo.findTelebirrTxByRef(
+        client,
+        input.claimedTelebirrRef
+      );
+      if (
+        existingTx &&
+        existingTx.status !== 'pending' &&
+        existingTx.status !== 'unmatched'
+      ) {
+        throw new BadRequestError(
+          'Invalid Reference Number. This Telebirr reference has already been used for a deposit.',
+          { reason: 'reference_already_used' }
+        );
+      }
     }
 
     const cutoff = new Date(Date.now() - AGENT_ONLINE_WINDOW_MS);

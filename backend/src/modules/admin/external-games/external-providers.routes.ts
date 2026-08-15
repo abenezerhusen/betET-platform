@@ -40,6 +40,9 @@ const providerCreateSchema = z.object({
   secret: z.string().trim().min(1).optional(),
   callback_url: z.string().trim().url().optional(),
   sandbox: z.boolean().default(true),
+  /** Negotiated GGR share owed to the provider (%). Used by casino reports
+   *  to compute the provider-payable amount — never assumed. */
+  revenue_share_percent: z.number().min(0).max(100).default(0),
   config: z.record(z.unknown()).default({}),
 });
 
@@ -96,6 +99,7 @@ interface ProviderRow {
   sandbox: boolean;
   status: 'Active' | 'Paused';
   last_ping: string | null;
+  revenue_share_percent: string;
   config: Record<string, unknown>;
   has_secret: boolean;
   created_at: string;
@@ -111,7 +115,8 @@ router.get(
       async (client) => {
         const r = await client.query<ProviderRow>(
           `SELECT id, tenant_id, name, slug, base_url, auth_method,
-                  callback_url, sandbox, status, last_ping, config,
+                  callback_url, sandbox, status, last_ping,
+                  revenue_share_percent::text, config,
                   (encrypted_secret IS NOT NULL) AS has_secret,
                   created_at, updated_at
              FROM external_game_providers
@@ -164,10 +169,11 @@ router.post(
         const r = await client.query<ProviderRow>(
           `INSERT INTO external_game_providers
              (tenant_id, name, slug, base_url, auth_method, encrypted_secret,
-              callback_url, sandbox, status, config)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active', $9::jsonb)
+              callback_url, sandbox, status, revenue_share_percent, config)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Active', $9, $10::jsonb)
            RETURNING id, tenant_id, name, slug, base_url, auth_method,
-                     callback_url, sandbox, status, last_ping, config,
+                     callback_url, sandbox, status, last_ping,
+                     revenue_share_percent::text, config,
                      (encrypted_secret IS NOT NULL) AS has_secret,
                      created_at, updated_at`,
           [
@@ -179,6 +185,7 @@ router.post(
             sealed,
             callback,
             body.sandbox,
+            body.revenue_share_percent,
             JSON.stringify(body.config),
           ]
         );
@@ -252,6 +259,10 @@ router.patch(
           sets.push(`encrypted_secret = $${i++}`);
           values.push(sealSecret(body.secret));
         }
+        if (body.revenue_share_percent !== undefined) {
+          sets.push(`revenue_share_percent = $${i++}`);
+          values.push(body.revenue_share_percent);
+        }
         if (body.config !== undefined) {
           sets.push(`config = config || $${i++}::jsonb`);
           values.push(JSON.stringify(body.config));
@@ -264,7 +275,8 @@ router.patch(
           `UPDATE external_game_providers SET ${sets.join(', ')}, updated_at = now()
              WHERE id = $${i}
            RETURNING id, tenant_id, name, slug, base_url, auth_method,
-                     callback_url, sandbox, status, last_ping, config,
+                     callback_url, sandbox, status, last_ping,
+                     revenue_share_percent::text, config,
                      (encrypted_secret IS NOT NULL) AS has_secret,
                      created_at, updated_at`,
           values

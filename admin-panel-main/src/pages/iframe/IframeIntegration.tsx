@@ -31,6 +31,8 @@ interface AddProviderForm {
   secret: string;
   callback_url: string;
   sandbox: boolean;
+  /** Negotiated GGR share (%) owed to the provider. */
+  revenue_share_percent: string;
 }
 
 const emptyOutbound: OutboundForm = {
@@ -47,6 +49,7 @@ const emptyProvider: AddProviderForm = {
   secret: '',
   callback_url: '',
   sandbox: true,
+  revenue_share_percent: '0',
 };
 
 interface LegacyForm {
@@ -212,6 +215,7 @@ export function IframeIntegration() {
   const addProvider = async () => {
     if (!providerForm.name.trim() || !providerForm.base_url.trim()) return;
     try {
+      const revShare = Number(providerForm.revenue_share_percent);
       const created = await iframeApi.createExternalProvider({
         name: providerForm.name.trim(),
         base_url: providerForm.base_url.trim(),
@@ -219,6 +223,8 @@ export function IframeIntegration() {
         secret: providerForm.secret.trim() || undefined,
         callback_url: providerForm.callback_url.trim() || undefined,
         sandbox: providerForm.sandbox,
+        revenue_share_percent:
+          Number.isFinite(revShare) && revShare >= 0 && revShare <= 100 ? revShare : 0,
       });
       toast(`Provider "${created.name}" added.`);
       setShowAddProvider(false);
@@ -718,6 +724,35 @@ export function IframeIntegration() {
                         <span className="font-medium">Last ping:</span>{' '}
                         {selectedProvider.last_ping ?? 'never'}
                       </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">Revenue share:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="0.01"
+                          defaultValue={Number(selectedProvider.revenue_share_percent ?? 0)}
+                          key={selectedProvider.id}
+                          onBlur={(e) => {
+                            const v = Number(e.target.value);
+                            if (!Number.isFinite(v) || v < 0 || v > 100) return;
+                            if (v === Number(selectedProvider.revenue_share_percent ?? 0)) return;
+                            void iframeApi
+                              .patchExternalProvider(selectedProvider.id, {
+                                revenue_share_percent: v,
+                              })
+                              .then(async () => {
+                                toast(`Revenue share set to ${v}% for ${selectedProvider.name}.`);
+                                setProviders(await iframeApi.listExternalProviders());
+                              })
+                              .catch((err) =>
+                                toast(`Update failed: ${(err as Error).message}`, 'error')
+                              );
+                          }}
+                          className="w-20 px-2 py-1 border border-gray-300 rounded-md text-xs"
+                        />
+                        <span>% of GGR</span>
+                      </div>
                     </div>
                     <div>
                       <h4 className="text-sm font-medium mb-2">Allowed Games</h4>
@@ -911,6 +946,22 @@ export function IframeIntegration() {
                   <option value="yes">Yes (test mode)</option>
                   <option value="no">No (production)</option>
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Revenue Share (% of GGR owed to provider)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={providerForm.revenue_share_percent}
+                  onChange={(e) =>
+                    setProviderForm((p) => ({ ...p, revenue_share_percent: e.target.value }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-700 mb-1">

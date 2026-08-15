@@ -137,6 +137,39 @@ const NAME_TO_RE =
 
 const NOTE_CANDIDATE_RE = /\b[A-Z0-9]{6,8}\b/g;
 
+/* ---------------------------------------------------------------------------
+ * Amharic Telebirr SMS format (ADDITIVE fallbacks — some SIM/network
+ * providers deliver the payment notification in Amharic):
+ *
+ *   "ውድ Abenezer
+ *    ከ Rihan Sultan(2519****1374) 570.00 ብር በ 08/08/2026 18:08:10
+ *    ተቀብለዋል፡፡ የሂሳብ እንቅስቃሴ ቁጥርዎ DH87MOJD7R ነዉ፡፡ አሁን ያለዎት ቀሪ ሂሳብ
+ *    4,969.93 ብር ነዉ፡፡
+ *    በቴሌብር ስለተገለገሉ እናመሰግናለን
+ *    ኢትዮ ቴሌኮም"
+ *
+ * Field mapping:
+ *   ተቀብለዋል            → money RECEIVED (credit)
+ *   ልከዋል / ተልኳል       → money SENT (debit)
+ *   "570.00 ብር"        → amount (first "<number> ብር" occurrence)
+ *   ከ <name>(<phone>)   → sender ("ከ" = "from"; phone is masked → null)
+ *   እንቅስቃሴ ቁጥር… <REF>  → Telebirr transaction reference
+ *   ቀሪ ሂሳብ <number>    → remaining balance
+ *
+ * These regexes only run as FALLBACKS after the existing English regexes
+ * fail, so the live English format's behaviour is completely unchanged.
+ * ------------------------------------------------------------------------- */
+const AMHARIC_RECEIVED_RE = /ተቀብለዋል|ገቢ\s*ተደርጓል/;
+const AMHARIC_SENT_RE = /ልከዋል|ተልኳል|ልኳል|ከፍለዋል/;
+const AMHARIC_AMOUNT_RE = /([\d,]+(?:\.\d+)?)\s*ብር/;
+// "የሂሳብ እንቅስቃሴ ቁጥርዎ DH87MOJD7R ነዉ" — the possessive suffix on ቁጥር varies
+// (ቁጥርዎ / ቁጥርህ / ቁጥርሽ), so allow any non-space tail before the token.
+const AMHARIC_REF_RE = /እንቅስቃሴ\s*ቁጥር\S*\s+([A-Za-z0-9]{4,})/;
+// "ቀሪ ሂሳብ 4,969.93 ብር" — remaining balance.
+const AMHARIC_BALANCE_RE = /ቀሪ\s*ሂሳብ\s*([\d,]+(?:\.\d+)?)/;
+// "ከ Rihan Sultan(2519****1374)" — name between "ከ " and the "(".
+const AMHARIC_NAME_FROM_RE = /ከ\s+([^()\n፡]{1,80}?)\s*\(/;
+
 function detectType(body: string): SmsType {
   const b = body.toLowerCase();
 
@@ -153,25 +186,36 @@ function detectType(body: string): SmsType {
 
   if (/\b(credited|received|deposited)\b/.test(b)) return 'received';
   if (/\b(debited|paid|sent|transferred to)\b/.test(b)) return 'sent';
+
+  // Amharic fallbacks — only reached when no English keyword matched.
+  if (AMHARIC_RECEIVED_RE.test(body)) return 'received';
+  if (AMHARIC_SENT_RE.test(body)) return 'sent';
+
   return 'unknown';
 }
 
 function extractAmount(body: string): number | null {
   const m = body.match(AMOUNT_RE);
-  if (!m) return null;
-  return parseAmount(m[1] ?? m[2]);
+  if (m) return parseAmount(m[1] ?? m[2]);
+  // Amharic fallback: the first "<number> ብር" occurrence is the transfer
+  // amount (the remaining balance appears later in the message).
+  const am = body.match(AMHARIC_AMOUNT_RE);
+  return am ? parseAmount(am[1]) : null;
 }
 
 function extractRef(body: string): string | null {
   const m = body.match(REF_RE);
-  if (!m) return null;
   // Strip a stray trailing period ("Ref: ABC123.") that the regex may include.
-  return m[1].replace(/\.$/, '');
+  if (m) return m[1].replace(/\.$/, '');
+  const am = body.match(AMHARIC_REF_RE);
+  return am ? am[1] : null;
 }
 
 function extractNewBalance(body: string): number | null {
   const m = body.match(NEW_BALANCE_RE);
-  return m ? parseAmount(m[1]) : null;
+  if (m) return parseAmount(m[1]);
+  const am = body.match(AMHARIC_BALANCE_RE);
+  return am ? parseAmount(am[1]) : null;
 }
 
 function extractRawDate(body: string): string | null {
@@ -198,8 +242,13 @@ function extractPhoneAfter(body: string, keyword: 'from' | 'to'): string | null 
 function extractName(body: string, kind: 'from' | 'to'): string | null {
   const re = kind === 'from' ? NAME_FROM_RE : NAME_TO_RE;
   const m = body.match(re);
-  if (!m) return null;
-  return m[1].trim().replace(/\s{2,}/g, ' ');
+  if (m) return m[1].trim().replace(/\s{2,}/g, ' ');
+  // Amharic fallback ("ከ <name>(<phone>)" — "ከ" = "from").
+  if (kind === 'from') {
+    const am = body.match(AMHARIC_NAME_FROM_RE);
+    if (am) return am[1].trim().replace(/\s{2,}/g, ' ');
+  }
+  return null;
 }
 
 function extractNoteCandidates(

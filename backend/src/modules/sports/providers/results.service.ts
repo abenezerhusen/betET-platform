@@ -28,7 +28,7 @@ import {
   settleBetFromLegs,
   writeAuditLog,
 } from '../../admin/settlement/settlement.service';
-import { mapStatus } from './odds-api.normalizer';
+import { extractScorePair, mapStatus } from './odds-api.normalizer';
 import { gradeSelection } from './market-grading';
 import type { OddsApiClient, RequestBudget } from './odds-api.client';
 import type { ResolvedProviderConfig } from './provider.config';
@@ -40,47 +40,26 @@ export interface ResultsOutcome {
   cancelled: number; // events cancelled → tickets voided/refunded
 }
 
-/** Minimum window looked back for finished fixtures each run. */
-const RESULTS_LOOKBACK_HOURS = 72;
 /**
- * Hard cap on how far back the results backfill will reach in one pass. Without
- * this, the FIRST run after a long gap could ask the provider for months of
- * settled fixtures at once. 45 days matches the fixture import window, so any
- * event we could have imported can also be finalized.
+ * How far back the results pass reaches. the-odds-api's /scores endpoint caps
+ * `daysFrom` at 3 days, so 72h is also the HARD limit of what the windowed
+ * pass can resolve — anything older is handled by the targeted per-event pass
+ * (while bets are pending) and the overdue-ticket flagging below.
  */
-const MAX_RESULTS_LOOKBACK_HOURS = 45 * 24;
-/** Provider page size + max pages per sport per cycle (paginate the backlog). */
-const RESULTS_PAGE = 5000;
-const MAX_RESULT_PAGES = 4;
+const RESULTS_LOOKBACK_HOURS = 72;
+/** the-odds-api /scores accepts daysFrom 1..3. */
+const MAX_SCORES_DAYS_FROM = 3;
 /**
  * Leave this many requests in the hourly budget for the odds/events phases
  * after results — so draining a big backlog never starves live pricing.
  */
 const RESULTS_BUDGET_RESERVE = 15;
-/**
- * When the backlog spans weeks, fetch settled fixtures in bounded time slices
- * starting at the OLDEST still-open kickoff, so every cycle makes guaranteed
- * forward progress instead of re-reading the same first pages of a 45-day
- * window forever (the failure mode that left thousands of past-kickoff events
- * permanently stuck `scheduled`/`live`).
- */
-const RESULTS_SLICE_HOURS = 7 * 24;
 /** Targeted per-event result resolution (events that carry pending bets). */
 const TARGETED_FETCH_LIMIT = 15;
 const TARGETED_MIN_AGE_HOURS = 4;
 const TARGETED_RECHECK_MINUTES = 60;
 /** Wait applied when the provider reports a fixture as postponed. */
 const POSTPONED_DEFAULT_WAIT_HOURS = 72;
-
-/**
- * Scores arrive as JSON numbers per the provider spec, but odds fields are
- * strings and payloads vary by sport/plan — parse tolerantly so a stringly
- * "2" never silently blocks settlement of a finished match.
- */
-function toScore(v: unknown): number | null {
-  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
-  return Number.isFinite(n) ? n : null;
-}
 
 /**
  * Per-tenant re-entrancy guard: the results pass can be triggered by the
@@ -396,17 +375,17 @@ async function resolveEventsWithPendingBets(
 
     const st = mapStatus(event.status);
     if (st === 'finished') {
-      const h = toScore(event.scores?.home);
-      const a = toScore(event.scores?.away);
-      if (h !== null && a !== null) {
-        finishedByInternalId.set(row.id, { home: h, away: a });
+      // v4 scores come as [{name, score}] — matched to home/away by team name.
+      const sc = extractScorePair(event);
+      if (sc.home !== null && sc.away !== null) {
+        finishedByInternalId.set(row.id, { home: sc.home, away: sc.away });
       }
     } else if (st === 'cancelled') {
       cancelledInternalIds.push(row.id);
     } else if (st === 'postponed') {
       postponedInternalIds.push(row.id);
-    } else if (st === 'scheduled' && event.date) {
-      const newStart = new Date(event.date);
+    } else if (st === 'scheduled' && event.commence_time) {
+      const newStart = new Date(event.commence_time);
       if (!Number.isNaN(newStart.getTime()) && newStart.getTime() > Date.now()) {
         rescheduled.push({ id: row.id, startsAt: newStart.toISOString() });
       }
@@ -526,7 +505,7 @@ async function runResultsPass(
           AND starts_at < now()
           AND starts_at > now() - make_interval(hours => $2)
         GROUP BY lower(sport)`,
-      [tenantId, MAX_RESULTS_LOOKBACK_HOURS]
+      [tenantId, RESULTS_LOOKBACK_HOURS]
     );
     return r.rows;
   });
@@ -539,78 +518,45 @@ async function runResultsPass(
     };
   }
 
-  // 2) Fetch finished + cancelled fixtures (HTTP, outside any transaction).
-  //    Odds-API status vocabulary is pending | live | settled | cancelled —
-  //    FINISHED games come back as `settled` (with final `scores`), abandoned
-  //    ones as `cancelled`. Both are pulled in ONE call per sport to stay
-  //    inside the request budget.
-  //
-  //    Windowing: per sport, start at that sport's OLDEST still-open kickoff
-  //    (never further back than the hard cap) and read a bounded time slice.
-  //    Resolving the slice moves the oldest-open marker forward, so each
-  //    cycle drains the backlog front-to-back with guaranteed progress.
+  // 2) Fetch finished fixtures via GET /sports/{sport_key}/scores?daysFrom=
+  //    (HTTP, outside any transaction). The scores feed carries
+  //    `completed: true/false` plus the final `scores` array — completed
+  //    matches are recorded directly. `daysFrom` is sized to reach the
+  //    sport's OLDEST still-open kickoff (capped at the provider's 3-day
+  //    maximum). the-odds-api exposes no "cancelled" state, so abandoned
+  //    fixtures are handled by the targeted pass + overdue flagging instead.
   const nowMs = Date.now();
-  const floorMs = nowMs - RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
-  const maxBackMs = nowMs - MAX_RESULTS_LOOKBACK_HOURS * 60 * 60 * 1000;
   const finalById = new Map<string, { home: number; away: number }>();
   const cancelledIds = new Set<string>();
 
-  let stop = false;
   for (const row of needing) {
-    if (stop || budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
+    if (budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
     const sport = row.sport;
-    const oldestMs = row.oldest ? new Date(row.oldest).getTime() : floorMs;
-    const fromMs = Math.min(floorMs, Math.max(oldestMs, maxBackMs));
-    const toMs = Math.min(fromMs + RESULTS_SLICE_HOURS * 60 * 60 * 1000, nowMs);
-    const fromIso = new Date(fromMs).toISOString();
-    const toIso = new Date(toMs).toISOString();
+    const oldestMs = row.oldest ? new Date(row.oldest).getTime() : nowMs;
+    const daysFrom = Math.min(
+      MAX_SCORES_DAYS_FROM,
+      Math.max(1, Math.ceil((nowMs - oldestMs) / (24 * 60 * 60 * 1000)))
+    );
 
-    // Paginate the settled feed so a dense slice is drained across cycles
-    // instead of being truncated at the first 5000 rows.
-    for (let page = 0; page < MAX_RESULT_PAGES; page += 1) {
-      if (budget.remaining() <= RESULTS_BUDGET_RESERVE) {
-        stop = true;
+    let events;
+    try {
+      events = await client.getScores(sport, daysFrom, budget);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
+      // Rate limited / provider unavailable — stop this cycle; whatever we
+      // already collected is still applied, the rest retries next cycle.
+      if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited') || msg.includes('budget')) {
         break;
       }
-      let events;
-      try {
-        // The /events filter only accepts pending | live | settled. Cancelled
-        // / abandoned fixtures surface inside the settled feed with their own
-        // per-event status, so we classify each row via mapStatus below.
-        events = await client.getEvents(
-          {
-            sport,
-            status: 'settled',
-            from: fromIso,
-            to: toIso,
-            limit: RESULTS_PAGE,
-            skip: page * RESULTS_PAGE,
-          },
-          budget
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
-        // Rate limited / provider unavailable — stop this cycle; whatever we
-        // already collected is still applied, the rest retries next cycle.
-        if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited') || msg.includes('budget')) {
-          stop = true;
-        }
-        break;
+      continue;
+    }
+    for (const e of events) {
+      if (e.completed !== true) continue; // still in progress — not final
+      const sc = extractScorePair(e);
+      if (sc.home !== null && sc.away !== null) {
+        finalById.set(String(e.id), { home: sc.home, away: sc.away });
       }
-      for (const e of events) {
-        const st = mapStatus(e.status);
-        if (st === 'cancelled') {
-          cancelledIds.add(String(e.id));
-          continue;
-        }
-        const h = toScore(e.scores?.home);
-        const a = toScore(e.scores?.away);
-        if (h !== null && a !== null) {
-          finalById.set(String(e.id), { home: h, away: a });
-        }
-      }
-      if (events.length < RESULTS_PAGE) break; // last page for this sport
     }
   }
 

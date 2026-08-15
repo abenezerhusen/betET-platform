@@ -143,6 +143,13 @@ function P2PDepositPanel() {
   // Only show the reference-format hint once the user has left the field —
   // never while they are still typing.
   const [refTouched, setRefTouched] = useState(false);
+  // Immediate "incorrect reference" warning. Shown ONLY for references the
+  // system can DETERMINE are invalid at submit time (bad format, or a
+  // reference already used/claimed by another deposit) — a valid reference
+  // whose agent SMS simply hasn't arrived yet still goes to "waiting" and is
+  // never flagged here. After 3 incorrect attempts the request is cancelled.
+  const [refIncorrect, setRefIncorrect] = useState(false);
+  const [refAttempts, setRefAttempts] = useState(0);
 
   const loadAccounts = () => {
     setLoadingAccounts(true);
@@ -236,8 +243,22 @@ function P2PDepositPanel() {
   const canSubmit =
     Number.isFinite(parsed) && parsed >= 10 && refFormatValid && !busy && phase === "idle";
 
-  const INVALID_REF_MESSAGE =
-    "Invalid Reference Number. The 10-digit reference number you entered is incorrect. Please go back to your Telebirr message, check the reference number carefully, and enter it again.";
+  // Marks one DETERMINISTICALLY incorrect reference attempt: shows the red
+  // warning banner immediately, and after the 3rd attempt cancels any open
+  // request and moves to the "cancelled" state (as the banner promises).
+  const registerIncorrectAttempt = async () => {
+    const next = refAttempts + 1;
+    setRefAttempts(next);
+    if (next >= 3) {
+      await cancelAllWaiting();
+      setRefIncorrect(false);
+      setRefAttempts(0);
+      setRequestId(null);
+      setPhase("cancelled");
+    } else {
+      setRefIncorrect(true);
+    }
+  };
 
   const copy = async (text: string) => {
     try {
@@ -309,7 +330,7 @@ function P2PDepositPanel() {
       // Reject a wrong / mistyped reference BEFORE creating a request, so it
       // can never be left hanging in "Waiting".
       setRefTouched(true);
-      setErr(INVALID_REF_MESSAGE);
+      await registerIncorrectAttempt();
       return;
     }
     setBusy(true);
@@ -337,6 +358,8 @@ function P2PDepositPanel() {
       }
 
       setRequestId(out.request_id);
+      setRefIncorrect(false);
+      setRefAttempts(0);
       if (out.confirmed) {
         setPhase("confirmed");
         void refreshWallet();
@@ -347,11 +370,16 @@ function P2PDepositPanel() {
         setPhase("waiting");
       }
     } catch (e) {
-      // The backend also validates the reference format; surface its
-      // "Invalid Reference Number" message verbatim (no lingering request is
-      // created when the reference is rejected).
+      // The backend rejects references it can PROVE are unusable (bad format,
+      // already used for a previous deposit, already claimed by another open
+      // request) — show the incorrect-reference warning immediately instead
+      // of a generic error. No lingering request is created in these cases.
       const msg = (e as Error).message || "Failed to submit deposit.";
-      setErr(/invalid reference/i.test(msg) ? INVALID_REF_MESSAGE : msg);
+      if (/invalid reference|already been used|already being processed/i.test(msg)) {
+        await registerIncorrectAttempt();
+      } else {
+        setErr(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -374,6 +402,8 @@ function P2PDepositPanel() {
     setRequestId(null);
     setPhase("idle");
     setRefTouched(false);
+    setRefIncorrect(false);
+    setRefAttempts(0);
     setAmount("");
     setReference("");
     clearScreenshot();
@@ -467,6 +497,22 @@ function P2PDepositPanel() {
         ) : (
           /* ---- Entry form ---- */
           <>
+            {refIncorrect && (
+              <div className="px-3 py-2.5 rounded text-sm bg-red-500/15 border border-red-500/40 space-y-1.5">
+                <p className="text-red-400">
+                  <span className="font-bold">
+                    The 10-digit reference number you entered is incorrect.
+                  </span>{" "}
+                  Please go back to your Telebirr message, check the reference
+                  number carefully, and enter it again.
+                </p>
+                <p className="text-xs text-red-400/80">
+                  Attempt {Math.min(refAttempts, 3)} of 3 — the request is
+                  cancelled automatically after 3 incorrect attempts.
+                </p>
+              </div>
+            )}
+
             <p className="text-xs text-gray-400">
               Send the amount to the Telebirr agent below, then paste the
               Telebirr reference from your payment SMS. Your wallet is credited

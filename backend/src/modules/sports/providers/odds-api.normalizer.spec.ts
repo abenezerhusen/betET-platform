@@ -1,19 +1,26 @@
 /**
  * Synchronization normalization tests (STEP 22).
  *
- * The normalizer is the boundary between raw Odds-API.io payloads and the
- * internal sports_events / sports_markets / sports_selections writes. These
- * tests pin down:
+ * The normalizer is the boundary between raw the-odds-api.com (v4) payloads
+ * and the internal sports_events / sports_markets / sports_selections writes.
+ * These tests pin down:
  *   - provider status → internal status mapping (completed / cancelled /
  *     postponed detection used by result sync + settlement),
  *   - event normalization (provider event ID is the identity; junk payloads
- *     are rejected instead of creating broken rows),
- *   - odds normalization (only score-settleable markets are published,
- *     quarter lines and invalid odds are skipped, no duplicate markets).
+ *     are rejected instead of creating broken rows; v4 scores arrays are
+ *     matched to home/away by team name),
+ *   - odds normalization (bookmakers[].markets[].outcomes → only
+ *     score-settleable markets are published, quarter lines and invalid odds
+ *     are skipped, no duplicate markets).
  */
 import { describe, it, expect } from 'vitest';
-import { mapStatus, normalizeEvent, normalizeOdds } from './odds-api.normalizer';
-import type { OddsApiEvent, OddsApiOddsResponse } from './odds-api.types';
+import {
+  extractScorePair,
+  mapStatus,
+  normalizeEvent,
+  normalizeOdds,
+} from './odds-api.normalizer';
+import type { OddsApiEvent, OddsApiMarket, OddsApiOddsResponse } from './odds-api.types';
 
 describe('mapStatus', () => {
   it('detects completed events under every provider alias', () => {
@@ -49,23 +56,25 @@ describe('mapStatus', () => {
 
 describe('normalizeEvent', () => {
   const base: OddsApiEvent = {
-    id: 123456,
-    home: 'Arsenal',
-    away: 'Chelsea',
-    date: '2026-08-15T14:00:00Z',
+    id: 'e912304de2b2ce35b473ce2ecd3d1502',
+    sport_key: 'soccer_epl',
+    sport_title: 'EPL',
+    commence_time: '2026-08-15T14:00:00Z',
+    home_team: 'Arsenal',
+    away_team: 'Chelsea',
     status: 'pending',
-    sport: { slug: 'football', name: 'Football' },
-    league: { name: 'England - Premier League', slug: 'england-premier-league' },
+    sport: { slug: 'football', name: 'Soccer' },
+    league: { name: 'EPL', slug: 'soccer_epl' },
   };
 
   it('maps the provider event ID as a stable string identity', () => {
     const n = normalizeEvent(base);
     expect(n).not.toBeNull();
-    expect(n!.providerEventId).toBe('123456');
+    expect(n!.providerEventId).toBe('e912304de2b2ce35b473ce2ecd3d1502');
     expect(n!.homeTeam).toBe('Arsenal');
     expect(n!.awayTeam).toBe('Chelsea');
     expect(n!.sport).toBe('football');
-    expect(n!.league).toBe('England - Premier League');
+    expect(n!.league).toBe('EPL');
     expect(n!.status).toBe('scheduled');
     expect(n!.startsAt).toBe('2026-08-15T14:00:00.000Z');
   });
@@ -75,19 +84,21 @@ describe('normalizeEvent', () => {
   });
 
   it('rejects payloads missing team, sport or start time instead of writing broken rows', () => {
-    expect(normalizeEvent({ ...base, home: '' })).toBeNull();
-    expect(normalizeEvent({ ...base, away: undefined })).toBeNull();
+    expect(normalizeEvent({ ...base, home_team: '' })).toBeNull();
+    expect(normalizeEvent({ ...base, away_team: undefined })).toBeNull();
     expect(normalizeEvent({ ...base, sport: {} })).toBeNull();
-    expect(normalizeEvent({ ...base, date: undefined })).toBeNull();
+    expect(normalizeEvent({ ...base, commence_time: undefined })).toBeNull();
   });
 
-  it('carries final scores through for settlement, tolerating string scores', () => {
-    const finished = {
+  it('maps completed:true to finished and the scores array to home/away by team name', () => {
+    const finished: OddsApiEvent = {
       ...base,
-      status: 'settled',
-      // Provider spec says numbers, but payloads vary — strings must not
-      // silently block settlement.
-      scores: { home: '2' as unknown as number, away: 1 },
+      completed: true,
+      // Order intentionally away-first to prove name matching (not position).
+      scores: [
+        { name: 'Chelsea', score: '1' },
+        { name: 'Arsenal', score: '2' },
+      ],
     };
     const n = normalizeEvent(finished)!;
     expect(n.status).toBe('finished');
@@ -95,33 +106,58 @@ describe('normalizeEvent', () => {
     expect(n.awayScore).toBe(1);
   });
 
+  it('falls back to positional order when score names do not match the teams', () => {
+    const pair = extractScorePair({
+      ...base,
+      scores: [
+        { name: 'Arsenal FC', score: 3 },
+        { name: 'Chelsea FC', score: 0 },
+      ],
+    });
+    expect(pair.home).toBe(3);
+    expect(pair.away).toBe(0);
+  });
+
   it('returns null scores when the provider sends no usable score', () => {
-    const n = normalizeEvent({ ...base, scores: { home: undefined, away: undefined } })!;
+    const n = normalizeEvent({ ...base, scores: null })!;
     expect(n.homeScore).toBeNull();
     expect(n.awayScore).toBeNull();
   });
 
-  it('prettifies the league slug when the display name is missing', () => {
+  it('prettifies the league key when the display name is missing', () => {
     const n = normalizeEvent({
       ...base,
-      league: { slug: 'england-premier-league' },
+      league: { slug: 'soccer_ethiopia_premier_league' },
     })!;
-    expect(n.league).toBe('England Premier League');
+    expect(n.league).toBe('Soccer Ethiopia Premier League');
   });
 });
 
 describe('normalizeOdds', () => {
-  const response = (markets: NonNullable<OddsApiOddsResponse['bookmakers']>[string]): OddsApiOddsResponse => ({
-    id: 123456,
-    home: 'Arsenal',
-    away: 'Chelsea',
-    bookmakers: { bet365: markets },
+  const response = (
+    markets: OddsApiMarket[],
+    bookmakerKey = 'draftkings'
+  ): OddsApiOddsResponse => ({
+    id: 'abc123',
+    home_team: 'Arsenal',
+    away_team: 'Chelsea',
+    bookmakers: [{ key: bookmakerKey, markets }],
   });
 
-  it('normalizes the 1x2 market', () => {
+  it('normalizes the h2h market into 1x2, matching outcomes by team name', () => {
     const out = normalizeOdds(
-      response([{ name: 'ML', odds: [{ home: '2.10', draw: '3.40', away: '3.60' }] }]),
-      'bet365'
+      response([
+        {
+          key: 'h2h',
+          // Shuffled on purpose — mapping must go by name, not position.
+          outcomes: [
+            { name: 'Chelsea', price: 3.6 },
+            { name: 'Draw', price: 3.4 },
+            { name: 'Arsenal', price: 2.1 },
+          ],
+        },
+      ]),
+      'draftkings'
     );
     expect(out).toHaveLength(1);
     expect(out[0].marketType).toBe('1x2');
@@ -134,28 +170,43 @@ describe('normalizeOdds', () => {
 
   it('matches the bookmaker key case-insensitively', () => {
     const out = normalizeOdds(
-      {
-        id: 1,
-        bookmakers: { Bet365: [{ name: 'ML', odds: [{ home: '2.0', away: '3.0' }] }] },
-      },
+      response(
+        [{ key: 'h2h', outcomes: [{ name: 'Arsenal', price: 2 }, { name: 'Chelsea', price: 3 }] }],
+        'draftkings'
+      ),
+      'DraftKings'
+    );
+    expect(out).toHaveLength(1);
+  });
+
+  it('falls back to the first available bookmaker when the configured one is absent', () => {
+    const out = normalizeOdds(
+      response(
+        [{ key: 'h2h', outcomes: [{ name: 'Arsenal', price: 2 }, { name: 'Chelsea', price: 3 }] }],
+        'pinnacle'
+      ),
       'bet365'
     );
     expect(out).toHaveLength(1);
+    expect(out[0].marketType).toBe('1x2');
   });
 
   it('publishes clean over/under lines and skips quarter lines (not won/lost/void-gradable)', () => {
     const out = normalizeOdds(
       response([
         {
-          name: 'Goals Over/Under',
-          odds: [
-            { hdp: 2.5, over: '1.90', under: '1.90' },
-            { hdp: 2.25, over: '1.80', under: '2.00' }, // quarter line → skipped
-            { hdp: 3, over: '2.40', under: '1.55' },
+          key: 'totals',
+          outcomes: [
+            { name: 'Over', price: 1.9, point: 2.5 },
+            { name: 'Under', price: 1.9, point: 2.5 },
+            { name: 'Over', price: 1.8, point: 2.25 }, // quarter line → skipped
+            { name: 'Under', price: 2.0, point: 2.25 },
+            { name: 'Over', price: 2.4, point: 3 },
+            { name: 'Under', price: 1.55, point: 3 },
           ],
         },
       ]),
-      'bet365'
+      'draftkings'
     );
     const types = out.map((m) => m.marketType);
     expect(types).toContain('over_under_2_5');
@@ -163,13 +214,22 @@ describe('normalizeOdds', () => {
     expect(types).not.toContain('ou:2.25');
   });
 
-  it('skips rows with unavailable or invalid odds instead of publishing stale/broken prices', () => {
+  it('skips markets with unavailable or invalid odds instead of publishing broken prices', () => {
     const out = normalizeOdds(
       response([
-        { name: 'ML', odds: [{ home: '1.00', away: '3.00' }] }, // odds must be > 1
-        { name: 'Both Teams to Score', odds: [{ yes: 'N/A', no: '1.80' }] },
+        {
+          key: 'h2h',
+          outcomes: [
+            { name: 'Arsenal', price: 1.0 }, // odds must be > 1
+            { name: 'Chelsea', price: 3.0 },
+          ],
+        },
+        {
+          key: 'btts',
+          outcomes: [{ name: 'Yes' }, { name: 'No', price: 1.8 }],
+        },
       ]),
-      'bet365'
+      'draftkings'
     );
     expect(out).toHaveLength(0);
   });
@@ -177,18 +237,30 @@ describe('normalizeOdds', () => {
   it('never emits duplicate market types for the same event', () => {
     const out = normalizeOdds(
       response([
-        { name: 'Goals Over/Under', odds: [{ hdp: 2.5, over: '1.90', under: '1.90' }] },
-        { name: 'Totals', odds: [{ hdp: 2.5, over: '1.95', under: '1.85' }] },
+        {
+          key: 'totals',
+          outcomes: [
+            { name: 'Over', price: 1.9, point: 2.5 },
+            { name: 'Under', price: 1.9, point: 2.5 },
+          ],
+        },
+        {
+          key: 'alternate_totals',
+          outcomes: [
+            { name: 'Over', price: 1.95, point: 2.5 },
+            { name: 'Under', price: 1.85, point: 2.5 },
+          ],
+        },
       ]),
-      'bet365'
+      'draftkings'
     );
     expect(out.filter((m) => m.marketType === 'over_under_2_5')).toHaveLength(1);
   });
 
-  it('returns an empty list when the requested bookmaker is absent (plan limitation, not an error)', () => {
+  it('returns an empty list when no bookmaker carries markets', () => {
     const out = normalizeOdds(
-      { id: 1, bookmakers: { pinnacle: [{ name: 'ML', odds: [{ home: '2.0', away: '2.0' }] }] } },
-      'bet365'
+      { id: 'x', home_team: 'A', away_team: 'B', bookmakers: [] },
+      'draftkings'
     );
     expect(out).toHaveLength(0);
   });
@@ -197,15 +269,18 @@ describe('normalizeOdds', () => {
     const out = normalizeOdds(
       response([
         {
-          name: 'Spread',
-          odds: [
-            { hdp: -0.5, home: '1.85', away: '1.95' },
-            { hdp: -0.75, home: '2.05', away: '1.75' }, // quarter line → skipped
-            { hdp: -1, home: '2.30', away: '1.60' },
+          key: 'spreads',
+          outcomes: [
+            { name: 'Arsenal', price: 1.85, point: -0.5 },
+            { name: 'Chelsea', price: 1.95, point: 0.5 },
+            { name: 'Arsenal', price: 2.05, point: -0.75 }, // quarter line → skipped
+            { name: 'Chelsea', price: 1.75, point: 0.75 },
+            { name: 'Arsenal', price: 2.3, point: -1 },
+            { name: 'Chelsea', price: 1.6, point: 1 },
           ],
         },
       ]),
-      'bet365'
+      'draftkings'
     );
     const types = out.map((m) => m.marketType);
     expect(types).toContain('ah:-0.5');

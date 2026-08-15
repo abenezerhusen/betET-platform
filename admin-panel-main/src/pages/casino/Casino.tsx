@@ -8,53 +8,29 @@ import { CategoryModal } from './CategoryModal';
 import { TagModal } from './TagModal';
 import { toast } from '../../lib/toast';
 import * as casinoApi from '../../lib/api/casino';
-import * as sportsbookApi from '../../lib/api/sportsbook';
+import { startOfDayIso, endOfDayIso } from '../../lib/format';
 
-interface SummaryReportData {
-  bets: { count: number; totalStake: number };
-  payouts: { count: number; totalAmount: number };
-  rollbacks: { count: number; totalAmount: number };
-  fees: { totalPayout: number; totalStake: number };
-  ggr: { amount: number; percentage: number; rtp: number };
+/** Human label used everywhere for our own games. */
+const INTERNAL_SOURCE_LABEL = 'Home / Internal';
+
+function sourceBadge(value: string) {
+  const isInternal = value === 'internal';
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+        isInternal ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
+      }`}
+    >
+      {isInternal ? 'Internal' : 'External'}
+    </span>
+  );
 }
 
-interface UserReportData {
-  date: string;
-  userName: string;
-  phoneNumber: string;
-  betCount: number;
-  betAmount: number;
-  payoutAmount: number;
-  ggr: number;
-}
-
-interface GameReportData {
-  date: string;
-  gameName: string;
-  betCount: number;
-  betAmount: number;
-  payoutAmount: number;
-  ggr: number;
-}
-
-interface UserGameReportData {
-  date: string;
-  userName: string;
-  phoneNumber: string;
-  gameName: string;
-  betCount: number;
-  betAmount: number;
-  payoutAmount: number;
-  ggr: number;
-}
-
-interface UserDetailReportData {
-  date: string;
-  betId: string;
-  gameName: string;
-  betAmount: number;
-  paidAmount: number;
-  totalStakeFee: number;
+function money(value: string | number) {
+  return Number(value ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 interface GameData {
@@ -109,12 +85,22 @@ interface TagData {
   games: string[];
 }
 
-const EMPTY_SUMMARY: SummaryReportData = {
-  bets: { count: 0, totalStake: 0 },
-  payouts: { count: 0, totalAmount: 0 },
-  rollbacks: { count: 0, totalAmount: 0 },
-  fees: { totalPayout: 0, totalStake: 0 },
-  ggr: { amount: 0, percentage: 0, rtp: 0 },
+const EMPTY_BLOCK: casinoApi.CasinoSummaryBlock = {
+  bet_count: 0,
+  payout_count: 0,
+  total_stake: 0,
+  total_payout: 0,
+  ggr: 0,
+  players: 0,
+  rollback_count: 0,
+  rollback_amount: 0,
+};
+
+const EMPTY_SUMMARY = {
+  totals: EMPTY_BLOCK,
+  internal: EMPTY_BLOCK,
+  external: { ...EMPTY_BLOCK, provider_share_total: 0, our_share_total: 0 },
+  providers: [] as casinoApi.CasinoProviderShareRow[],
 };
 
 export function Casino() {
@@ -136,11 +122,17 @@ export function Casino() {
   >(null);
   const [loading, setLoading] = useState(true);
 
-  const [summary, setSummary] = useState<SummaryReportData>(EMPTY_SUMMARY);
-  const [userReports, setUserReports] = useState<UserReportData[]>([]);
-  const [gameReports, setGameReports] = useState<GameReportData[]>([]);
-  const [userGameReports, setUserGameReports] = useState<UserGameReportData[]>([]);
-  const [userDetailReports, setUserDetailReports] = useState<UserDetailReportData[]>([]);
+  const [summary, setSummary] = useState(EMPTY_SUMMARY);
+  const [userReports, setUserReports] = useState<casinoApi.CasinoUsersReportRow[]>([]);
+  const [gameReports, setGameReports] = useState<casinoApi.CasinoGamesReportRow[]>([]);
+  const [userGameReports, setUserGameReports] = useState<casinoApi.CasinoUserGameReportRow[]>([]);
+  const [userDetailReports, setUserDetailReports] = useState<casinoApi.CasinoUserDetailReportRow[]>([]);
+
+  // Game Source filter — populated from the actual provider records, never
+  // hard-coded. '' = All, INTERNAL_SOURCE_LABEL = Home, otherwise a provider name.
+  const [sources, setSources] = useState<casinoApi.CasinoSourceOption[]>([]);
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [debouncedPhone, setDebouncedPhone] = useState('');
 
   const [games, setGames] = useState<GameData[]>([]);
   const [categories, setCategories] = useState<CategoryData[]>([]);
@@ -166,12 +158,11 @@ export function Casino() {
   const loadCatalog = useCallback(async () => {
     setLoading(true);
     try {
-      const [gamesRes, categoriesRes, providersRes, tagsRes, betsRes] = await Promise.all([
+      const [gamesRes, categoriesRes, providersRes, tagsRes] = await Promise.all([
         casinoApi.listGames({ limit: 500 }),
         casinoApi.listCategories(),
         casinoApi.listProviders(),
         casinoApi.listTags(),
-        sportsbookApi.listBets({ page: 1, limit: 500 }).catch(() => ({ items: [] as Array<Record<string, unknown>> })),
       ]);
 
       const providerMap = new Map<string, ProviderData>();
@@ -250,128 +241,6 @@ export function Casino() {
       setCategories(mappedCategories);
       setTags(mappedTags);
       setGames(mappedGames);
-
-      const bets = (betsRes.items ?? []) as Array<{
-        id: string;
-        status?: string;
-        stake?: string | number;
-        actual_payout?: string | number;
-        potential_payout?: string | number;
-        placed_at?: string;
-        metadata?: Record<string, unknown>;
-      }>;
-      const wonBets = bets.filter((b) => b.status === 'won');
-      const rollbackBets = bets.filter(
-        (b) => b.status === 'void' || b.status === 'cancelled'
-      );
-      const totalStake = bets.reduce((sum, b) => sum + Number(b.stake ?? 0), 0);
-      const totalPayout = wonBets.reduce(
-        (sum, b) => sum + Number(b.actual_payout ?? b.potential_payout ?? 0),
-        0
-      );
-      const ggrAmount = totalStake - totalPayout;
-
-      setSummary({
-        bets: { count: bets.length, totalStake },
-        payouts: { count: wonBets.length, totalAmount: totalPayout },
-        rollbacks: {
-          count: rollbackBets.length,
-          totalAmount: rollbackBets.reduce(
-            (sum, b) => sum + Number(b.stake ?? 0),
-            0
-          ),
-        },
-        fees: { totalPayout: 0, totalStake: 0 },
-        ggr: {
-          amount: ggrAmount,
-          percentage: totalStake > 0 ? (ggrAmount / totalStake) * 100 : 0,
-          rtp: totalStake > 0 ? (totalPayout / totalStake) * 100 : 0,
-        },
-      });
-
-      const byUser = new Map<string, UserReportData>();
-      const byGame = new Map<string, GameReportData>();
-      const byUserGame = new Map<string, UserGameReportData>();
-      const userDetails: UserDetailReportData[] = [];
-
-      bets.forEach((b) => {
-        const stake = Number(b.stake ?? 0);
-        const payout = Number(b.actual_payout ?? b.potential_payout ?? 0);
-        const date = b.placed_at ? new Date(b.placed_at).toLocaleDateString() : '—';
-        const userName = String((b.metadata?.full_name as string | undefined) ?? 'Unknown');
-        const phone = String((b.metadata?.phone as string | undefined) ?? '—');
-        const gameName = String((b.metadata?.game_name as string | undefined) ?? 'Unknown');
-
-        const userKey = `${userName}|${phone}|${date}`;
-        const gameKey = `${gameName}|${date}`;
-        const userGameKey = `${userName}|${phone}|${gameName}|${date}`;
-
-        if (!byUser.has(userKey)) {
-          byUser.set(userKey, {
-            date,
-            userName,
-            phoneNumber: phone,
-            betCount: 0,
-            betAmount: 0,
-            payoutAmount: 0,
-            ggr: 0,
-          });
-        }
-        if (!byGame.has(gameKey)) {
-          byGame.set(gameKey, {
-            date,
-            gameName,
-            betCount: 0,
-            betAmount: 0,
-            payoutAmount: 0,
-            ggr: 0,
-          });
-        }
-        if (!byUserGame.has(userGameKey)) {
-          byUserGame.set(userGameKey, {
-            date,
-            userName,
-            phoneNumber: phone,
-            gameName,
-            betCount: 0,
-            betAmount: 0,
-            payoutAmount: 0,
-            ggr: 0,
-          });
-        }
-
-        const userRow = byUser.get(userKey)!;
-        userRow.betCount += 1;
-        userRow.betAmount += stake;
-        userRow.payoutAmount += payout;
-        userRow.ggr += stake - payout;
-
-        const gameRow = byGame.get(gameKey)!;
-        gameRow.betCount += 1;
-        gameRow.betAmount += stake;
-        gameRow.payoutAmount += payout;
-        gameRow.ggr += stake - payout;
-
-        const userGameRow = byUserGame.get(userGameKey)!;
-        userGameRow.betCount += 1;
-        userGameRow.betAmount += stake;
-        userGameRow.payoutAmount += payout;
-        userGameRow.ggr += stake - payout;
-
-        userDetails.push({
-          date,
-          betId: b.id,
-          gameName,
-          betAmount: stake,
-          paidAmount: payout,
-          totalStakeFee: Number((b.metadata?.stake_fee as number | undefined) ?? 0),
-        });
-      });
-
-      setUserReports(Array.from(byUser.values()));
-      setGameReports(Array.from(byGame.values()));
-      setUserGameReports(Array.from(byUserGame.values()));
-      setUserDetailReports(userDetails);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast(`Failed to load casino data: ${message}`, 'error');
@@ -383,6 +252,71 @@ export function Casino() {
   useEffect(() => {
     void loadCatalog();
   }, [loadCatalog]);
+
+  // Game Source options come from the configured provider records.
+  useEffect(() => {
+    casinoApi
+      .listReportSources()
+      .then((res) => setSources(res.sources ?? []))
+      .catch(() => setSources([]));
+  }, []);
+
+  // Debounce the phone filter so we don't refetch on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedPhone(phoneNumber.trim()), 400);
+    return () => clearTimeout(t);
+  }, [phoneNumber]);
+
+  // Server-side report fetch — filters are applied in the database query,
+  // never by slicing a capped client-side list.
+  const reportQuery = useMemo((): casinoApi.CasinoReportQuery => {
+    const selected = sources.find((s) => s.label === sourceFilter);
+    return {
+      from: startOfDayIso(startDate),
+      to: endOfDayIso(endDate),
+      source: !sourceFilter
+        ? 'all'
+        : sourceFilter === INTERNAL_SOURCE_LABEL
+          ? 'internal'
+          : 'external',
+      provider_id: selected?.provider_id,
+      game: selectedGame.trim() || undefined,
+      phone: debouncedPhone || undefined,
+      limit: 200,
+    };
+  }, [sources, sourceFilter, startDate, endDate, selectedGame, debouncedPhone]);
+
+  useEffect(() => {
+    if (activeTab !== 'report') return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        if (activeReportTab === 'summary') {
+          const res = await casinoApi.getReportSummary(reportQuery);
+          if (!cancelled) setSummary(res);
+        } else if (activeReportTab === 'users') {
+          const res = await casinoApi.getUsersReport(reportQuery);
+          if (!cancelled) setUserReports(res.items ?? []);
+        } else if (activeReportTab === 'games') {
+          const res = await casinoApi.getGamesReport(reportQuery);
+          if (!cancelled) setGameReports(res.items ?? []);
+        } else if (activeReportTab === 'user-game') {
+          const res = await casinoApi.getUserGameReport(reportQuery);
+          if (!cancelled) setUserGameReports(res.items ?? []);
+        } else if (activeReportTab === 'user-detail') {
+          const res = await casinoApi.getUserDetailReport(reportQuery);
+          if (!cancelled) setUserDetailReports(res.items ?? []);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (!cancelled) toast(`Failed to load report: ${message}`, 'error');
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeReportTab, reportQuery]);
 
   const handleToggleGame = useCallback(
     async (gameId: string, nextActive: boolean) => {
@@ -398,6 +332,18 @@ export function Casino() {
     [loadCatalog]
   );
 
+  // Game options: catalog names plus every game name observed in the loaded
+  // report data (internal engine games and provider games are not part of
+  // the lobby catalog, but they must still be filterable).
+  const gameFilterOptions = useMemo(() => {
+    const names = new Set<string>();
+    games.forEach((g) => names.add(g.name));
+    gameReports.forEach((r) => names.add(r.game_name));
+    userGameReports.forEach((r) => names.add(r.game_name));
+    userDetailReports.forEach((r) => names.add(r.game_name));
+    return Array.from(names).sort();
+  }, [games, gameReports, userGameReports, userDetailReports]);
+
   const commonFilters = [
     {
       label: 'Phone Number',
@@ -408,15 +354,22 @@ export function Casino() {
     },
     {
       label: 'Game',
-      options: games.map((g) => g.name),
+      options: gameFilterOptions,
       value: selectedGame,
       onChange: setSelectedGame,
     },
     {
-      label: 'Provider',
-      options: providers.map((p) => p.name),
-      value: selectedProvider,
-      onChange: setSelectedProvider,
+      // Home/Internal vs each configured external provider — sourced from
+      // the actual provider records, never hard-coded.
+      label: 'Game Source',
+      options: [
+        INTERNAL_SOURCE_LABEL,
+        ...sources
+          .filter((s) => s.provider_id)
+          .map((s) => s.label),
+      ],
+      value: sourceFilter,
+      onChange: setSourceFilter,
     },
   ];
 
@@ -553,45 +506,69 @@ export function Casino() {
   ];
 
   const getReportColumns = () => {
+    const sourceCol = {
+      header: 'Source',
+      accessor: 'source_type' as const,
+      render: (value: string) => sourceBadge(value),
+    };
+    const providerCol = { header: 'Provider', accessor: 'provider_name' as const };
+    const moneyCol = (header: string, accessor: string) => ({
+      header,
+      accessor: accessor as never,
+      render: (value: string | number) => money(value),
+    });
     switch (activeReportTab) {
       case 'users':
         return [
           { header: 'Date', accessor: 'date' as const },
-          { header: 'User Name', accessor: 'userName' as const },
-          { header: 'Phone Number', accessor: 'phoneNumber' as const },
-          { header: 'Bet Count', accessor: 'betCount' as const },
-          { header: 'Bet Amount', accessor: 'betAmount' as const },
-          { header: 'Payout Amount', accessor: 'payoutAmount' as const },
-          { header: 'GGR', accessor: 'ggr' as const },
+          { header: 'User Name', accessor: 'user_name' as const },
+          { header: 'Phone Number', accessor: 'phone' as const },
+          { header: 'Bet Count', accessor: 'bet_count' as const },
+          moneyCol('Bet Amount', 'bet_amount'),
+          moneyCol('Payout Amount', 'payout_amount'),
+          moneyCol('GGR', 'ggr'),
         ];
       case 'games':
         return [
           { header: 'Date', accessor: 'date' as const },
-          { header: 'Game Name', accessor: 'gameName' as const },
-          { header: 'Bet Count', accessor: 'betCount' as const },
-          { header: 'Bet Amount', accessor: 'betAmount' as const },
-          { header: 'Payout Amount', accessor: 'payoutAmount' as const },
-          { header: 'GGR', accessor: 'ggr' as const },
+          { header: 'Game Name', accessor: 'game_name' as const },
+          sourceCol,
+          providerCol,
+          { header: 'Bet Count', accessor: 'bet_count' as const },
+          { header: 'Players', accessor: 'players' as const },
+          moneyCol('Bet Amount', 'bet_amount'),
+          moneyCol('Payout Amount', 'payout_amount'),
+          moneyCol('GGR', 'ggr'),
         ];
       case 'user-game':
         return [
           { header: 'Date', accessor: 'date' as const },
-          { header: 'User Name', accessor: 'userName' as const },
-          { header: 'Phone Number', accessor: 'phoneNumber' as const },
-          { header: 'Game Name', accessor: 'gameName' as const },
-          { header: 'Bet Count', accessor: 'betCount' as const },
-          { header: 'Bet Amount', accessor: 'betAmount' as const },
-          { header: 'Payout Amount', accessor: 'payoutAmount' as const },
-          { header: 'GGR', accessor: 'ggr' as const },
+          { header: 'User Name', accessor: 'user_name' as const },
+          { header: 'Phone Number', accessor: 'phone' as const },
+          { header: 'Game Name', accessor: 'game_name' as const },
+          sourceCol,
+          providerCol,
+          { header: 'Bet Count', accessor: 'bet_count' as const },
+          moneyCol('Bet Amount', 'bet_amount'),
+          moneyCol('Payout Amount', 'payout_amount'),
+          moneyCol('GGR', 'ggr'),
         ];
       case 'user-detail':
         return [
-          { header: 'Date', accessor: 'date' as const },
-          { header: 'Bet ID', accessor: 'betId' as const },
-          { header: 'Game Name', accessor: 'gameName' as const },
-          { header: 'Bet Amount', accessor: 'betAmount' as const },
-          { header: 'Paid Amount', accessor: 'paidAmount' as const },
-          { header: 'Total Stake Fee', accessor: 'totalStakeFee' as const },
+          {
+            header: 'Date',
+            accessor: 'placed_at' as const,
+            render: (value: string) => new Date(value).toLocaleString(),
+          },
+          { header: 'Bet ID', accessor: 'bet_id' as const },
+          { header: 'User Name', accessor: 'user_name' as const },
+          { header: 'Phone Number', accessor: 'phone' as const },
+          { header: 'Game Name', accessor: 'game_name' as const },
+          sourceCol,
+          providerCol,
+          moneyCol('Bet Amount', 'bet_amount'),
+          moneyCol('Paid Amount', 'paid_amount'),
+          { header: 'Status', accessor: 'status' as const },
         ];
       default:
         return [];
@@ -659,46 +636,164 @@ export function Casino() {
               setSelectedProvider('');
               setSelectedCategory('');
               setSelectedStatus('');
+              setSourceFilter('');
+              setPhoneNumber('');
               setStartDate(new Date());
               setEndDate(new Date());
             }}
           />
 
           {activeReportTab === 'summary' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-              <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
-                <h3 className="text-lg font-medium mb-4">Bets</h3>
-                <p className="text-sm text-gray-500">Count</p>
-                <p className="text-xl font-semibold">{summary.bets.count.toLocaleString()}</p>
-                <p className="text-sm text-gray-500 mt-2">Total Stake</p>
-                <p className="text-xl font-semibold">${summary.bets.totalStake.toLocaleString()}</p>
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
+                  <h3 className="text-lg font-medium mb-4">Bets</h3>
+                  <p className="text-sm text-gray-500">Count</p>
+                  <p className="text-xl font-semibold">{summary.totals.bet_count.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500 mt-2">Total Stake</p>
+                  <p className="text-xl font-semibold">${money(summary.totals.total_stake)}</p>
+                </div>
+                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
+                  <h3 className="text-lg font-medium mb-4">Payouts</h3>
+                  <p className="text-sm text-gray-500">Count</p>
+                  <p className="text-xl font-semibold">{summary.totals.payout_count.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500 mt-2">Total Amount</p>
+                  <p className="text-xl font-semibold">${money(summary.totals.total_payout)}</p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow-sm">
+                  <h3 className="text-lg font-medium mb-4">Rollbacks</h3>
+                  <p className="text-sm text-gray-500">Count</p>
+                  <p className="text-xl font-semibold">{summary.totals.rollback_count.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500 mt-2">Total Amount</p>
+                  <p className="text-xl font-semibold">${money(summary.totals.rollback_amount)}</p>
+                </div>
+                <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
+                  <h3 className="text-lg font-medium mb-4">GGR</h3>
+                  <p className="text-sm text-gray-500">Amount</p>
+                  <p className="text-xl font-semibold">${money(summary.totals.ggr)}</p>
+                  <p className="text-sm text-gray-500 mt-2">GGR % / RTP</p>
+                  <p className="text-xl font-semibold">
+                    {summary.totals.total_stake > 0
+                      ? ((summary.totals.ggr / summary.totals.total_stake) * 100).toFixed(2)
+                      : '0.00'}
+                    % /{' '}
+                    {summary.totals.total_stake > 0
+                      ? ((summary.totals.total_payout / summary.totals.total_stake) * 100).toFixed(2)
+                      : '0.00'}
+                    %
+                  </p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow-sm">
+                  <h3 className="text-lg font-medium mb-4">Players</h3>
+                  <p className="text-sm text-gray-500">{INTERNAL_SOURCE_LABEL}</p>
+                  <p className="text-xl font-semibold">{summary.internal.players.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500 mt-2">External Provider</p>
+                  <p className="text-xl font-semibold">{summary.external.players.toLocaleString()}</p>
+                </div>
               </div>
-              <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
-                <h3 className="text-lg font-medium mb-4">Payouts</h3>
-                <p className="text-sm text-gray-500">Count</p>
-                <p className="text-xl font-semibold">{summary.payouts.count.toLocaleString()}</p>
-                <p className="text-sm text-gray-500 mt-2">Total Amount</p>
-                <p className="text-xl font-semibold">${summary.payouts.totalAmount.toLocaleString()}</p>
+
+              {/* Source split — internal vs external are never financially mixed. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-lg shadow-sm">
+                  <div className="flex items-center gap-2 mb-4">
+                    <h3 className="text-lg font-medium">{INTERNAL_SOURCE_LABEL}</h3>
+                    {sourceBadge('internal')}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-gray-500">Bets</p>
+                      <p className="font-semibold">{summary.internal.bet_count.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Total Stake</p>
+                      <p className="font-semibold">${money(summary.internal.total_stake)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Total Payout</p>
+                      <p className="font-semibold">${money(summary.internal.total_payout)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">GGR (our revenue)</p>
+                      <p className="font-semibold">${money(summary.internal.ggr)}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow-sm">
+                  <div className="flex items-center gap-2 mb-4">
+                    <h3 className="text-lg font-medium">External Provider</h3>
+                    {sourceBadge('external')}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-gray-500">Bets</p>
+                      <p className="font-semibold">{summary.external.bet_count.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Total Stake</p>
+                      <p className="font-semibold">${money(summary.external.total_stake)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Total Payout</p>
+                      <p className="font-semibold">${money(summary.external.total_payout)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">GGR</p>
+                      <p className="font-semibold">${money(summary.external.ggr)}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Provider Payable</p>
+                      <p className="font-semibold text-amber-700">
+                        ${money(summary.external.provider_share_total)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Our Share</p>
+                      <p className="font-semibold text-green-700">
+                        ${money(summary.external.our_share_total)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="bg-white p-6 rounded-lg shadow-sm">
-                <h3 className="text-lg font-medium mb-4">Rollbacks</h3>
-                <p className="text-sm text-gray-500">Count</p>
-                <p className="text-xl font-semibold">{summary.rollbacks.count.toLocaleString()}</p>
-                <p className="text-sm text-gray-500 mt-2">Total Amount</p>
-                <p className="text-xl font-semibold">${summary.rollbacks.totalAmount.toLocaleString()}</p>
-              </div>
-              <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-sm">
-                <h3 className="text-lg font-medium mb-4">GGR</h3>
-                <p className="text-sm text-gray-500">Amount</p>
-                <p className="text-xl font-semibold">${summary.ggr.amount.toLocaleString()}</p>
-                <p className="text-sm text-gray-500 mt-2">GGR % / RTP</p>
-                <p className="text-xl font-semibold">
-                  {summary.ggr.percentage.toFixed(2)}% / {summary.ggr.rtp.toFixed(2)}%
-                </p>
-              </div>
+
+              {/* Per-provider revenue share (uses each provider's configured %). */}
+              {summary.providers.length > 0 && (
+                <div className="bg-white rounded-lg shadow overflow-x-auto">
+                  <h3 className="text-lg font-medium px-6 pt-6">Provider Revenue Share</h3>
+                  <table className="min-w-full divide-y divide-gray-200 mt-4">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        {['Provider', 'Share %', 'Bets', 'Players', 'Total Stake', 'Total Payout', 'GGR', 'Provider Share', 'Our Share'].map((h) => (
+                          <th
+                            key={h}
+                            className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {summary.providers.map((p) => (
+                        <tr key={p.provider_id}>
+                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{p.provider_name}</td>
+                          <td className="px-4 py-3 text-sm">{p.revenue_share_percent.toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-sm">{p.bet_count.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm">{p.players.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-sm">${money(p.total_stake)}</td>
+                          <td className="px-4 py-3 text-sm">${money(p.total_payout)}</td>
+                          <td className="px-4 py-3 text-sm">${money(p.ggr)}</td>
+                          <td className="px-4 py-3 text-sm text-amber-700 font-medium">${money(p.provider_share)}</td>
+                          <td className="px-4 py-3 text-sm text-green-700 font-medium">${money(p.our_share)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="bg-white rounded-lg shadow">
+            <div className="bg-white rounded-lg shadow overflow-x-auto">
               <DataTable columns={getReportColumns()} data={getReportData()} />
             </div>
           )}
@@ -748,7 +843,9 @@ export function Casino() {
 
       {activeTab === 'categories' && (
         <>
-          <div className="flex justify-between mb-4">
+          {/* Stacks on phones — the side-by-side row overflowed small screens
+              and made the filters unusable there. Desktop (sm+) unchanged. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-between mb-4">
             <FilterBar
               startDate={startDate}
               endDate={endDate}
@@ -768,7 +865,7 @@ export function Casino() {
                 setSelectedItem(null);
                 setIsCategoryModalOpen(true);
               }}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+              className="inline-flex items-center self-start px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
             >
               <Plus className="h-4 w-4 mr-2" />
               Create Category

@@ -11,6 +11,7 @@ import {
   getUa,
   requireScopedTenantId,
 } from '../admin-shared';
+import casinoReportsRouter from './casino-reports.routes';
 
 /* DTOs --------------------------------------------------------------------- */
 
@@ -839,6 +840,10 @@ async function setEngineConfig(req: Request, body: z.infer<typeof engineConfigSc
 /* Routes ------------------------------------------------------------------- */
 
 const router = Router();
+
+// Casino reports with provider/source separation (summary, users, games,
+// user-game, user-detail, sources). Inherits the casino.view permission.
+router.use('/reports', casinoReportsRouter);
 
 const wrap = <T>(fn: (req: Request) => Promise<T>) =>
   async (req: Request, res: Response, next: NextFunction) => {

@@ -157,6 +157,153 @@ export function deleteGame(id: string) {
   return http.delete<{ id: string }>(`/api/admin/casino/games/${id}`);
 }
 
+/* --------------------------------------------------------------------------
+ * Casino reports (provider/source separation) — /api/admin/casino/reports/*
+ * ------------------------------------------------------------------------ */
+
+export interface CasinoReportQuery {
+  from?: string;
+  to?: string;
+  /** all | internal | external */
+  source?: 'all' | 'internal' | 'external';
+  /** Narrow `external` to one provider. */
+  provider_id?: string;
+  /** Game-name substring. */
+  game?: string;
+  /** Player phone (format-tolerant). */
+  phone?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface CasinoSourceOption {
+  value: string;
+  label: string;
+  provider_id?: string;
+  status?: string;
+  revenue_share_percent?: number;
+}
+
+export function listReportSources() {
+  return http.get<{ sources: CasinoSourceOption[] }>(
+    '/api/admin/casino/reports/sources'
+  );
+}
+
+export interface CasinoSummaryBlock {
+  bet_count: number;
+  payout_count: number;
+  total_stake: number;
+  total_payout: number;
+  ggr: number;
+  players: number;
+  rollback_count: number;
+  rollback_amount: number;
+}
+
+export interface CasinoProviderShareRow {
+  provider_id: string;
+  provider_name: string;
+  revenue_share_percent: number;
+  bet_count: number;
+  players: number;
+  total_stake: number;
+  total_payout: number;
+  ggr: number;
+  provider_share: number;
+  our_share: number;
+}
+
+export function getReportSummary(query: CasinoReportQuery = {}) {
+  return http.get<{
+    totals: CasinoSummaryBlock;
+    internal: CasinoSummaryBlock;
+    external: CasinoSummaryBlock & {
+      provider_share_total: number;
+      our_share_total: number;
+    };
+    providers: CasinoProviderShareRow[];
+  }>('/api/admin/casino/reports/summary', { query });
+}
+
+export interface CasinoUsersReportRow {
+  date: string;
+  user_id: string | null;
+  user_name: string;
+  phone: string;
+  bet_count: number;
+  bet_amount: string;
+  payout_amount: string;
+  ggr: string;
+}
+
+export function getUsersReport(query: CasinoReportQuery = {}) {
+  return http.get<{ items: CasinoUsersReportRow[]; page: number; limit: number }>(
+    '/api/admin/casino/reports/users',
+    { query }
+  );
+}
+
+export interface CasinoGamesReportRow {
+  date: string;
+  game_name: string;
+  source_type: 'internal' | 'external';
+  provider_name: string;
+  bet_count: number;
+  players: number;
+  bet_amount: string;
+  payout_amount: string;
+  ggr: string;
+}
+
+export function getGamesReport(query: CasinoReportQuery = {}) {
+  return http.get<{ items: CasinoGamesReportRow[]; page: number; limit: number }>(
+    '/api/admin/casino/reports/games',
+    { query }
+  );
+}
+
+export interface CasinoUserGameReportRow {
+  date: string;
+  user_id: string | null;
+  user_name: string;
+  phone: string;
+  game_name: string;
+  source_type: 'internal' | 'external';
+  provider_name: string;
+  bet_count: number;
+  bet_amount: string;
+  payout_amount: string;
+  ggr: string;
+}
+
+export function getUserGameReport(query: CasinoReportQuery = {}) {
+  return http.get<{ items: CasinoUserGameReportRow[]; page: number; limit: number }>(
+    '/api/admin/casino/reports/user-game',
+    { query }
+  );
+}
+
+export interface CasinoUserDetailReportRow {
+  placed_at: string;
+  bet_id: string;
+  user_name: string;
+  phone: string;
+  game_name: string;
+  source_type: 'internal' | 'external';
+  provider_name: string;
+  bet_amount: string;
+  paid_amount: string;
+  status: string;
+}
+
+export function getUserDetailReport(query: CasinoReportQuery = {}) {
+  return http.get<{ items: CasinoUserDetailReportRow[]; page: number; limit: number }>(
+    '/api/admin/casino/reports/user-detail',
+    { query }
+  );
+}
+
 /** Spec: GET /api/admin/casino/engine/config (alias of /engine-config). */
 export function getEngineConfig() {
   return http.get<Record<string, unknown>>('/api/admin/casino/engine/config');

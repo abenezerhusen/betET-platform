@@ -30,3 +30,19 @@ body,
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background-color: rgba(100, 116, 139, 0.7);
 }
+
+/* react-datepicker renders its input inside an inline-block wrapper, which
+   stops the input's w-full from stretching when the filter bar stacks
+   vertically on phones (the input shrank to placeholder width and was hard
+   to tap). Block-level wrapper fixes mobile; desktop widths are driven by
+   the input's own sm:w-auto and are unaffected. */
+.react-datepicker-wrapper {
+  display: block;
+  width: 100%;
+}
+
+/* The full-screen calendar overlay used on touch devices must sit above
+   every app layer (highest in-app z-index is 60). */
+.react-datepicker__portal {
+  z-index: 70;
+}

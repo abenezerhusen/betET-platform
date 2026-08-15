@@ -133,6 +133,8 @@ export interface ExternalProvider {
   sandbox: boolean;
   status: ProviderStatus;
   last_ping: string | null;
+  /** Negotiated GGR share (%) owed to the provider — used by casino reports. */
+  revenue_share_percent: string;
   config: Record<string, unknown>;
   has_secret: boolean;
   created_at: string;
@@ -153,6 +155,7 @@ export function createExternalProvider(input: {
   secret?: string;
   callback_url?: string;
   sandbox?: boolean;
+  revenue_share_percent?: number;
   config?: Record<string, unknown>;
 }) {
   return http.post<ExternalProvider>('/api/admin/iframe/providers', input);
@@ -163,6 +166,7 @@ export function patchExternalProvider(
   input: Partial<{
     name: string;
     base_url: string;
+    revenue_share_percent: number;
     auth_method: ProviderAuthMethod;
     secret: string;
     callback_url: string;

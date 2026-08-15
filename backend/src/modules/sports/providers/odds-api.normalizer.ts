@@ -1,13 +1,17 @@
 /**
- * Normalization layer — converts Odds-API.io payloads into the shapes our
- * EXISTING database + frontend already use. The frontend never sees raw API
- * data; the sync writes only these normalized values into sports_events /
- * sports_markets / sports_selections, exactly like the seed does.
+ * Normalization layer — converts the-odds-api.com (v4) payloads into the
+ * shapes our EXISTING database + frontend already use. The frontend never sees
+ * raw API data; the sync writes only these normalized values into
+ * sports_events / sports_markets / sports_selections, exactly like the seed
+ * does.
  *
- * Market mapping (only markets the platform already understands are emitted):
- *   ML                  → market_type '1x2'            "Full Time Result"  (Home/Draw/Away)
- *   Over/Under          → market_type 'over_under_2_5' "Over/Under 2.5"    (Over/Under)  [line 2.5 only]
- *   Both Teams to Score → market_type 'btts'           "Both Teams to Score" (Yes/No)
+ * Market mapping (only markets the platform already understands are emitted —
+ * every market_type below is gradable by market-grading.ts):
+ *   h2h                       → market_type '1x2'            "Full Time Result"  (Home/Draw/Away)
+ *   totals / alternate_totals → 'over_under_2_5' (2.5 line) or 'ou:{line}'       (Over/Under)
+ *   spreads / alt. spreads    → 'ah:{line}'                  "Asian Handicap"    (Home/Away)  [clean lines only]
+ *   btts                      → 'btts'                       "Both Teams to Score" (Yes/No)
+ *   draw_no_bet               → 'dnb'                        "Draw No Bet"       (Home/Away)
  */
 
 import type {
@@ -16,7 +20,7 @@ import type {
   NormalizedStatus,
   OddsApiEvent,
   OddsApiMarket,
-  OddsApiOddsRow,
+  OddsApiOutcome,
   OddsApiOddsResponse,
 } from './odds-api.types';
 
@@ -52,17 +56,39 @@ function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Extract the current match minute from the live clock, when present. */
-function minuteOf(event: OddsApiEvent): number | null {
-  const m = event.clock?.minute;
-  return typeof m === 'number' && Number.isFinite(m) ? m : null;
+const norm = (s: string | null | undefined) => (s ?? '').toLowerCase().trim();
+
+/**
+ * v4 scores arrive as an array of {name, score} — map them to home/away by
+ * matching the team names. When the names don't match exactly (accents,
+ * provider-side renames) but exactly two rows are present, fall back to the
+ * provider's positional order (home first).
+ */
+export function extractScorePair(event: OddsApiEvent): {
+  home: number | null;
+  away: number | null;
+} {
+  const list = Array.isArray(event.scores) ? event.scores : [];
+  if (list.length === 0) return { home: null, away: null };
+
+  const homeName = norm(event.home_team);
+  const awayName = norm(event.away_team);
+  let home = list.find((s) => norm(s.name) === homeName)?.score;
+  let away = list.find((s) => norm(s.name) === awayName)?.score;
+
+  if ((home === undefined || away === undefined) && list.length === 2) {
+    if (home === undefined && norm(list[0].name) !== awayName) home = list[0].score;
+    if (away === undefined && norm(list[1].name) !== homeName) away = list[1].score;
+  }
+
+  return { home: toNumber(home), away: toNumber(away) };
 }
 
 /**
- * Prettify a provider league slug into a display name when the provider
- * omits `league.name`. e.g. "england-premier-league" → "England Premier
- * League". Prevents fixtures that DO have league data (under `slug`) from
- * being stored with a NULL league and surfacing as "Unknown League".
+ * Prettify a provider league key into a display name when the provider omits
+ * `league.name` (= sport_title). e.g. "soccer_ethiopia_premier_league" →
+ * "Soccer Ethiopia Premier League". Prevents fixtures from being stored with
+ * a NULL league and surfacing as "Unknown League".
  */
 function prettifyLeagueSlug(slug: string | undefined): string | null {
   const s = (slug ?? '').trim();
@@ -78,18 +104,25 @@ function prettifyLeagueSlug(slug: string | undefined): string | null {
 }
 
 export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
-  const home = (event.home ?? '').trim();
-  const away = (event.away ?? '').trim();
+  const home = (event.home_team ?? '').trim();
+  const away = (event.away_team ?? '').trim();
   const sport = (event.sport?.slug ?? event.sport?.name ?? '').trim().toLowerCase();
-  const startsAt = event.date ?? null;
+  const startsAt = event.commence_time ?? null;
   if (!home || !away || !sport || !startsAt) return null;
+
+  // completed:true is authoritative (the scores feed has no status field);
+  // otherwise fall back to the derived/provider status string.
+  const status: NormalizedStatus =
+    event.completed === true ? 'finished' : mapStatus(event.status);
+
+  const scores = extractScorePair(event);
 
   return {
     providerEventId: String(event.id),
     sport,
-    // Prefer the provider's display name; fall back to a prettified slug so a
-    // fixture that carries league data under `slug` is never stored as NULL
-    // (which the frontend renders as "Unknown League").
+    // Prefer the provider's display name (sport_title); fall back to a
+    // prettified sport_key so a fixture is never stored as NULL (which the
+    // frontend renders as "Unknown League").
     league:
       (event.league?.name ?? '').trim() ||
       prettifyLeagueSlug(event.league?.slug) ||
@@ -97,10 +130,11 @@ export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
     homeTeam: home,
     awayTeam: away,
     startsAt: new Date(startsAt).toISOString(),
-    status: mapStatus(event.status),
-    homeScore: toNumber(event.scores?.home),
-    awayScore: toNumber(event.scores?.away),
-    minute: minuteOf(event),
+    status,
+    homeScore: scores.home,
+    awayScore: scores.away,
+    // v4 exposes no match clock.
+    minute: null,
   };
 }
 
@@ -108,22 +142,6 @@ export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
 function validOdds(v: unknown): number | null {
   const n = toNumber(v);
   return n !== null && n > 1 ? n : null;
-}
-
-function marketNameMatches(name: string | undefined, needles: string[]): boolean {
-  const n = (name ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  return needles.some((needle) => n === needle || n.includes(needle));
-}
-
-const cleanName = (name: string | undefined) =>
-  (name ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-
-/** Betting line carried under `hdp` (preferred) or legacy `max`. */
-function lineOf(r: OddsApiOddsRow): number | null {
-  const raw = r.hdp ?? r.max;
-  if (raw === undefined || raw === null) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -137,50 +155,28 @@ const isCleanLine = (line: number): boolean => Number.isInteger(line * 2);
 /** Human line suffix: 0.5 → "+0.5", -1 → "-1". */
 const signed = (line: number): string => (line > 0 ? `+${line}` : `${line}`);
 
-/** First plausible decimal-odds value on a single-outcome labelled row. */
-function pickSingleOdds(row: OddsApiOddsRow): number | null {
-  for (const k of ['odds', 'under', 'over', 'home', 'away', 'yes', 'no'] as const) {
-    const v = validOdds(row[k]);
-    if (v !== null) return v;
-  }
-  return null;
-}
-
-const STOP_TOKENS = new Set(['fc', 'cf', 'cd', 'sc', 'ac', 'afc', 'ud', 'rc', 'cp']);
-function teamTokens(s: string): string[] {
-  return norm(s)
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOP_TOKENS.has(w));
-}
-/** Which side a partial team label ("CD Alaves") refers to, by token overlap. */
-function whichSide(part: string, home: string, away: string): 'home' | 'away' | null {
-  const p = new Set(teamTokens(part));
-  const h = teamTokens(home).filter((t) => p.has(t)).length;
-  const a = teamTokens(away).filter((t) => p.has(t)).length;
-  if (h > a) return 'home';
-  if (a > h) return 'away';
-  return null;
-}
-const norm = (s: string) => s.toLowerCase().trim();
-
 /**
- * Normalize ONE bookmaker's odds into every market we can settle from the final
- * score. Each returned market_type is understood by `market-grading.ts`, so any
- * bet placed on it is guaranteed to auto-settle. In-play / half-time / quarter-
- * line markets are intentionally skipped (not score-deterministic for us).
+ * Normalize ONE event's odds into every market we can settle from the final
+ * score. Odds come from the requested bookmaker's markets[].outcomes arrays
+ * (bookmaker matched by v4 key or title, falling back to the first available
+ * one so a key/title config mismatch never blanks the whole book). Each
+ * returned market_type is understood by `market-grading.ts`, so any bet placed
+ * on it is guaranteed to auto-settle.
  */
 export function normalizeOdds(
   response: OddsApiOddsResponse,
   bookmaker: string
 ): NormalizedMarket[] {
-  const books = response.bookmakers ?? {};
-  const key =
-    Object.keys(books).find((k) => k.toLowerCase() === bookmaker.toLowerCase()) ??
-    bookmaker;
-  const markets: OddsApiMarket[] = books[key] ?? [];
-  const homeName = response.home ?? '';
-  const awayName = response.away ?? '';
+  const books = response.bookmakers ?? [];
+  const wanted = norm(bookmaker);
+  const book =
+    books.find((b) => norm(b.key) === wanted) ??
+    books.find((b) => norm(b.title) === wanted) ??
+    books[0];
+  const markets: OddsApiMarket[] = book?.markets ?? [];
+  const homeName = norm(response.home_team);
+  const awayName = norm(response.away_team);
+
   const out: NormalizedMarket[] = [];
   const seen = new Set<string>();
   const add = (m: NormalizedMarket) => {
@@ -189,20 +185,25 @@ export function normalizeOdds(
     out.push(m);
   };
 
-  const find = (needles: string[]) =>
-    markets.find((m) => marketNameMatches(m.name, needles));
-  // Exact-name lookup (avoids "Totals" matching "Totals HT").
-  const findExact = (name: string) =>
-    markets.find((m) => cleanName(m.name) === name);
+  const byKey = (key: string): OddsApiMarket[] =>
+    markets.filter((m) => norm(m.key) === key);
 
-  /* ---- ML → 1x2 (Home / Draw / Away) ------------------------------------ */
-  const mlRow =
-    markets.find((m) => ['ml', 'moneyline', 'match result', '1x2'].includes(cleanName(m.name)))
-      ?.odds?.[0] ?? find(['moneyline', 'match result', '1x2'])?.odds?.[0];
-  if (mlRow) {
-    const home = validOdds(mlRow.home);
-    const away = validOdds(mlRow.away);
-    const draw = validOdds(mlRow.draw);
+  /** Outcome for the home/away team (matched by name) or the Draw. */
+  const outcomeFor = (
+    outcomes: OddsApiOutcome[],
+    side: 'home' | 'away' | 'draw'
+  ): OddsApiOutcome | undefined => {
+    if (side === 'draw') return outcomes.find((o) => norm(o.name) === 'draw');
+    const name = side === 'home' ? homeName : awayName;
+    return outcomes.find((o) => norm(o.name) === name);
+  };
+
+  /* ---- h2h → 1x2 (Home / Draw / Away) ------------------------------------ */
+  for (const m of byKey('h2h')) {
+    const outcomes = m.outcomes ?? [];
+    const home = validOdds(outcomeFor(outcomes, 'home')?.price);
+    const away = validOdds(outcomeFor(outcomes, 'away')?.price);
+    const draw = validOdds(outcomeFor(outcomes, 'draw')?.price);
     if (home !== null && away !== null) {
       const sel = [{ label: 'Home', oddsDecimal: home }];
       if (draw !== null) sel.push({ label: 'Draw', oddsDecimal: draw });
@@ -211,11 +212,11 @@ export function normalizeOdds(
     }
   }
 
-  /* ---- Draw No Bet ------------------------------------------------------- */
-  const dnbRow = findExact('draw no bet')?.odds?.[0];
-  if (dnbRow) {
-    const home = validOdds(dnbRow.home);
-    const away = validOdds(dnbRow.away);
+  /* ---- draw_no_bet -------------------------------------------------------- */
+  for (const m of byKey('draw_no_bet')) {
+    const outcomes = m.outcomes ?? [];
+    const home = validOdds(outcomeFor(outcomes, 'home')?.price);
+    const away = validOdds(outcomeFor(outcomes, 'away')?.price);
     if (home !== null && away !== null) {
       add({
         marketType: 'dnb',
@@ -228,42 +229,11 @@ export function normalizeOdds(
     }
   }
 
-  /* ---- Double Chance ----------------------------------------------------- */
-  const dc = findExact('double chance');
-  if (dc?.odds?.length) {
-    const sel: NormalizedMarket['selections'] = [];
-    let ok = true;
-    for (const row of dc.odds) {
-      const odds = pickSingleOdds(row);
-      const raw = norm(String(row.label ?? ''));
-      if (odds === null || !raw) {
-        ok = false;
-        break;
-      }
-      if (raw.includes('draw')) {
-        const other = raw.replace(/draw/g, '').replace(/\bor\b/g, ' ');
-        const side = whichSide(other, homeName, awayName);
-        if (side === 'home') sel.push({ label: 'Home or Draw', oddsDecimal: odds });
-        else if (side === 'away') sel.push({ label: 'Draw or Away', oddsDecimal: odds });
-        else {
-          ok = false;
-          break;
-        }
-      } else {
-        sel.push({ label: 'Home or Away', oddsDecimal: odds });
-      }
-    }
-    // Only publish when all three outcomes mapped cleanly.
-    if (ok && sel.length === 3) {
-      add({ marketType: 'double_chance', label: 'Double Chance', selections: sel });
-    }
-  }
-
-  /* ---- Both Teams to Score ---------------------------------------------- */
-  const bttsRow = findExact('both teams to score')?.odds?.[0];
-  if (bttsRow) {
-    const yes = validOdds(bttsRow.yes);
-    const no = validOdds(bttsRow.no);
+  /* ---- btts ---------------------------------------------------------------- */
+  for (const m of byKey('btts')) {
+    const outcomes = m.outcomes ?? [];
+    const yes = validOdds(outcomes.find((o) => norm(o.name) === 'yes')?.price);
+    const no = validOdds(outcomes.find((o) => norm(o.name) === 'no')?.price);
     if (yes !== null && no !== null) {
       add({
         marketType: 'btts',
@@ -276,19 +246,23 @@ export function normalizeOdds(
     }
   }
 
-  /* ---- Total goals Over/Under (every clean line, all sources) ----------- */
-  const totalSources = markets.filter((m) =>
-    ['goals over/under', 'alternative goal line', 'alternative total goals', 'totals'].includes(
-      cleanName(m.name)
-    )
-  );
-  for (const src of totalSources) {
-    for (const row of src.odds ?? []) {
-      const line = lineOf(row);
-      if (line === null || line <= 0 || !isCleanLine(line)) continue;
-      const over = validOdds(row.over);
-      const under = validOdds(row.under);
-      if (over === null || under === null) continue;
+  /* ---- totals / alternate_totals → Over/Under per clean line -------------- */
+  for (const m of [...byKey('totals'), ...byKey('alternate_totals')]) {
+    // Group Over/Under outcome pairs by their line (`point`).
+    const byLine = new Map<number, { over?: number; under?: number }>();
+    for (const o of m.outcomes ?? []) {
+      const line = toNumber(o.point);
+      const price = validOdds(o.price);
+      if (line === null || price === null) continue;
+      const entry = byLine.get(line) ?? {};
+      const n = norm(o.name);
+      if (n === 'over') entry.over = price;
+      else if (n === 'under') entry.under = price;
+      byLine.set(line, entry);
+    }
+    for (const [line, pair] of byLine) {
+      if (line <= 0 || !isCleanLine(line)) continue;
+      if (pair.over === undefined || pair.under === undefined) continue;
       // The 2.5 line keeps the legacy market_type + bare "Over"/"Under" labels
       // so it updates existing rows in place (no duplicate selections); other
       // lines carry the line in their label for clarity.
@@ -297,106 +271,46 @@ export function normalizeOdds(
         marketType: is25 ? 'over_under_2_5' : `ou:${line}`,
         label: `Over/Under ${line}`,
         selections: [
-          { label: is25 ? 'Over' : `Over ${line}`, oddsDecimal: over },
-          { label: is25 ? 'Under' : `Under ${line}`, oddsDecimal: under },
+          { label: is25 ? 'Over' : `Over ${line}`, oddsDecimal: pair.over },
+          { label: is25 ? 'Under' : `Under ${line}`, oddsDecimal: pair.under },
         ],
       });
     }
   }
 
-  /* ---- Team totals (home / away) ---------------------------------------- */
-  for (const [name, fam, who] of [
-    ['team total goals home', 'tt_home', 'Home'],
-    ['team total goals away', 'tt_away', 'Away'],
-  ] as const) {
-    const src = findExact(name);
-    for (const row of src?.odds ?? []) {
-      const line = lineOf(row);
-      if (line === null || line <= 0 || !isCleanLine(line)) continue;
-      const over = validOdds(row.over);
-      const under = validOdds(row.under);
-      if (over === null || under === null) continue;
-      add({
-        marketType: `${fam}:${line}`,
-        label: `${who} Team Total ${line}`,
-        selections: [
-          { label: `Over ${line}`, oddsDecimal: over },
-          { label: `Under ${line}`, oddsDecimal: under },
-        ],
-      });
+  /* ---- spreads / alternate_spreads → Asian handicap (clean lines only) ---- */
+  for (const m of [...byKey('spreads'), ...byKey('alternate_spreads')]) {
+    // Outcomes are per-team with the team's own point; pair them by the HOME
+    // line (away must carry the mirrored point).
+    const byLine = new Map<number, { home?: number; away?: number }>();
+    for (const o of m.outcomes ?? []) {
+      const point = toNumber(o.point);
+      const price = validOdds(o.price);
+      if (point === null || price === null) continue;
+      const n = norm(o.name);
+      if (n === homeName) {
+        const entry = byLine.get(point) ?? {};
+        entry.home = price;
+        byLine.set(point, entry);
+      } else if (n === awayName) {
+        // Away point -1.5 pairs with home point +1.5 → store under home line.
+        const entry = byLine.get(-point) ?? {};
+        entry.away = price;
+        byLine.set(-point, entry);
+      }
     }
-  }
-
-  /* ---- Asian handicap (Spread + Alternative) — clean lines only --------- */
-  const ahSources = markets.filter((m) =>
-    ['spread', 'alternative asian handicap', 'asian handicap'].includes(cleanName(m.name))
-  );
-  for (const src of ahSources) {
-    for (const row of src.odds ?? []) {
-      const line = lineOf(row);
-      if (line === null || !isCleanLine(line)) continue;
-      const home = validOdds(row.home);
-      const away = validOdds(row.away);
-      if (home === null || away === null) continue;
+    for (const [line, pair] of byLine) {
+      if (!isCleanLine(line)) continue;
+      if (pair.home === undefined || pair.away === undefined) continue;
       add({
         marketType: `ah:${line}`,
         label: `Asian Handicap ${signed(line)}`,
         selections: [
-          { label: `Home ${signed(line)}`, oddsDecimal: home },
-          { label: `Away ${signed(-line)}`, oddsDecimal: away },
+          { label: `Home ${signed(line)}`, oddsDecimal: pair.home },
+          { label: `Away ${signed(-line)}`, oddsDecimal: pair.away },
         ],
       });
     }
-  }
-
-  /* ---- European handicap (3-way, integer lines) ------------------------- */
-  const eh = findExact('european handicap');
-  for (const row of eh?.odds ?? []) {
-    const line = lineOf(row);
-    if (line === null || !Number.isInteger(line)) continue;
-    const home = validOdds(row.home);
-    const draw = validOdds(row.draw);
-    const away = validOdds(row.away);
-    if (home === null || draw === null || away === null) continue;
-    add({
-      marketType: `eh:${line}`,
-      label: `European Handicap ${signed(line)}`,
-      selections: [
-        { label: `Home ${signed(line)}`, oddsDecimal: home },
-        { label: `Draw ${signed(line)}`, oddsDecimal: draw },
-        { label: `Away ${signed(line)}`, oddsDecimal: away },
-      ],
-    });
-  }
-
-  /* ---- Correct Score ----------------------------------------------------- */
-  const cs = findExact('correct score');
-  if (cs?.odds?.length) {
-    const sel: NormalizedMarket['selections'] = [];
-    for (const row of cs.odds) {
-      const raw = norm(String(row.label ?? ''));
-      const m = /^(\d+)\s*-\s*(\d+)$/.exec(raw);
-      const odds = pickSingleOdds(row);
-      if (!m || odds === null) continue; // skip "Other"/unparseable
-      sel.push({ label: `${m[1]}-${m[2]}`, oddsDecimal: odds });
-    }
-    add({ marketType: 'correct_score', label: 'Correct Score', selections: sel });
-  }
-
-  /* ---- Exact Total Goals ------------------------------------------------- */
-  const etg = findExact('exact total goals');
-  if (etg?.odds?.length) {
-    const sel: NormalizedMarket['selections'] = [];
-    for (const row of etg.odds) {
-      const raw = norm(String(row.label ?? ''));
-      const odds = pickSingleOdds(row);
-      if (odds === null) continue;
-      const plus = /^(\d+)\s*\+/.exec(raw) || /over\s*(\d+)/.exec(raw);
-      const exact = /^(\d+)\b/.exec(raw);
-      if (plus) sel.push({ label: `${plus[1]}+`, oddsDecimal: odds });
-      else if (exact) sel.push({ label: `${exact[1]}`, oddsDecimal: odds });
-    }
-    add({ marketType: 'exact_goals', label: 'Exact Total Goals', selections: sel });
   }
 
   return out;

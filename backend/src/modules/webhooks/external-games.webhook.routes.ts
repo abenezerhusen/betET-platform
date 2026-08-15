@@ -174,7 +174,13 @@ router.post(
               before,
               after,
               transactionId,
-              JSON.stringify({ provider: provider.name, game_id: gameId }),
+              // provider_id/slug make report joins exact (name can be renamed).
+              JSON.stringify({
+                provider: provider.name,
+                provider_id: provider.id,
+                provider_slug: provider.slug,
+                game_id: gameId,
+              }),
             ]
           );
           void tryAudit(
@@ -229,7 +235,12 @@ router.post(
               before,
               after,
               transactionId,
-              JSON.stringify({ provider: provider.name, game_id: gameId }),
+              JSON.stringify({
+                provider: provider.name,
+                provider_id: provider.id,
+                provider_slug: provider.slug,
+                game_id: gameId,
+              }),
             ]
           );
           emitToUser(tenantId, playerId, 'notification', {
@@ -288,8 +299,10 @@ router.post(
             `UPDATE wallets SET balance = $2::numeric, version = version + 1, updated_at = now() WHERE id = $1`,
             [w.rows[0].id, after]
           );
+          // NOTE: transactions has no updated_at column — referencing it
+          // here used to crash the rollback handler.
           await client.query(
-            `UPDATE transactions SET status = 'rolled_back', updated_at = now() WHERE id = $1`,
+            `UPDATE transactions SET status = 'rolled_back' WHERE id = $1`,
             [tx.rows[0].id]
           );
           void tryAudit(

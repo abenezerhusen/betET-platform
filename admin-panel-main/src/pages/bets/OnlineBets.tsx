@@ -515,7 +515,7 @@ export function OnlineBets() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-2">
         <h1 className="text-2xl font-semibold text-gray-900">Online Bets</h1>
         <button
           onClick={handleExport}

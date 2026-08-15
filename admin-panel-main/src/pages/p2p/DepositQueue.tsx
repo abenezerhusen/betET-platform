@@ -144,7 +144,9 @@ export function DepositQueue() {
             Auto-detected deposits are matched from incoming SMS on wallet devices. Manual approvals are required for partial matches.
           </p>
         </div>
-        <div onClick={() => setSelected(null)} className="cursor-default">
+        {/* overflow-x-auto keeps the wide table from forcing page-level
+            horizontal scroll on phones (which broke filter interactions). */}
+        <div onClick={() => setSelected(null)} className="cursor-default overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
