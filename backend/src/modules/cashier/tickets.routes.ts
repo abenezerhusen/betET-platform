@@ -226,9 +226,10 @@ async function loadTicket(
 }
 
 /**
- * Cross-branch guard for cashier ticket actions (cancel / payout).
+ * Cross-branch guard for cashier ticket actions (lookup / check-payout /
+ * sell-reprint / payout / cancel / remove-leg).
  *
- * The rule: a cashier may only cancel or pay tickets that were sold in
+ * The rule: a cashier may only see and process tickets that were sold in
  * their OWN branch. `bet.sold_branch_id` is the authoritative branch
  * stamp set when the ticket was sold through a cashier; if it's missing
  * (e.g. online tickets, legacy slips) we fall back to resolving the
@@ -246,7 +247,7 @@ async function loadTicket(
  * we throw `ForbiddenError` with the spec-mandated popup message.
  */
 const CROSS_BRANCH_MESSAGE =
-  'This ticket belongs to another branch. You are not authorized to cancel or pay this ticket.';
+  'This ticket belongs to another branch and cannot be accessed from this branch.';
 
 async function assertTicketBranchAccess(
   client: PoolClient,
@@ -330,8 +331,19 @@ async function resolveBranchId(
  *     branch UUID, or the literal "OFFLINE" if no branch is known.
  *   - YYYYMMDD is the sell date in UTC (matches the dedupe key the
  *     dashboard uses for "today's tickets").
- *   - SEQ is the count of tickets already sold by this branch on that
- *     UTC day plus one, zero-padded to four characters.
+ *   - SEQ comes from an atomic per-prefix counter row in
+ *     `printed_ticket_counters` — NOT from COUNT(*)+1. The old count-based
+ *     approach raced: two sells hitting the same branch/day concurrently
+ *     computed the same count and printed DUPLICATE coupon numbers (and
+ *     the sequence was shared across two tables whose unique indexes are
+ *     per-table, so the same code could exist once in each). The
+ *     `INSERT ... ON CONFLICT ... DO UPDATE ... RETURNING` below is a
+ *     single atomic statement: concurrent callers serialize on the row
+ *     lock and each receives a distinct, monotonically increasing number.
+ *     The first ticket of a new branch/day gets 0001. On the very first
+ *     use of a prefix the counter is seeded past the max sequence already
+ *     stored on legacy rows so historical same-day codes are never
+ *     re-issued.
  */
 async function generatePrintedTicketCode(
   client: PoolClient,
@@ -355,30 +367,34 @@ async function generatePrintedTicketCode(
     .toUpperCase()
     .slice(0, 12) || 'OFFLINE';
 
-  // Section 24 Step 10 — the daily sequence is shared across BOTH
-  // ticket sources (internal-game `bets` and sportsbook `sportsbook_bets`)
-  // because a single branch sells from one queue regardless of stack.
-  const countQ = await client.query<{ c: string }>(
-    `SELECT (
-        SELECT COUNT(*) FROM bets
-         WHERE tenant_id = $1
-           AND printed_ticket_code IS NOT NULL
-           AND ($2::uuid IS NULL OR sold_branch_id = $2::uuid)
-           AND ($2::uuid IS NOT NULL OR sold_branch_id IS NULL)
-           AND sold_at::date = $3::date
-      ) + (
-        SELECT COUNT(*) FROM sportsbook_bets
-         WHERE tenant_id = $1
-           AND printed_ticket_code IS NOT NULL
-           AND ($2::uuid IS NULL OR sold_branch_id = $2::uuid)
-           AND ($2::uuid IS NOT NULL OR sold_branch_id IS NULL)
-           AND sold_at::date = $3::date
-      ) AS c`,
-    [params.tenantId, params.branchId, params.soldAt.toISOString().slice(0, 10)]
+  const prefix = `TKT-${branchCode}-${datePart}`;
+
+  const seqQ = await client.query<{ last_seq: number }>(
+    `INSERT INTO printed_ticket_counters (tenant_id, code_prefix, last_seq)
+     VALUES (
+       $1, $2,
+       -- First use of this branch/day: start at 1 unless legacy count-based
+       -- rows already used same-day sequences — then continue after them.
+       GREATEST(1, COALESCE((
+         SELECT MAX((substring(t.printed_ticket_code from '([0-9]+)$'))::int) + 1
+           FROM (
+             SELECT printed_ticket_code FROM bets
+              WHERE tenant_id = $1 AND printed_ticket_code LIKE $2 || '-%'
+             UNION ALL
+             SELECT printed_ticket_code FROM sportsbook_bets
+              WHERE tenant_id = $1 AND printed_ticket_code LIKE $2 || '-%'
+           ) t
+       ), 1))
+     )
+     ON CONFLICT (tenant_id, code_prefix)
+     DO UPDATE SET last_seq = printed_ticket_counters.last_seq + 1,
+                   updated_at = now()
+     RETURNING last_seq`,
+    [params.tenantId, prefix]
   );
-  const next = Number(countQ.rows[0]?.c ?? 0) + 1;
+  const next = Number(seqQ.rows[0]?.last_seq ?? 1);
   const seq = String(next).padStart(4, '0');
-  return `TKT-${branchCode}-${datePart}-${seq}`;
+  return `${prefix}-${seq}`;
 }
 
 type PayoutStatus =
@@ -584,6 +600,9 @@ router.get(
         async (client) => {
           const bet = await loadTicket(client, scope.tenantId, ticketId);
           if (!bet) throw new NotFoundError('Ticket not found');
+          // Strict branch separation: a cashier must not even see the
+          // status of a ticket sold by another branch.
+          await assertTicketBranchAccess(client, scope.cashierId, bet);
           const expiryDays = await getTicketExpiryDays(
             client,
             scope.tenantId
@@ -626,6 +645,9 @@ router.get(
         async (client) => {
           const bet = await loadTicket(client, scope.tenantId, ticketId);
           if (!bet) throw new NotFoundError('Ticket not found');
+          // Strict branch separation: no details/status for tickets that
+          // were sold by another branch.
+          await assertTicketBranchAccess(client, scope.cashierId, bet);
           const expiryDays = await getTicketExpiryDays(client, scope.tenantId);
           const evaluation = evaluatePayout(bet, expiryDays);
           return presentTicket(bet, evaluation);
@@ -660,6 +682,10 @@ router.post(
         async (client) => {
           const bet = await loadTicket(client, scope.tenantId, ticketId);
           if (!bet) throw new NotFoundError('Ticket not found');
+          // Strict branch separation. Unsold tickets have no owning branch
+          // yet (the guard allows them); once sold, only the selling
+          // branch may reach the reprint path below.
+          await assertTicketBranchAccess(client, scope.cashierId, bet);
           // Idempotent: if it's already sold (by anyone), surface the existing
           // marking without overwriting.
           if (bet.sold_at && bet.sold_by_cashier_id) {
@@ -1060,6 +1086,9 @@ router.post(
                   );
             const bet = lockRes.rows[0];
             if (!bet) throw new NotFoundError('Ticket not found');
+
+            // Strict branch separation — same guard as payout/cancel.
+            await assertTicketBranchAccess(client, scope.cashierId, bet);
 
             if (bet.paid_at) {
               throw new ConflictError('Cannot edit a paid ticket.', {

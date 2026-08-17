@@ -1086,6 +1086,7 @@ router.post('/slots/spin', async (req, res, next) => {
 
     res.status(201).json({
       round_id: round.roundId,
+      bet_id: round.betId,
       game_code: round.gameCode,
       reels: round.reels,
       win_lines: round.winLines,
@@ -1095,6 +1096,306 @@ router.post('/slots/spin', async (req, res, next) => {
       server_seed_hash: round.serverSeedHash,
       server_seed: round.serverSeed,
       client_seed: round.clientSeed,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------------- */
+/* Multi Hot 5 — Red/Black gamble on a winning spin                           */
+/* ------------------------------------------------------------------------- */
+
+const slotsGambleSchema = z.object({
+  bet_id: z.string().uuid(),
+  choice: z.enum(['red', 'black']),
+});
+
+const slotsGambleTakeSchema = z.object({
+  bet_id: z.string().uuid(),
+});
+
+/** Gamble state stored under game_bets.metadata.gamble */
+interface SlotsGambleState {
+  /** Amount currently at stake / waiting to be collected via take. */
+  pending: number;
+  /** True once the gamble is finished (lost, or collected via take). */
+  settled: boolean;
+  /** True once the pending amount was credited (idempotency flag). */
+  taken: boolean;
+  rounds: Array<{ choice: string; card: string; win: boolean; at: string }>;
+}
+
+swagger.registerPath({
+  method: 'post',
+  path: '/api/games/slots/gamble',
+  summary: 'Multi Hot 5 Red/Black gamble (double-or-nothing on a winning spin)',
+  tags: ['Games'],
+  security: [{ bearerAuth: [] }],
+  requestBody: {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['bet_id', 'choice'],
+          properties: {
+            bet_id: { type: 'string', format: 'uuid' },
+            choice: { type: 'string', enum: ['red', 'black'] },
+          },
+        },
+      },
+    },
+  },
+  responses: { '200': { description: 'Gamble card result' } },
+});
+
+/**
+ * Pick Red or Black to double the win of a Multi Hot 5 spin.
+ *
+ * The spin already credited the win to the wallet (unchanged no-gamble flow),
+ * so the FIRST card pick stakes that win: the original payout is debited and
+ * becomes the pending gamble amount. While gambling, the wallet does NOT hold
+ * the win. Each successful pick doubles the pending amount (capped at the
+ * admin max-win ceiling); a wrong pick zeroes it and settles the gamble.
+ * The pending amount is only credited by POST /slots/gamble/take.
+ *
+ * The card is drawn server-side with crypto randomness (fair 50/50) and the
+ * whole operation runs in one transaction with the bet row locked FOR UPDATE,
+ * so concurrent/duplicate requests serialize and can never double-stake.
+ */
+router.post('/slots/gamble', async (req, res, next) => {
+  try {
+    await assertSiteAvailable(req);
+    const body = slotsGambleSchema.parse(req.body);
+    const user = ensureUser(req);
+    const gameInfo = await readInternalGameRtp(user.tenantId, 'multi-hot-5');
+
+    const out = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
+      const betQ = await client.query<{
+        id: string;
+        round_id: string;
+        payout: string;
+        status: string;
+        metadata: Record<string, unknown>;
+        created_at: Date;
+      }>(
+        `SELECT id, round_id, payout::text, status, metadata, created_at
+           FROM game_bets
+          WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND game_id = 'multi-hot-5'
+          FOR UPDATE`,
+        [body.bet_id, user.tenantId, user.id]
+      );
+      const bet = betQ.rows[0];
+      if (!bet) throw new NotFoundError('Bet not found');
+      const originalWin = Number(bet.payout);
+      if (!(originalWin > 0) || bet.status !== 'won') {
+        throw new BadRequestError('Only a winning spin can be gambled');
+      }
+      const meta = (bet.metadata ?? {}) as Record<string, unknown>;
+      const existing = meta.gamble as SlotsGambleState | undefined;
+      if (existing && (existing.settled || existing.taken)) {
+        throw new BadRequestError('Gamble already finished for this bet');
+      }
+
+      let pending: number;
+      let balanceAfter: number | null = null;
+
+      if (!existing) {
+        // Gamble only right after the spin — never on old bets from history.
+        if (Date.now() - new Date(bet.created_at).getTime() > 10 * 60 * 1000) {
+          throw new BadRequestError('Gamble window for this spin has expired');
+        }
+        // First card pick: stake the original win. Debit it from the wallet
+        // so the wallet never holds the win while it is being gambled.
+        const w = await client.query<{ id: string; balance: string }>(
+          `SELECT id, balance::text FROM wallets WHERE tenant_id = $1 AND user_id = $2 AND currency = 'ETB' FOR UPDATE`,
+          [user.tenantId, user.id]
+        );
+        const wallet = w.rows[0];
+        if (!wallet) throw new NotFoundError('Wallet not found');
+        const before = Number(wallet.balance);
+        if (before < originalWin) {
+          throw new BadRequestError('Insufficient balance to gamble');
+        }
+        const after = before - originalWin;
+        await client.query(
+          `UPDATE wallets SET balance = $2::numeric, version = version + 1, updated_at = now() WHERE id = $1`,
+          [wallet.id, after]
+        );
+        await client.query(
+          `INSERT INTO transactions
+           (tenant_id, wallet_id, user_id, type, amount, before_balance, after_balance, currency, reference, status, metadata)
+           VALUES ($1,$2,$3,'bet_stake',$4::numeric,$5::numeric,$6::numeric,'ETB',$7,'completed',$8::jsonb)`,
+          [
+            user.tenantId,
+            wallet.id,
+            user.id,
+            -originalWin,
+            before,
+            after,
+            `slots-gamble-stake-${bet.id}`,
+            JSON.stringify({ round_id: bet.round_id, game_id: 'multi-hot-5', gamble: true }),
+          ]
+        );
+        pending = originalWin;
+        balanceAfter = after;
+      } else {
+        pending = Number(existing.pending);
+        if (!(pending > 0)) throw new BadRequestError('No gamble amount to play');
+      }
+
+      // Server-authoritative fair 50/50 card draw.
+      const cardColor: 'red' | 'black' = crypto.randomInt(2) === 0 ? 'red' : 'black';
+      const win = body.choice === cardColor;
+      const newPending = win
+        ? Number(capPayout(pending * 2, gameInfo).toFixed(2))
+        : 0;
+      const gambleState: SlotsGambleState = {
+        pending: newPending,
+        settled: !win,
+        taken: false,
+        rounds: [
+          ...(existing?.rounds ?? []),
+          { choice: body.choice, card: cardColor, win, at: new Date().toISOString() },
+        ],
+      };
+      await client.query(
+        `UPDATE game_bets SET metadata = $2::jsonb, updated_at = now() WHERE id = $1`,
+        [bet.id, JSON.stringify({ ...meta, gamble: gambleState })]
+      );
+
+      return { win, cardColor, pending: newPending, balanceAfter };
+    });
+
+    if (out.balanceAfter !== null) {
+      emitWalletUpdated(user.tenantId, user.id, {
+        reason: 'bet_stake',
+        wallet: { balance: out.balanceAfter.toFixed(2), currency: 'ETB' },
+      });
+    }
+    res.json({
+      result: out.win ? 'win' : 'lose',
+      card_color: out.cardColor,
+      pending_amount: out.pending,
+      ...(out.balanceAfter !== null
+        ? { balance_after: Number(out.balanceAfter.toFixed(2)) }
+        : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+swagger.registerPath({
+  method: 'post',
+  path: '/api/games/slots/gamble/take',
+  summary: 'Collect the pending Multi Hot 5 gamble amount (idempotent)',
+  tags: ['Games'],
+  security: [{ bearerAuth: [] }],
+  requestBody: {
+    required: true,
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          required: ['bet_id'],
+          properties: { bet_id: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+  },
+  responses: { '200': { description: 'Take result' } },
+});
+
+/**
+ * Credit the pending gamble amount to the wallet — exactly once. The bet row
+ * is locked FOR UPDATE and a `taken` flag is written in the same transaction,
+ * so duplicate Take clicks / retried requests can never double-credit: any
+ * later request sees taken=true and credits nothing.
+ */
+router.post('/slots/gamble/take', async (req, res, next) => {
+  try {
+    const body = slotsGambleTakeSchema.parse(req.body);
+    const user = ensureUser(req);
+
+    const out = await withTenantClient({ tenantId: user.tenantId }, async (client) => {
+      const betQ = await client.query<{
+        id: string;
+        round_id: string;
+        metadata: Record<string, unknown>;
+      }>(
+        `SELECT id, round_id, metadata
+           FROM game_bets
+          WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND game_id = 'multi-hot-5'
+          FOR UPDATE`,
+        [body.bet_id, user.tenantId, user.id]
+      );
+      const bet = betQ.rows[0];
+      if (!bet) throw new NotFoundError('Bet not found');
+      const meta = (bet.metadata ?? {}) as Record<string, unknown>;
+      const g = meta.gamble as SlotsGambleState | undefined;
+      if (!g) throw new BadRequestError('No gamble in progress for this bet');
+
+      const pending = Number(g.pending);
+      // Already collected, or lost (pending 0): idempotent no-op.
+      if (g.taken || !(pending > 0)) {
+        const w = await client.query<{ balance: string }>(
+          `SELECT balance::text FROM wallets WHERE tenant_id = $1 AND user_id = $2 AND currency = 'ETB'`,
+          [user.tenantId, user.id]
+        );
+        return { credited: 0, balanceAfter: Number(w.rows[0]?.balance ?? 0) };
+      }
+
+      const w = await client.query<{ id: string; balance: string }>(
+        `SELECT id, balance::text FROM wallets WHERE tenant_id = $1 AND user_id = $2 AND currency = 'ETB' FOR UPDATE`,
+        [user.tenantId, user.id]
+      );
+      const wallet = w.rows[0];
+      if (!wallet) throw new NotFoundError('Wallet not found');
+      const before = Number(wallet.balance);
+      const after = before + pending;
+      await client.query(
+        `UPDATE wallets SET balance = $2::numeric, version = version + 1, updated_at = now() WHERE id = $1`,
+        [wallet.id, after]
+      );
+      await client.query(
+        `INSERT INTO transactions
+         (tenant_id, wallet_id, user_id, type, amount, before_balance, after_balance, currency, reference, status, metadata)
+         VALUES ($1,$2,$3,'bet_win',$4::numeric,$5::numeric,$6::numeric,'ETB',$7,'completed',$8::jsonb)`,
+        [
+          user.tenantId,
+          wallet.id,
+          user.id,
+          pending,
+          before,
+          after,
+          `slots-gamble-win-${bet.id}`,
+          JSON.stringify({ round_id: bet.round_id, game_id: 'multi-hot-5', gamble: true }),
+        ]
+      );
+      const gambleState: SlotsGambleState = {
+        ...g,
+        pending: 0,
+        settled: true,
+        taken: true,
+      };
+      await client.query(
+        `UPDATE game_bets SET metadata = $2::jsonb, updated_at = now() WHERE id = $1`,
+        [bet.id, JSON.stringify({ ...meta, gamble: { ...gambleState, taken_amount: pending } })]
+      );
+      return { credited: pending, balanceAfter: after };
+    });
+
+    if (out.credited > 0) {
+      emitWalletUpdated(user.tenantId, user.id, {
+        reason: 'bet_win',
+        wallet: { balance: out.balanceAfter.toFixed(2), currency: 'ETB' },
+      });
+    }
+    res.json({
+      credited: out.credited,
+      balance_after: Number(out.balanceAfter.toFixed(2)),
     });
   } catch (err) {
     next(err);

@@ -16,7 +16,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Eye, X } from 'lucide-react';
+import { Eye, FileDown, X } from 'lucide-react';
 import { FilterBar } from '../../components/FilterBar';
 import { DataTable } from '../../components/DataTable';
 import { toast } from '../../lib/toast';
@@ -267,6 +267,66 @@ export function AgentDashboard() {
     setEndDate(new Date());
   };
 
+  // Export exactly what the dashboard currently displays: a Summary sheet
+  // (KPIs for the active filters/date range) plus a Tickets sheet mirroring
+  // the Ticket List columns.
+  const handleExportExcel = async () => {
+    if (!totals && ticketRows.length === 0) {
+      toast('Nothing to export yet', 'info');
+      return;
+    }
+    try {
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+
+      const summary: (string | number)[][] = [
+        ['Agent Dashboard Export'],
+        ['Exported At', new Date().toLocaleString()],
+        ['Period', `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`],
+        ['Branch', selectedBranchLabel || 'All'],
+        ['Sales', selectedSalesLabel || 'All'],
+        ['Status', selectedStatus || 'All'],
+        [],
+        ['Total Cashier Deposit', num(totals?.cashier_deposit)],
+        ['Total Withdrawal', num(totals?.withdrawal)],
+        ['Total Shop Stake', num(totals?.shop_stake)],
+        ['Total Paid Out', num(totals?.paid_out)],
+        ['Net Profit', num(totals?.net_profit)],
+        ['Total Won Tickets', num(totals?.won_tickets)],
+        ['Total Lost Tickets', num(totals?.lost_tickets)],
+        ['Total Tickets', num(totals?.total_tickets)],
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary');
+
+      const rows = ticketRows.map((r) => ({
+        'Ticket Code': r.ticketCode,
+        'Full Name': r.fullName,
+        Phone: r.phoneNumber,
+        Branch: r.branch,
+        Cashier: r.cashier,
+        Stake: r.stake,
+        'Won Amount': r.won,
+        'Bonus Used': r.bonus,
+        'Net Win': r.netWin,
+        'Bet ID': r.betId,
+        'Sold At': r.soldAt,
+        Paid: r.paid,
+        Status: r.status,
+        'Payment Type': r.paymentType,
+        'Paid Amount': r.paidAmount,
+        'Paid At': r.paidAt,
+        Date: r.date,
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Tickets');
+
+      const stamp = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, `agent-dashboard-${stamp}.xlsx`);
+      toast('Excel file exported', 'success');
+    } catch {
+      toast('Failed to export Excel file', 'error');
+    }
+  };
+
   const handleViewSlip = async (id: string) => {
     setSlip({ bet: null, loading: true });
     try {
@@ -342,9 +402,18 @@ export function AgentDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-2">
         <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-        {loading && <span className="text-xs text-gray-500">Loading…</span>}
+        <div className="flex items-center gap-3">
+          {loading && <span className="text-xs text-gray-500">Loading…</span>}
+          <button
+            onClick={handleExportExcel}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700"
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            Export to Excel
+          </button>
+        </div>
       </div>
 
       <FilterBar

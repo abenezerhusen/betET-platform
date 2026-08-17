@@ -72,15 +72,19 @@ export function AgentWalletModal({
     if (!agentData?.userId) return;
     setWalletLoading(true);
     try {
-      const [walletList, activity] = await Promise.all([
-        walletsApi.listWallets({ user_id: agentData.userId, limit: 1 }),
+      // ensureWallet is idempotent: it returns the agent's existing wallet
+      // or creates one on the spot. Agents created before wallets were
+      // auto-provisioned had no wallet row, which left this modal stuck on
+      // "No wallet exists yet" with Top Up / Deduct permanently disabled.
+      const [walletRow, activity] = await Promise.all([
+        walletsApi.ensureWallet(agentData.userId),
         usersApi.userActivity(agentData.userId, {
           type: 'transactions',
           limit: 50,
           page: 1,
         }),
       ]);
-      setWallet(walletList.items[0] ?? null);
+      setWallet(walletRow ?? null);
       setTransactions(
         activity.items.map((t) => {
           const details = (t.details ?? {}) as Record<string, unknown>;

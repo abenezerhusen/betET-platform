@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { toast } from '../lib/toast';
 import * as walletsApi from '../lib/api/wallets';
 import * as usersApi from '../lib/api/users';
+import type { Wallet as WalletRow } from '../lib/api/types';
 
 interface BranchWalletModalProps {
   isOpen: boolean;
@@ -77,6 +78,7 @@ export function BranchWalletModal({
   const [branchStatus, setBranchStatus] = useState(branchData?.status || 'Active');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [wallet, setWallet] = useState<WalletRow | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -88,6 +90,27 @@ export function BranchWalletModal({
       setReason('');
     }
   }, [isOpen, initialHours, initialLimits, branchData?.status]);
+
+  // Load (or lazily create) the branch's wallet so the balance shown is the
+  // real wallet balance and credit/debit target the wallet row. ensureWallet
+  // is idempotent — it returns the existing wallet or creates one.
+  useEffect(() => {
+    if (!isOpen || !branchId) return;
+    let cancelled = false;
+    setWallet(null);
+    walletsApi
+      .ensureWallet(branchId)
+      .then((w) => {
+        if (!cancelled) setWallet(w);
+      })
+      .catch(() => {
+        // Fall back to the parent-provided balance; credit/debit will
+        // retry ensureWallet and surface any real error there.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, branchId]);
 
   if (!isOpen || !branchData) return null;
 
@@ -123,12 +146,21 @@ export function BranchWalletModal({
           target: 'branch_prepaid_wallet',
         },
       };
+      // credit/debit endpoints take a WALLET id, not the branch user id —
+      // passing the user id here is why Add Money / Withdraw always failed.
+      const walletRow = wallet ?? (await walletsApi.ensureWallet(id));
       if (op === 'credit') {
-        await walletsApi.creditWallet(id, payload);
+        await walletsApi.creditWallet(walletRow.id, payload);
         toast(`Branch credited with ${parsed.data.amount}.`);
       } else {
-        await walletsApi.debitWallet(id, payload);
+        await walletsApi.debitWallet(walletRow.id, payload);
         toast(`Branch debited by ${parsed.data.amount}.`);
+      }
+      // Refresh the displayed balance from the authoritative wallet row.
+      try {
+        setWallet(await walletsApi.ensureWallet(id));
+      } catch {
+        // non-fatal: balance refresh only
       }
       setAmount('');
       setReason('');
@@ -169,14 +201,23 @@ export function BranchWalletModal({
     setError('');
     setSubmitting(true);
     try {
+      // The update endpoint REPLACES metadata wholesale and re-validates the
+      // branch→agent link from the payload, so we must merge our settings
+      // into the branch's current metadata. Sending only the settings keys
+      // used to fail validation ("Branch must be assigned to an agent") and
+      // would have wiped agent_id/branch_id/city/address.
+      const current = await usersApi.getUser(id);
+      const currentMeta = (current.metadata ?? {}) as Record<string, unknown>;
       await usersApi.updateUser(id, {
         status: branchStatus.toLowerCase() === 'active' ? 'active' : 'suspended',
         metadata: {
+          ...currentMeta,
           operating_hours: {
             start: parsed.data.start,
             end: parsed.data.end,
           },
           limits: {
+            ...((currentMeta.limits ?? {}) as Record<string, unknown>),
             offline_bet: parsed.data.offlineBet,
             deposit: parsed.data.deposit,
             duplicate_bet: parsed.data.duplicateBetStake,
@@ -244,7 +285,9 @@ export function BranchWalletModal({
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-blue-600">Available Balance</p>
-                    <p className="text-2xl font-semibold text-blue-900">${branchData.balance}</p>
+                    <p className="text-2xl font-semibold text-blue-900">
+                      ${wallet ? Number(wallet.balance ?? 0).toFixed(2) : branchData.balance}
+                    </p>
                   </div>
                   <DollarSign className="h-8 w-8 text-blue-500" />
                 </div>

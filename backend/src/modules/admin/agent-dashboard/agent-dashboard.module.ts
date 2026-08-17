@@ -442,8 +442,18 @@ async function listAgentTickets(req: Request, query: TicketsQuery) {
                sc.bet_for_user_phone,
                sc.eff_branch_id                       AS branch_id,
                sc.eff_branch_name                     AS branch_name,
-               u.phone                                AS user_phone,
-               COALESCE(u.metadata->>'full_name', u.email::text, u.phone) AS user_name,
+               COALESCE(u.phone, bfu.phone)           AS user_phone,
+               -- Cashier-kiosk slips are stored under the shared walk-in
+               -- placeholder user, but the customer's phone (when the
+               -- cashier entered it) lives in bet_for_user_phone. When that
+               -- phone belongs to a REGISTERED user, surface their real
+               -- name instead of "Walk-in Player". True anonymous slips
+               -- (no phone / no matching user) keep the placeholder name.
+               CASE
+                 WHEN u.email = 'walkin@playcore.local' AND bfu.full_name IS NOT NULL
+                   THEN bfu.full_name
+                 ELSE COALESCE(u.metadata->>'full_name', u.email::text, u.phone)
+               END                                    AS user_name,
                c.email                                AS cashier_email,
                COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email::text) AS cashier_name,
                scu.email                              AS sold_by_cashier_email,
@@ -453,6 +463,27 @@ async function listAgentTickets(req: Request, query: TicketsQuery) {
           LEFT JOIN users u   ON u.id = sc.user_id
           LEFT JOIN users c   ON c.id = sc.cashier_id
           LEFT JOIN users scu ON scu.id = sc.sold_by_cashier_id
+          -- Significant subscriber digits of bet_for_user_phone (strip
+          -- non-digits, the 251 country code and the trunk 0) so +2519…,
+          -- 2519… and 09… all resolve to the same registered user.
+          LEFT JOIN LATERAL (
+            SELECT CASE
+                     WHEN d.digits LIKE '251%' AND length(d.digits) >= 12 THEN substr(d.digits, 4)
+                     WHEN d.digits LIKE '0%' THEN substr(d.digits, 2)
+                     ELSE d.digits
+                   END AS sig
+              FROM (SELECT regexp_replace(COALESCE(sc.bet_for_user_phone, ''), '\\D', '', 'g') AS digits) d
+          ) bp ON TRUE
+          LEFT JOIN LATERAL (
+            SELECT bu.phone,
+                   COALESCE(NULLIF(bu.metadata->>'full_name',''), bu.email::text, bu.phone) AS full_name
+              FROM users bu
+             WHERE length(bp.sig) >= 5
+               AND ($1::uuid IS NULL OR bu.tenant_id = $1::uuid)
+               AND bu.role = 'user'
+               AND regexp_replace(COALESCE(bu.phone, ''), '\\D', '', 'g') LIKE '%' || bp.sig
+             LIMIT 1
+          ) bfu ON TRUE
          WHERE TRUE
            ${agentClause}
            ${branchClause}

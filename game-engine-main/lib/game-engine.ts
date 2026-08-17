@@ -550,6 +550,7 @@ export async function placeKenoBet(input: {
 
 export interface SlotsSpinResponse {
   round_id: string;
+  bet_id: string; // game_bets row id — needed for the Red/Black gamble calls
   game_code?: string; // 8-digit human-readable Game ID for this round
   reels: string[][]; // outer = reel index, inner = symbols (length 3 per reel)
   win_lines: number[];
@@ -567,6 +568,43 @@ export async function spinSlots(input: {
   lines: number;
 }): Promise<SlotsSpinResponse> {
   return authedRequest<SlotsSpinResponse>("/api/games/slots/spin", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Result of one Red/Black card pick. The card is drawn SERVER-side; the
+ *  first pick stakes the spin win (wallet debited), a win doubles the
+ *  pending amount, a loss zeroes it. Nothing is credited until take. */
+export interface SlotsGambleResponse {
+  result: "win" | "lose";
+  card_color: "red" | "black";
+  pending_amount: number;
+  /** Present only when the wallet moved (the first pick, which stakes the win). */
+  balance_after?: number;
+}
+
+export async function gambleSlots(input: {
+  bet_id: string;
+  choice: "red" | "black";
+}): Promise<SlotsGambleResponse> {
+  return authedRequest<SlotsGambleResponse>("/api/games/slots/gamble", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Collect the pending gamble amount. Idempotent on the backend — duplicate
+ *  calls credit nothing extra (credited = 0). */
+export interface SlotsGambleTakeResponse {
+  credited: number;
+  balance_after: number;
+}
+
+export async function takeSlotsGamble(input: {
+  bet_id: string;
+}): Promise<SlotsGambleTakeResponse> {
+  return authedRequest<SlotsGambleTakeResponse>("/api/games/slots/gamble/take", {
     method: "POST",
     body: JSON.stringify(input),
   });

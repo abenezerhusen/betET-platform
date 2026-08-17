@@ -8,6 +8,8 @@ import {
   onWalletUpdated,
   listenEmbeddedWalletInit,
   spinSlots,
+  gambleSlots,
+  takeSlotsGamble,
   fetchGameLimits,
   type SlotsSpinResponse,
 } from "@/lib/game-engine"
@@ -368,6 +370,13 @@ export default function MultiHot5Page() {
   // path credits/animates the exact same values as the auto-resolve path.
   const pendingServerPayoutRef = useRef<number>(0)
   const pendingServerBalanceRef = useRef<number | null>(null)
+  // Bet id of the last WINNING spin — required by the backend gamble calls.
+  const lastWinBetIdRef = useRef<string | null>(null)
+  // True once the server gamble started (first card picked): there is a
+  // pending amount on the backend that must be collected via gamble/take.
+  const gamblePendingRef = useRef(false)
+  // Prevents duplicate take requests while one is already in flight.
+  const takeInFlightRef = useRef(false)
 
   useEffect(() => {
     const updateTime = () => {
@@ -561,6 +570,9 @@ export default function MultiHot5Page() {
 
   const spin = useCallback(async () => {
     if (isSpinning) return
+    // A gamble is open — its pending amount must be resolved (card pick or
+    // Take) before the next spin, otherwise the two flows would interleave.
+    if (showGamblePopup) return
     if (balance < betAmount) {
       notifyBalance("Insufficient balance — please deposit")
       return
@@ -596,6 +608,10 @@ export default function MultiHot5Page() {
         lines: PAYLINES.length,
       })
       setBalance(spinResult.balance_after)
+      // Remember the bet id of a winning spin so the Red/Black gamble can
+      // reference it on the backend. A losing spin cannot be gambled.
+      lastWinBetIdRef.current = spinResult.total_payout > 0 ? spinResult.bet_id : null
+      gamblePendingRef.current = false
     } catch (err) {
       console.error("Slots spin failed", err)
       const msg = err instanceof Error ? err.message : ""
@@ -739,7 +755,7 @@ export default function MultiHot5Page() {
         }
       }, reelStopDelays[reelIndex])
     }
-  }, [isSpinning, balance, betAmount, animateMultiplierSelection, notifyBalance, showWinEffects])
+  }, [isSpinning, showGamblePopup, balance, betAmount, animateMultiplierSelection, notifyBalance, showWinEffects])
 
   // Start autoplay function
   const startAutoplay = useCallback(() => {
@@ -925,12 +941,11 @@ export default function MultiHot5Page() {
 
   // Gamble feature functions
   const openGamble = () => {
-    // For testing - always allow opening, use lastWin or default to 0.40
-    const winToGamble = lastWin > 0 ? lastWin : 0.40
+    // Only a real winning spin (with its backend bet id) can be gambled.
+    if (lastWin <= 0 || !lastWinBetIdRef.current) return
+    const winToGamble = lastWin
     setGambleWinAmount(winToGamble)
     setGambleToWin(winToGamble * 2)
-    // Keep wallet authoritative: this popup is visual-only until backend
-    // gamble settlement is implemented.
     setShowGamblePopup(true)
     setGambleResult(null)
     setRevealedCard(null)
@@ -941,6 +956,13 @@ export default function MultiHot5Page() {
   }
 
   const closeGamble = () => {
+    // A card was already picked and won: there is a pending amount on the
+    // backend — closing the popup collects it exactly like "TAKE WIN" so the
+    // player can never lose money by closing the window.
+    if (gamblePendingRef.current) {
+      void takeWin()
+      return
+    }
     stopCardFlashing()
     setShowGamblePopup(false)
     setGambleWinAmount(0)
@@ -964,71 +986,112 @@ export default function MultiHot5Page() {
     setIsCardFlashing(false)
   }
 
-  const gamble = (chosenColor: 'red' | 'black') => {
-    if (isGambling) return
+  const gamble = async (chosenColor: 'red' | 'black') => {
+    if (isGambling || revealedCard) return
+    const betId = lastWinBetIdRef.current
+    if (!betId) return
     setIsGambling(true)
-    stopCardFlashing()
-    
-    // Determine the actual card (random)
-    const redCards = [
-      { img: GAMBLE_ASSETS.aceHearts, color: 'red' },
-      { img: GAMBLE_ASSETS.aceDiamonds, color: 'red' },
-    ]
-    const blackCards = [
-      { img: GAMBLE_ASSETS.aceClubs, color: 'black' },
-      { img: GAMBLE_ASSETS.aceSpades, color: 'black' },
-    ]
-    
-    const allCards = [...redCards, ...blackCards]
-    const randomCard = allCards[Math.floor(Math.random() * allCards.length)]
-    
-    // Show card reveal animation
-    setTimeout(() => {
-      setRevealedCard(randomCard.img)
-      // Add to previous cards
-      setPreviousCards(prev => [...prev.slice(-3), randomCard.img])
-      
-      // Check if player won
-      const playerWon = chosenColor === randomCard.color
-      
-      setTimeout(() => {
-        if (playerWon) {
-          // Double the winnings
-          const newWin = gambleWinAmount * 2
-          setGambleWinAmount(newWin)
-          setGambleToWin(newWin * 2)
-          setGambleResult('win')
+
+    try {
+      // The card outcome is decided SERVER-side (fair 50/50). The first pick
+      // stakes the original win on the backend; a win doubles the pending
+      // amount, a loss zeroes it. Nothing is credited until "TAKE WIN".
+      const res = await gambleSlots({ bet_id: betId, choice: chosenColor })
+      stopCardFlashing()
+      gamblePendingRef.current = res.result === 'win'
+      if (typeof res.balance_after === 'number') setBalance(res.balance_after)
+
+      // Pick which ace image to show for the server-returned color — purely
+      // cosmetic (both images of a color are equivalent); the win/lose
+      // outcome above came from the backend, never from the client.
+      const cardPool =
+        res.card_color === 'red'
+          ? [GAMBLE_ASSETS.aceHearts, GAMBLE_ASSETS.aceDiamonds]
+          : [GAMBLE_ASSETS.aceClubs, GAMBLE_ASSETS.aceSpades]
+      const cardImg = cardPool[Math.floor(Math.random() * cardPool.length)]
+
+      // Reveal immediately — the result is already known, no artificial wait.
+      setRevealedCard(cardImg)
+      setPreviousCards(prev => [...prev.slice(-3), cardImg])
+
+      if (res.result === 'win') {
+        setGambleWinAmount(res.pending_amount)
+        setGambleToWin(res.pending_amount * 2)
+        setGambleResult('win')
+        setIsGambling(false)
+        // Show the winning card briefly, then start flashing for another round
+        setTimeout(() => {
+          setRevealedCard(null)
+          setGambleResult(null)
+          setIsCardFlashing(true)
+          startCardFlashing()
+        }, 1500)
+      } else {
+        // Player lost — the staked win is gone, nothing to collect.
+        setGambleResult('lose')
+        setGambleWinAmount(0)
+        setGambleToWin(0)
+        gamblePendingRef.current = false
+        lastWinBetIdRef.current = null
+        setTimeout(() => {
+          setShowGamblePopup(false)
+          setLastWin(0)
+          setPreviousCards([])
+          setRevealedCard(null)
+          setGambleResult(null)
           setIsGambling(false)
-          // Start flashing again for another round
-          setTimeout(() => {
-            setRevealedCard(null)
-            setGambleResult(null)
-            setIsCardFlashing(true)
-            startCardFlashing()
-          }, 1500)
-        } else {
-          // Player lost
-          setGambleResult('lose')
-          setGambleWinAmount(0)
-          setGambleToWin(0)
-          setTimeout(() => {
-            setShowGamblePopup(false)
-            setLastWin(0)
-            setPreviousCards([])
-            setIsGambling(false)
-          }, 1500)
-        }
-      }, 500)
-    }, 500)
+        }, 1500)
+      }
+    } catch (err) {
+      // Request failed — nothing changed server-side for a failed FIRST pick;
+      // restore the flashing state so the player can retry or take.
+      console.error('Gamble failed', err)
+      const msg = err instanceof Error ? err.message : ''
+      notifyBalance(/insufficient/i.test(msg) ? 'Insufficient balance — please deposit' : 'Gamble failed — please try again')
+      setIsGambling(false)
+      setIsCardFlashing(true)
+      startCardFlashing()
+    }
   }
 
-  const takeWin = () => {
+  const takeWin = async () => {
+    if (isGambling || takeInFlightRef.current) return
+
+    // A gamble is in progress: the pending amount lives on the backend and
+    // must be credited there — exactly once (the backend take endpoint is
+    // idempotent, and takeInFlightRef blocks duplicate clicks meanwhile).
+    if (gamblePendingRef.current && lastWinBetIdRef.current) {
+      takeInFlightRef.current = true
+      setIsGambling(true)
+      try {
+        const res = await takeSlotsGamble({ bet_id: lastWinBetIdRef.current })
+        setBalance(res.balance_after)
+        gamblePendingRef.current = false
+        // This bet's gamble is finished on the backend — it cannot be gambled again.
+        lastWinBetIdRef.current = null
+      } catch (err) {
+        // Keep the popup open so the player can retry — the pending amount
+        // is safe on the backend and is only credited once.
+        console.error('Take failed', err)
+        notifyBalance('Could not collect the win — please try again')
+        setIsGambling(false)
+        takeInFlightRef.current = false
+        setIsCardFlashing(true)
+        startCardFlashing()
+        return
+      }
+      takeInFlightRef.current = false
+      setIsGambling(false)
+    }
+
     stopCardFlashing()
     setLastWin(gambleWinAmount)
     setShowGamblePopup(false)
     setGambleWinAmount(0)
     setGambleToWin(0)
     setPreviousCards([])
+    setRevealedCard(null)
+    setGambleResult(null)
     setIsGambling(false)
   }
 
