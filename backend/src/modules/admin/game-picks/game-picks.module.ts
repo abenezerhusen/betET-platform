@@ -197,27 +197,32 @@ router.get(
   })
 );
 
-/** Distinct leagues present in the synchronized events DB — the picker source. */
+/** Distinct leagues present in the synchronized events DB — the picker source.
+ *  `limit` is optional (default 100, the original behaviour); the Settings →
+ *  General → Top Leagues dropdown passes a high limit to list ALL leagues. */
 router.get(
   '/top-leagues/available',
   wrap(async (req) => {
     const scope = getAdminScope(req);
     const tenantId = requireScopedTenantId(scope);
     const search = String((req.query.search as string) ?? '').trim();
+    const limit = z.coerce.number().int().min(1).max(5000).default(100)
+      .parse(req.query.limit ?? undefined);
     return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
       const values: unknown[] = [tenantId];
       let filter = '';
       if (search) {
         values.push(`%${search}%`);
-        filter = 'AND league ILIKE $2';
+        filter = `AND league ILIKE $${values.length}`;
       }
+      values.push(limit);
       const rows = await client.query<{ league: string; events: string }>(
         `SELECT league, COUNT(*)::text AS events
            FROM sports_events
           WHERE tenant_id = $1 AND league IS NOT NULL ${filter}
           GROUP BY league
           ORDER BY COUNT(*) DESC, league ASC
-          LIMIT 100`,
+          LIMIT $${values.length}`,
         values
       );
       return rows.rows.map((r) => ({ league: r.league, events: Number(r.events) }));

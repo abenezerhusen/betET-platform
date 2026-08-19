@@ -1,4 +1,5 @@
 import { withTenantClient } from '../infrastructure/db/tenant-client';
+import { getActiveTenantIds } from './tenant-cache';
 import { gameRngService } from '../services/game-rng.service';
 import {
   emitToTenant,
@@ -457,21 +458,9 @@ export function startKenoLoop(): void {
     if (inFlight) return;
     inFlight = true;
     try {
-      const tenants = await withTenantClient(
-        { tenantId: null, bypassRls: true },
-        async (client) => {
-          const fromRounds = await client.query<{ tenant_id: string }>(
-            `SELECT DISTINCT tenant_id FROM game_rounds WHERE game_id = 'fast-keno'`
-          );
-          if (fromRounds.rows.length > 0) {
-            return fromRounds.rows.map((r) => r.tenant_id);
-          }
-          const fromTenants = await client.query<{ id: string }>(
-            `SELECT id FROM tenants WHERE status = 'active'`
-          );
-          return fromTenants.rows.map((r) => r.id);
-        }
-      );
+      // Active tenants, cached for 5 minutes (see tenant-cache). Avoids the
+      // per-tick DISTINCT scan of the ever-growing game_rounds table.
+      const tenants = await getActiveTenantIds();
       for (const tenantId of tenants) {
         await tickTenant(tenantId);
       }

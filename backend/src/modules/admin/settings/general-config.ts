@@ -86,6 +86,8 @@ export interface GeneralConfig {
   cashier_cancel_window_minutes: number;
   cashier_enable_withdraw_request: boolean;
   cashier_enable_duplicate_slip: boolean;
+  /** Max PAID duplicate copies of one bet (excl. the original). 0 = unlimited. */
+  cashier_max_duplicate_copies: number;
   cashier_max_daily_cancel_count: number;
   /** Optional operation hours. */
   operation_hours: OperationHours;
@@ -137,6 +139,7 @@ const DEFAULTS: GeneralConfig = {
   cashier_cancel_window_minutes: 5,
   cashier_enable_withdraw_request: true,
   cashier_enable_duplicate_slip: false,
+  cashier_max_duplicate_copies: 3,
   cashier_max_daily_cancel_count: 0,
   operation_hours: {},
   operation_hours_enforce_bets: false,
@@ -276,6 +279,10 @@ export async function loadGeneralConfig(
     cashier_enable_duplicate_slip: asBool(
       raw.cashier_enable_duplicate_slip,
       DEFAULTS.cashier_enable_duplicate_slip
+    ),
+    cashier_max_duplicate_copies: asNumber(
+      raw.cashier_max_duplicate_copies,
+      DEFAULTS.cashier_max_duplicate_copies
     ),
     cashier_max_daily_cancel_count: asNumber(
       raw.cashier_max_daily_cancel_count,

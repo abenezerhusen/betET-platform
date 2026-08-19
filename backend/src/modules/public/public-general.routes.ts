@@ -29,6 +29,7 @@ import {
   isMaintenanceActive,
   loadMaintenanceConfig,
 } from '../admin/settings/maintenance-config';
+import { loadAnnouncementConfig } from '../admin/settings/announcement-config';
 import {
   deriveAuthConfig,
   loadNotificationSettings,
@@ -291,6 +292,25 @@ router.get('/maintenance', async (req, res, next) => {
       enabled: cfg.enabled,
       message: cfg.message,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/announcement
+ * Returns the announcement/welcome popup config so the user panel can show
+ * the promo modal on the home page. When disabled we still return the row
+ * with enabled=false so the client can simply not render anything.
+ */
+router.get('/announcement', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const cfg = await withTenantClient({ tenantId }, (client) =>
+      loadAnnouncementConfig(client, tenantId)
+    );
+    res.json(cfg.enabled ? cfg : { enabled: false });
   } catch (err) {
     next(err);
   }

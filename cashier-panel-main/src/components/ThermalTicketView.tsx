@@ -119,9 +119,11 @@ export function ThermalTicketView({
   // is too long/dense to print scannably on thermal paper. The cashier
   // lookup matches ticket_code / coupon_code / printed_ticket_code
   // interchangeably, so scanning the short code finds the same ticket.
+  // Sportsbook slips: the customer's real reference is the SBK coupon —
+  // encode it so scanning the paper resolves the exact same code shown on it.
   const couponForBarcode =
-    ticket.ticket_code ||
     ticket.coupon_code ||
+    ticket.ticket_code ||
     ticket.ticket_id;
 
   // Generate the barcode PNG after mount so the canvas API is available.
@@ -149,9 +151,13 @@ export function ThermalTicketView({
   const netPay = winGross * 0.85;
 
   const dashedLine = "-".repeat(32);
+  // Coupon printed on the paper: sportsbook tickets show their ORIGINAL
+  // SBK-XXXXXXXX coupon (the customer's actual reference), never the
+  // internal TKT-{BRANCH}-{DATE}-{SEQ} receipt code. Non-sportsbook
+  // tickets (no coupon_code) keep the previous behaviour.
   const coupon =
-    ticket.printed_ticket_code ||
     ticket.coupon_code ||
+    ticket.printed_ticket_code ||
     ticket.ticket_code ||
     ticket.ticket_id;
   const timestamp = ticket.sold_at || ticket.placed_at || ticket.issued_at;
@@ -342,16 +348,18 @@ export function buildThermalTicketPrintHtml(args: {
   const stakeTax = stake * 0.15;
   const winTax = 0;
   const netPay = winGross * 0.85;
+  // Same rule as the on-screen view: SBK coupon first (the customer's
+  // actual sportsbook reference), TKT codes only for non-sportsbook slips.
   const coupon =
-    ticket.printed_ticket_code ||
     ticket.coupon_code ||
+    ticket.printed_ticket_code ||
     ticket.ticket_code ||
     ticket.ticket_id;
   // Short code for the barcode (see note in ThermalTicketView) — keeps
   // the printed symbol within a scannable width on thermal paper.
   const barcodeValue =
-    ticket.ticket_code ||
     ticket.coupon_code ||
+    ticket.ticket_code ||
     ticket.ticket_id;
   const timestamp = formatTimestamp(
     ticket.sold_at || ticket.placed_at || ticket.issued_at

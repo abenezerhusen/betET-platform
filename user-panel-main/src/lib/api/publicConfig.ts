@@ -211,3 +211,21 @@ export interface PublicMaintenance {
 export function getPublicMaintenance(): Promise<PublicMaintenance> {
   return apiRequest<PublicMaintenance>('/api/public/maintenance');
 }
+
+/* -------------------------------------------------------------------------- */
+/* Announcement Popup — promo/welcome modal shown on the home page            */
+/* -------------------------------------------------------------------------- */
+
+export interface PublicAnnouncement {
+  enabled: boolean;
+  title?: string;
+  message?: string;
+  image_url?: string;
+  button_text?: string;
+  button_url?: string;
+  frequency?: 'always' | 'session' | 'daily';
+}
+
+export function getPublicAnnouncement(): Promise<PublicAnnouncement> {
+  return apiRequest<PublicAnnouncement>('/api/public/announcement');
+}

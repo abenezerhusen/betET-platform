@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, ChevronDown, Star } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { sports as catalogSports, type Sport } from "@/data/sportsCatalog";
+import { publicConfigApi } from "@/lib/api";
 
 /**
  * Flatten a sport's countries/leagues into a single list of sidebar entries
@@ -49,22 +50,70 @@ const sports = catalogSports.map((s) => ({
   leagues: flattenSportLeagues(s),
 }));
 
-const topLeagues: { name: string; icon: string; sport: string; country: string; league: string }[] = [
-  { name: "World - FIFA World Cup Qualifications", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "World Cup", league: "Group Stage" },
-  { name: "World - FIFA World Cup 2026 Outright", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "World Cup", league: "Final" },
-  { name: "Europe - UEFA Champions League", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Champions League", league: "Group Stage" },
-  { name: "Europe - UEFA Europa League", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Europa League", league: "Group Stage" },
-  { name: "Europe - UEFA Conference League", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Europa Conference League", league: "Group Stage" },
-  { name: "England - Premier League", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "England", league: "Premier League" },
-  { name: "Spain - La Liga", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Spain", league: "La Liga" },
-  { name: "Germany - Bundesliga", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Germany", league: "Bundesliga" },
-  { name: "France - Ligue 1", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "France", league: "Ligue 1" },
-  { name: "Italy - Serie A", icon: "https://ext.same-assets.com/1203561035/3182885345.svg", sport: "football", country: "Italy", league: "Serie A" },
+type TopLeagueItem = { name: string; icon: string; sport: string; country: string; league: string };
+
+const TOP_LEAGUE_ICON = "https://ext.same-assets.com/1203561035/3182885345.svg";
+
+// Built-in default Top Leagues — shown until the admin configures the list in
+// Admin Panel → Settings → General → Top Leagues (which then takes over).
+const DEFAULT_TOP_LEAGUES: TopLeagueItem[] = [
+  { name: "World - FIFA World Cup Qualifications", icon: TOP_LEAGUE_ICON, sport: "football", country: "World Cup", league: "Group Stage" },
+  { name: "World - FIFA World Cup 2026 Outright", icon: TOP_LEAGUE_ICON, sport: "football", country: "World Cup", league: "Final" },
+  { name: "Europe - UEFA Champions League", icon: TOP_LEAGUE_ICON, sport: "football", country: "Champions League", league: "Group Stage" },
+  { name: "Europe - UEFA Europa League", icon: TOP_LEAGUE_ICON, sport: "football", country: "Europa League", league: "Group Stage" },
+  { name: "Europe - UEFA Conference League", icon: TOP_LEAGUE_ICON, sport: "football", country: "Europa Conference League", league: "Group Stage" },
+  { name: "England - Premier League", icon: TOP_LEAGUE_ICON, sport: "football", country: "England", league: "Premier League" },
+  { name: "Spain - La Liga", icon: TOP_LEAGUE_ICON, sport: "football", country: "Spain", league: "La Liga" },
+  { name: "Germany - Bundesliga", icon: TOP_LEAGUE_ICON, sport: "football", country: "Germany", league: "Bundesliga" },
+  { name: "France - Ligue 1", icon: TOP_LEAGUE_ICON, sport: "football", country: "France", league: "Ligue 1" },
+  { name: "Italy - Serie A", icon: TOP_LEAGUE_ICON, sport: "football", country: "Italy", league: "Serie A" },
+  { name: "Netherlands - Eredivisie", icon: TOP_LEAGUE_ICON, sport: "football", country: "Netherlands", league: "Eredivisie" },
+  { name: "Sweden - Superettan", icon: TOP_LEAGUE_ICON, sport: "football", country: "Sweden", league: "Superettan" },
+  { name: "Denmark - Superliga", icon: TOP_LEAGUE_ICON, sport: "football", country: "Denmark", league: "Superligaen" },
+  { name: "Belgium - Pro League", icon: TOP_LEAGUE_ICON, sport: "football", country: "Belgium", league: "First Division A" },
+  { name: "Portugal - Liga Portugal", icon: TOP_LEAGUE_ICON, sport: "football", country: "Portugal", league: "Liga Portugal" },
 ];
+
+/**
+ * Map an admin-configured Top Leagues entry (Settings → General → Top
+ * Leagues, stored under the legacy top-bets key) into a sidebar item. The
+ * `league` value is the exact provider name ("Country - League"), so the
+ * country/league navigation params are derived by splitting on the first
+ * " - " (the home page joins them back to the same exact string).
+ */
+function configEntryToItem(e: publicConfigApi.TopBetEntry): TopLeagueItem {
+  const full = (e.league ?? "").trim();
+  const sep = full.indexOf(" - ");
+  const country = sep > 0 ? full.slice(0, sep).trim() : (e.league_group ?? "").trim() || full;
+  const league = sep > 0 ? full.slice(sep + 3).trim() : full;
+  const sport = (e.sport_type ?? "Football").trim().toLowerCase().replace(/\s+/g, "-") || "football";
+  return { name: full, icon: TOP_LEAGUE_ICON, sport, country, league };
+}
 
 export function LeftSidebar() {
   const router = useRouter();
   const [expandedSports, setExpandedSports] = useState<string[]>(["FOOTBALL"]);
+
+  // Admin-configured Top Leagues override the built-in defaults. Any failure
+  // (or an empty configuration) keeps the defaults, so behaviour is unchanged
+  // until the admin saves a list.
+  const [topLeagues, setTopLeagues] = useState<TopLeagueItem[]>(DEFAULT_TOP_LEAGUES);
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .listTopBets()
+      .then(({ items }) => {
+        if (cancelled) return;
+        const rows = (items ?? []).filter((e) => (e.league ?? "").trim());
+        if (rows.length > 0) setTopLeagues(rows.map(configEntryToItem));
+      })
+      .catch(() => {
+        /* keep defaults */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggleSport = (sportName: string) => {
     setExpandedSports((prev) =>

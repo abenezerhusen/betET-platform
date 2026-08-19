@@ -233,7 +233,12 @@ async function listBets(req: Request, q: ListBetsQuery) {
         values.push(q.max_stake);
       }
       if (q.branch_search) {
-        filters.push(`(br.metadata->>'name') ILIKE $${i++}`);
+        filters.push(`COALESCE(
+          NULLIF(br.metadata->>'name', ''),
+          NULLIF(br.metadata->>'label', ''),
+          NULLIF(br.metadata->>'branch_id', ''),
+          br.email::text
+        ) ILIKE $${i++}`);
         values.push(`%${q.branch_search}%`);
       }
       if (q.cashier_search) {
@@ -256,7 +261,9 @@ async function listBets(req: Request, q: ListBetsQuery) {
         q.branch_search || q.cashier_search
           ? `LEFT JOIN users c  ON c.id  = b.cashier_id
              LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
-             LEFT JOIN users br ON br.id::text = b.branch_id AND br.role = 'branch'`
+             LEFT JOIN users br
+               ON br.role = 'branch'
+              AND br.id::text = COALESCE(b.sold_branch_id::text, b.branch_id)`
           : '';
 
       const allBetsCte = `
@@ -341,8 +348,28 @@ async function listBets(req: Request, q: ListBetsQuery) {
                 b.ticket_code, b.printed_ticket_code, b.coupon_code,
                 b.sold_at, b.sold_by_cashier_id, b.sold_branch_id, b.paid_at,
                 b.placed_at, b.settled_at, b.created_at, b.updated_at, b.source,
-                u.email AS user_email, u.phone AS user_phone,
-                COALESCE(u.metadata->>'full_name', u.email, u.phone) AS user_name,
+                u.email AS user_email,
+                COALESCE(u.phone, bfu.phone) AS user_phone,
+                /* Cashier-kiosk slips are stored under the shared walk-in
+                 * placeholder user; when bet_for_user_phone belongs to a
+                 * REGISTERED user we surface their real name (same rule
+                 * as the Agent Dashboard). Anonymous walk-in slips show
+                 * the BRANCH (or its agent) the ticket belongs to instead
+                 * of the meaningless "Walk-in Player" placeholder. */
+                CASE
+                  WHEN u.email = 'walkin@playcore.local'
+                    THEN COALESCE(
+                      bfu.full_name,
+                      NULLIF(br.metadata->>'name', ''),
+                      NULLIF(br.metadata->>'label', ''),
+                      NULLIF(br.metadata->>'branch_id', ''),
+                      NULLIF(br.metadata->>'agent_name', ''),
+                      br.email,
+                      u.metadata->>'full_name',
+                      u.email
+                    )
+                  ELSE COALESCE(u.metadata->>'full_name', u.email, u.phone)
+                END AS user_name,
                 c.email AS cashier_email,
                 COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email) AS cashier_name,
                 /* The cashier who actually sold the ticket (sportsbook
@@ -351,12 +378,45 @@ async function listBets(req: Request, q: ListBetsQuery) {
                  * cashier so admin reports stay consistent. */
                 sc.email AS sold_by_cashier_email,
                 COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email) AS sold_by_cashier_name,
-                br.metadata->>'name' AS branch_name
+                /* Real branch rows rarely carry metadata->>'name' — fall
+                 * back to their label / human branch code / email so the
+                 * Branch column is never blank when a branch exists. */
+                COALESCE(
+                  NULLIF(br.metadata->>'name', ''),
+                  NULLIF(br.metadata->>'label', ''),
+                  NULLIF(br.metadata->>'branch_id', ''),
+                  br.email
+                ) AS branch_name
            FROM all_bets b
            LEFT JOIN users u  ON u.id  = b.user_id
            LEFT JOIN users c  ON c.id  = b.cashier_id
            LEFT JOIN users sc ON sc.id = b.sold_by_cashier_id
-           LEFT JOIN users br ON br.id::text = b.branch_id AND br.role = 'branch'
+           /* sold_branch_id (stamped at sale) is authoritative; the legacy
+            * metadata branch_id string is the fallback. */
+           LEFT JOIN users br
+             ON br.role = 'branch'
+            AND br.id::text = COALESCE(b.sold_branch_id::text, b.branch_id)
+           /* Significant subscriber digits of bet_for_user_phone (strip
+            * non-digits, the 251 country code and the trunk 0) so +2519…,
+            * 2519… and 09… all resolve to the same registered user. */
+           LEFT JOIN LATERAL (
+             SELECT CASE
+                      WHEN d.digits LIKE '251%' AND length(d.digits) >= 12 THEN substr(d.digits, 4)
+                      WHEN d.digits LIKE '0%' THEN substr(d.digits, 2)
+                      ELSE d.digits
+                    END AS sig
+               FROM (SELECT regexp_replace(COALESCE(b.bet_for_user_phone, ''), '\\D', '', 'g') AS digits) d
+           ) bp ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT bu.phone,
+                    COALESCE(NULLIF(bu.metadata->>'full_name',''), bu.email, bu.phone) AS full_name
+               FROM users bu
+              WHERE length(bp.sig) >= 5
+                AND bu.tenant_id = b.tenant_id
+                AND bu.role = 'user'
+                AND regexp_replace(COALESCE(bu.phone, ''), '\\D', '', 'g') LIKE '%' || bp.sig
+              LIMIT 1
+           ) bfu ON TRUE
            ${where}
          ORDER BY b.placed_at DESC
          LIMIT $${i++} OFFSET $${i++}`,
@@ -419,7 +479,12 @@ async function getBet(req: Request, id: string) {
                 COALESCE(c.metadata->>'full_name', c.metadata->>'name', c.email) AS cashier_name,
                 sc.email AS sold_by_cashier_email,
                 COALESCE(sc.metadata->>'full_name', sc.metadata->>'name', sc.email) AS sold_by_cashier_name,
-                br.metadata->>'name' AS branch_name,
+                COALESCE(
+                  NULLIF(br.metadata->>'name', ''),
+                  NULLIF(br.metadata->>'label', ''),
+                  NULLIF(br.metadata->>'branch_id', ''),
+                  br.email
+                ) AS branch_name,
                 'sportsbook'::text AS source
            FROM sportsbook_bets b
            LEFT JOIN users u  ON u.id = b.user_id

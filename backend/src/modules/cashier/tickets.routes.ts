@@ -249,22 +249,68 @@ async function loadTicket(
 const CROSS_BRANCH_MESSAGE =
   'This ticket belongs to another branch and cannot be accessed from this branch.';
 
+/**
+ * Resolve the acting cashier's branch (canonical branch user UUID plus a
+ * printable label). Resolution order:
+ *   1. `metadata.branch_id`               (fixed assignment; UUID or code)
+ *   2. `metadata.branch_user_id`          (fixed assignment; UUID)
+ *   3. `metadata.active_branch_user_id`   (branch chosen at LOGIN — most
+ *      production cashier accounts have no fixed branch metadata at all;
+ *      the auth service stamps this on every cashier/sales login)
+ *
+ * Without step 3 the strict branch separation silently skipped for every
+ * cashier created without branch metadata, letting Branch B scan Branch A
+ * tickets.
+ */
+async function resolveCashierBranch(
+  client: PoolClient,
+  cashierId: string
+): Promise<{ branchUuid: string | null; branchLabel: string | null }> {
+  const metaRes = await client.query<{ metadata: Record<string, unknown> }>(
+    `SELECT metadata FROM users WHERE id = $1`,
+    [cashierId]
+  );
+  const meta = metaRes.rows[0]?.metadata ?? {};
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() ? v.trim() : null;
+
+  const branchUuid =
+    (await resolveBranchId(client, str(meta['branch_id']))) ??
+    (await resolveBranchId(client, str(meta['branch_user_id']))) ??
+    (await resolveBranchId(client, str(meta['active_branch_user_id'])));
+
+  // Printable label for receipt codes: explicit label/code on the cashier,
+  // else a non-UUID branch_id value, else the resolved branch row's own
+  // human code.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const rawBranchId = str(meta['branch_id']);
+  let branchLabel =
+    str(meta['branch_label']) ??
+    str(meta['branch_code']) ??
+    (rawBranchId && !UUID_RE.test(rawBranchId) ? rawBranchId : null);
+  if (!branchLabel && branchUuid) {
+    const b = await client.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM users WHERE id = $1`,
+      [branchUuid]
+    );
+    const bm = b.rows[0]?.metadata ?? {};
+    branchLabel = str(bm['branch_code']) ?? str(bm['label']) ?? null;
+  }
+  return { branchUuid, branchLabel };
+}
+
 async function assertTicketBranchAccess(
   client: PoolClient,
   cashierId: string,
   bet: BetRow
 ): Promise<void> {
-  // Resolve the acting cashier's branch UUID.
-  const cashierMeta = await client.query<{
-    metadata: Record<string, unknown>;
-  }>(`SELECT metadata FROM users WHERE id = $1`, [cashierId]);
-  const cashierBranchRaw =
-    (cashierMeta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-    null;
-  // Normalize: branch_id in metadata may be either a UUID or a human
-  // branch code like "PC001". Resolve to the canonical branch user UUID
-  // via the branches lookup so we can compare apples-to-apples.
-  const cashierBranchId = await resolveBranchId(client, cashierBranchRaw);
+  // Resolve the acting cashier's branch UUID (fixed metadata assignment or
+  // the branch chosen at login).
+  const { branchUuid: cashierBranchId } = await resolveCashierBranch(
+    client,
+    cashierId
+  );
   if (!cashierBranchId) {
     // Legacy cashier without branch attribution — no branch scope to
     // enforce. Allow the action to preserve backwards compatibility.
@@ -272,16 +318,12 @@ async function assertTicketBranchAccess(
   }
 
   // Resolve the ticket's branch. Prefer the stamped `sold_branch_id`,
-  // then fall back to the selling cashier's branch.
+  // then fall back to the selling cashier's branch (same resolution
+  // chain as the acting cashier, including the login-time branch).
   let ticketBranchId: string | null = bet.sold_branch_id ?? null;
   if (!ticketBranchId && bet.sold_by_cashier_id) {
-    const fb = await client.query<{
-      metadata: Record<string, unknown>;
-    }>(`SELECT metadata FROM users WHERE id = $1`, [bet.sold_by_cashier_id]);
-    const fbBranchRaw =
-      (fb.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-      null;
-    ticketBranchId = await resolveBranchId(client, fbBranchRaw);
+    const fb = await resolveCashierBranch(client, bet.sold_by_cashier_id);
+    ticketBranchId = fb.branchUuid;
   }
 
   if (!ticketBranchId) {
@@ -395,6 +437,201 @@ async function generatePrintedTicketCode(
   const next = Number(seqQ.rows[0]?.last_seq ?? 1);
   const seq = String(next).padStart(4, '0');
   return `${prefix}-${seq}`;
+}
+
+/**
+ * Sell a PAID duplicate copy of an already-sold sportsbook slip.
+ *
+ * A group can share one betting idea: each person pays their own stake and
+ * receives their own physical ticket. Every paid copy is a REAL bet row —
+ * cloned selections/odds/stake — with its own generated SBK coupon (the
+ * coupon is derived from the new bet UUID), its own printed receipt code
+ * and its own independent payout. Gated by the admin's "Enable Duplicate
+ * Slip" toggle and capped by "Max Duplicate Copies" (0 = unlimited).
+ *
+ * Copies are only sellable while the ticket is still pending AND no leg
+ * has kicked off (selling a copy of a started/settled bet would allow
+ * buying known outcomes). The whole operation is one transaction with the
+ * ROOT bet row locked so parallel copy sells cannot exceed the limit.
+ */
+async function sellDuplicateCopy(
+  client: PoolClient,
+  scope: { tenantId: string; cashierId: string },
+  bet: BetRow,
+  maxCopies: number
+) {
+  await client.query('BEGIN');
+  try {
+    const rootId =
+      typeof (bet.metadata as Record<string, unknown> | null)?.['copy_of'] ===
+      'string'
+        ? String((bet.metadata as Record<string, unknown>)['copy_of'])
+        : bet.id;
+
+    // Serialize concurrent copy sells of the same bet family.
+    await client.query(
+      `SELECT id FROM sportsbook_bets WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+      [scope.tenantId, rootId]
+    );
+
+    // Kick-off guard — check the authoritative legs first, then the
+    // metadata selections kiosk slips carry.
+    const startedQ = await client.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n
+         FROM sportsbook_bet_legs l
+         JOIN sports_selections s ON s.id = l.selection_id
+         JOIN sports_markets    m ON m.id = s.market_id
+         JOIN sports_events    ev ON ev.id = m.event_id
+        WHERE l.bet_id = $1
+          AND ev.starts_at <= now()`,
+      [bet.id]
+    );
+    let started = (startedQ.rows[0]?.n ?? 0) > 0;
+    if (!started) {
+      const meta = bet.metadata ?? {};
+      const selections = Array.isArray(
+        (meta as { selections?: unknown }).selections
+      )
+        ? ((meta as { selections: unknown[] }).selections as unknown[])
+        : [];
+      started = selections.some((s) => {
+        const raw = (s as Record<string, unknown>)?.starts_at;
+        if (!raw) return false;
+        const t = new Date(String(raw)).getTime();
+        return !Number.isNaN(t) && t <= Date.now();
+      });
+    }
+    if (started) {
+      throw new BadRequestError(
+        'A match on this ticket has already started — a new paid copy cannot be sold. Do not collect a stake.',
+        { reason: 'match_started' }
+      );
+    }
+
+    const cntQ = await client.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n
+         FROM sportsbook_bets
+        WHERE tenant_id = $1 AND metadata->>'copy_of' = $2`,
+      [scope.tenantId, rootId]
+    );
+    const existingCopies = cntQ.rows[0]?.n ?? 0;
+    if (maxCopies > 0 && existingCopies >= maxCopies) {
+      throw new ConflictError(
+        `Duplicate copy limit reached (${maxCopies}) for this ticket. Do not collect a stake.`,
+        { reason: 'copy_limit_reached', max_copies: maxCopies }
+      );
+    }
+    const copyNumber = existingCopies + 1;
+
+    const { branchUuid, branchLabel } = await resolveCashierBranch(
+      client,
+      scope.cashierId
+    );
+    const now = new Date();
+    const printedCode = await generatePrintedTicketCode(client, {
+      tenantId: scope.tenantId,
+      branchId: branchUuid,
+      branchLabel,
+      soldAt: now,
+    });
+
+    // Clone the bet. coupon_code / ticket_code are GENERATED columns from
+    // the new row's UUID, so the copy automatically receives its own
+    // unique SBK-XXXXXXXX. Settlement outputs stay NULL — the copy is
+    // settled independently through its own cloned legs.
+    const ins = await client.query<{ id: string }>(
+      `INSERT INTO sportsbook_bets
+         (tenant_id, user_id, cashier_id, channel, bet_type, bet_for_user_phone,
+          stake, currency, potential_payout, total_odds, tax_amount,
+          cashout_available, jackpot_id, postpone_wait_hours,
+          original_stake, bet_tax_enabled, bet_tax_percent, bet_tax_amount,
+          effective_stake, compensation_bonus_enabled, compensation_bonus_percent,
+          winning_tax_enabled, winning_tax_percent,
+          status, sold_at, sold_by_cashier_id, sold_branch_id, printed_ticket_code,
+          metadata)
+       SELECT b.tenant_id, b.user_id, $2, b.channel, b.bet_type, b.bet_for_user_phone,
+              b.stake, b.currency, b.potential_payout, b.total_odds, b.tax_amount,
+              b.cashout_available, b.jackpot_id, b.postpone_wait_hours,
+              b.original_stake, b.bet_tax_enabled, b.bet_tax_percent, b.bet_tax_amount,
+              b.effective_stake, b.compensation_bonus_enabled, b.compensation_bonus_percent,
+              b.winning_tax_enabled, b.winning_tax_percent,
+              'pending', $3, $2, $4, $5,
+              COALESCE(b.metadata, '{}'::jsonb) || jsonb_build_object(
+                'copy_of', $6::text,
+                'copy_number', $7::int,
+                'print_count', 1,
+                'last_printed_at', now()
+              )
+         FROM sportsbook_bets b
+        WHERE b.tenant_id = $1 AND b.id = $8
+       RETURNING id`,
+      [
+        scope.tenantId,
+        scope.cashierId,
+        now,
+        branchUuid,
+        printedCode,
+        rootId,
+        copyNumber,
+        bet.id,
+      ]
+    );
+    const newId = ins.rows[0]?.id;
+    if (!newId) throw new NotFoundError('Ticket not found');
+
+    // Clone the legs so the copy settles exactly like the original.
+    await client.query(
+      `INSERT INTO sportsbook_bet_legs
+         (tenant_id, bet_id, selection_id, odds_at_placement, status)
+       SELECT tenant_id, $2, selection_id, odds_at_placement, 'pending'
+         FROM sportsbook_bet_legs
+        WHERE bet_id = $1`,
+      [bet.id, newId]
+    );
+
+    // The copy is a NEW sale: the customer pays another full stake.
+    await client.query(
+      `INSERT INTO cashier_transactions
+         (tenant_id, cashier_id, user_id, branch_id, type, amount,
+          currency, status, reference, metadata, completed_at)
+       VALUES ($1,$2,$3,$4,'ticket_sell',$5,$6,'completed',$7,$8::jsonb, now())`,
+      [
+        scope.tenantId,
+        scope.cashierId,
+        bet.user_id,
+        branchUuid,
+        num(bet.stake),
+        bet.currency,
+        `ticket_sell:${newId}`,
+        JSON.stringify({
+          bet_id: newId,
+          copy_of: rootId,
+          copy_number: copyNumber,
+        }),
+      ]
+    );
+
+    const reload = await client.query<BetRow>(
+      `SELECT ${BET_COLS_SPORTSBOOK}
+         FROM sportsbook_bets b
+         LEFT JOIN users u ON u.id = b.user_id
+        WHERE b.tenant_id = $1 AND b.id = $2
+        LIMIT 1`,
+      [scope.tenantId, newId]
+    );
+    const expiryDays = await getTicketExpiryDays(client, scope.tenantId);
+    await client.query('COMMIT');
+    const copy = reload.rows[0];
+    return {
+      already_sold: false,
+      duplicate_of: bet.coupon_code ?? bet.ticket_code,
+      copy_number: copyNumber,
+      ticket: presentTicket(copy, evaluatePayout(copy, expiryDays)),
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  }
 }
 
 type PayoutStatus =
@@ -686,9 +923,61 @@ router.post(
           // yet (the guard allows them); once sold, only the selling
           // branch may reach the reprint path below.
           await assertTicketBranchAccess(client, scope.cashierId, bet);
-          // Idempotent: if it's already sold (by anyone), surface the existing
-          // marking without overwriting.
+          // Already sold: two possible outcomes.
+          //  1. PAID DUPLICATE COPY — when the admin enables "Duplicate
+          //     Slip", printing a still-pending (pre-kickoff) sportsbook
+          //     ticket again SELLS a new independent ticket: the customer
+          //     pays another stake and receives a paper with its OWN SBK
+          //     number, individually payable if it wins.
+          //  2. Otherwise a plain REPRINT: same ticket, print_count is
+          //     recorded, no new sale, payout stays once-only.
           if (bet.sold_at && bet.sold_by_cashier_id) {
+            const cfg = await loadGeneralConfig(client, scope.tenantId);
+            const copyEligible =
+              cfg.cashier_enable_duplicate_slip &&
+              bet.source === 'sportsbook_bets' &&
+              !bet.paid_at &&
+              !bet.cancelled_at &&
+              (bet.status === 'pending' || bet.status === 'accepted');
+            if (copyEligible) {
+              return sellDuplicateCopy(
+                client,
+                scope,
+                bet,
+                cfg.cashier_max_duplicate_copies
+              );
+            }
+            const bumped =
+              bet.source === 'sportsbook_bets'
+                ? await client.query<BetRow>(
+                    `UPDATE sportsbook_bets b
+                        SET metadata = COALESCE(b.metadata, '{}'::jsonb)
+                              || jsonb_build_object(
+                                   'print_count',
+                                   COALESCE((b.metadata->>'print_count')::int, 1) + 1,
+                                   'last_printed_at', now()
+                                 )
+                       FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                      RETURNING ${BET_COLS_SPORTSBOOK}`,
+                    [bet.id]
+                  )
+                : await client.query<BetRow>(
+                    `UPDATE bets b
+                        SET metadata = COALESCE(b.metadata, '{}'::jsonb)
+                              || jsonb_build_object(
+                                   'print_count',
+                                   COALESCE((b.metadata->>'print_count')::int, 1) + 1,
+                                   'last_printed_at', now()
+                                 )
+                       FROM users u
+                      WHERE u.id = b.user_id
+                        AND b.id = $1
+                      RETURNING ${BET_COLS_INTERNAL}`,
+                    [bet.id]
+                  );
+            const reprinted = bumped.rows[0] ?? bet;
             const expiryDays = await getTicketExpiryDays(
               client,
               scope.tenantId
@@ -696,34 +985,20 @@ router.post(
             return {
               already_sold: true,
               ticket: presentTicket(
-                bet,
-                evaluatePayout(bet, expiryDays)
+                reprinted,
+                evaluatePayout(reprinted, expiryDays)
               ),
             };
           }
 
-          // Resolve the cashier's branch_id from users.metadata.
-          const meta = await client.query<{ metadata: Record<string, unknown> }>(
-            `SELECT metadata FROM users WHERE id = $1`,
-            [scope.cashierId]
+          // Resolve the cashier's branch — a fixed metadata assignment or
+          // the branch chosen at login (auth stamps active_branch_user_id).
+          // The resolved UUID is what we persist to sold_branch_id; the
+          // label feeds the printed receipt code.
+          const { branchUuid, branchLabel } = await resolveCashierBranch(
+            client,
+            scope.cashierId
           );
-          const branchMeta = meta.rows[0]?.metadata ?? {};
-          const branchIdRaw = (branchMeta?.['branch_id'] as string | undefined) ?? null;
-          // Validate UUID — the metadata.branch_id field can hold either
-          // a UUID FK (newer admin flow) or a human label like "PC001"
-          // (legacy seed data); we only persist the UUID to
-          // sold_branch_id and keep the label for the printed code.
-          const branchUuid =
-            branchIdRaw &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-              branchIdRaw
-            )
-              ? branchIdRaw
-              : null;
-          const branchLabel =
-            (branchMeta?.['branch_label'] as string | undefined) ??
-            (branchMeta?.['branch_code'] as string | undefined) ??
-            (branchUuid ? null : branchIdRaw);
 
           // Section 24 Step 10 — generate the printed receipt code
           // (TKT-{BRANCH}-{YYYYMMDD}-{SEQ}) and stamp it onto the bet so
@@ -743,7 +1018,9 @@ router.post(
                       SET sold_at = $4,
                           sold_by_cashier_id = $2,
                           sold_branch_id = $3,
-                          printed_ticket_code = $5
+                          printed_ticket_code = $5,
+                          metadata = COALESCE(b.metadata, '{}'::jsonb)
+                            || jsonb_build_object('print_count', 1, 'last_printed_at', now())
                     FROM users u
                    WHERE u.id = b.user_id
                      AND b.id = $1
@@ -755,7 +1032,9 @@ router.post(
                       SET sold_at = $4,
                           sold_by_cashier_id = $2,
                           sold_branch_id = $3,
-                          printed_ticket_code = $5
+                          printed_ticket_code = $5,
+                          metadata = COALESCE(b.metadata, '{}'::jsonb)
+                            || jsonb_build_object('print_count', 1, 'last_printed_at', now())
                     FROM users u
                    WHERE u.id = b.user_id
                      AND b.id = $1
@@ -911,16 +1190,15 @@ router.post(
             // their own branch. Throws ForbiddenError on mismatch.
             await assertTicketBranchAccess(client, scope.cashierId, bet);
 
-            // Resolve the cashier's branch_id from users.metadata.
-            const meta = await client.query<{
-              metadata: Record<string, unknown>;
-            }>(
-              `SELECT metadata FROM users WHERE id = $1`,
-              [scope.cashierId]
+            // Resolve the cashier's branch as a canonical UUID. The old code
+            // wrote users.metadata.branch_id RAW into paid_branch_id /
+            // cashier_transactions.branch_id (both uuid columns) — a human
+            // label like "PC001" crashed the transaction with 22P02 and the
+            // panel showed a false "Something went wrong".
+            const { branchUuid: branchId } = await resolveCashierBranch(
+              client,
+              scope.cashierId
             );
-            const branchId =
-              (meta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-              null;
 
             // Mark the ticket paid (idempotent guard at the DB level).
             // sportsbook_bets stores the paid amount in `actual_payout`
@@ -1421,15 +1699,12 @@ router.post(
               }
             }
 
-            const meta = await client.query<{
-              metadata: Record<string, unknown>;
-            }>(
-              `SELECT metadata FROM users WHERE id = $1`,
-              [scope.cashierId]
+            // Canonical branch UUID (cashier_transactions.branch_id is a
+            // uuid column — raw metadata labels crash the transaction).
+            const { branchUuid: branchId } = await resolveCashierBranch(
+              client,
+              scope.cashierId
             );
-            const branchId =
-              (meta.rows[0]?.metadata?.['branch_id'] as string | undefined) ??
-              null;
 
             // Status string differs per table:
             //   `bets`            allows 'cancelled' (internal-game flow)

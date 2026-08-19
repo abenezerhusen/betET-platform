@@ -28,9 +28,9 @@ function check(name, cond, extra = '') {
 }
 
 async function cleanup() {
-  await pool.query(`DELETE FROM cashier_transactions WHERE tenant_id = $1 AND reference LIKE 'ticket_sell:%' AND cashier_id IN (SELECT id FROM users WHERE email::text LIKE '%@tickete2e.local')`, [TENANT]);
+  await pool.query(`DELETE FROM cashier_transactions WHERE tenant_id = $1 AND (reference LIKE 'ticket_sell:%' OR reference LIKE 'ticket_payout:%') AND cashier_id IN (SELECT id FROM users WHERE email::text LIKE '%@tickete2e.local')`, [TENANT]);
   await pool.query(`DELETE FROM sportsbook_bets WHERE tenant_id = $1 AND metadata->>'e2e' = 'ticket-e2e'`, [TENANT]);
-  await pool.query(`DELETE FROM printed_ticket_counters WHERE tenant_id = $1 AND (code_prefix LIKE 'TKT-E2EA01-%' OR code_prefix LIKE 'TKT-E2EB01-%')`, [TENANT]);
+  await pool.query(`DELETE FROM printed_ticket_counters WHERE tenant_id = $1 AND code_prefix ~ '^TKT-(E2EA01|E2EB01|E2EL01)-'`, [TENANT]);
   await pool.query(`DELETE FROM users WHERE tenant_id = $1 AND email::text LIKE '%@tickete2e.local'`, [TENANT]);
 }
 
@@ -232,6 +232,268 @@ async function main() {
     anonRow?.user_name === 'Walk-in Player',
     `user_name=${JSON.stringify(anonRow?.user_name)}`
   );
+
+  /* ------- 5) branch guard for PRODUCTION-shaped cashiers (no branch metadata) ------- */
+  // Most real cashier accounts carry NO branch in metadata — their branch is
+  // whatever they logged in with. The guard must still separate branches.
+  const cashierP1 = await insertUser({
+    email: 'cashier-p1@tickete2e.local', role: 'cashier',
+    metadata: { permissions: perms, full_name: 'E2E Prod Cashier 1', username: 'e2e-p1' },
+  });
+  void cashierP1;
+  await insertUser({
+    email: 'cashier-p2@tickete2e.local', role: 'cashier',
+    metadata: { permissions: perms, full_name: 'E2E Prod Cashier 2', username: 'e2e-p2' },
+  });
+  const tokP1 = await cashierLogin('cashier-p1@tickete2e.local', branchA);   // by UUID
+  const tokP2 = await cashierLogin('cashier-p2@tickete2e.local', 'E2EB01'); // by human code
+
+  const prodBet = await insertBet({ userId: walkinId });
+  const sellP = await api(`/api/cashier/tickets/${prodBet.id}/sell`, { method: 'POST', token: tokP1 });
+  check('metadata-less cashier can sell (login branch attributed)', sellP.status === 200, `status=${sellP.status} ${JSON.stringify(sellP.json)?.slice(0, 200)}`);
+  check(
+    'sell stamps sold_branch_id from the LOGIN branch',
+    sellP.json?.ticket?.sold_branch_id === branchA,
+    `sold_branch_id=${sellP.json?.ticket?.sold_branch_id}`
+  );
+  const crossProd = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}`, { token: tokP2 });
+  check('cross-branch lookup BLOCKED for metadata-less cashiers too (403)', crossProd.status === 403, `status=${crossProd.status}`);
+  const sameProd = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}`, { token: tokA1 });
+  check('same-branch lookup still works for metadata-less-sold ticket', sameProd.status === 200, `status=${sameProd.status}`);
+
+  /* ------- 6) reprint the same ticket: recorded, same code, no duplicate sale ------- */
+  const reSell = await api(`/api/cashier/tickets/${prodBet.id}/sell`, { method: 'POST', token: tokP1 });
+  check('reprint returns already_sold (no second sale)', reSell.status === 200 && reSell.json?.already_sold === true, JSON.stringify(reSell.json)?.slice(0, 200));
+  check(
+    'reprint keeps the SAME printed code',
+    reSell.json?.ticket?.printed_ticket_code === sellP.json?.ticket?.printed_ticket_code,
+    `${reSell.json?.ticket?.printed_ticket_code} vs ${sellP.json?.ticket?.printed_ticket_code}`
+  );
+  check(
+    'system RECORDS the ticket was printed twice (print_count=2)',
+    Number(reSell.json?.ticket?.metadata?.print_count) === 2,
+    `print_count=${reSell.json?.ticket?.metadata?.print_count}`
+  );
+  const sellTx = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM cashier_transactions WHERE tenant_id = $1 AND reference = $2`,
+    [TENANT, `ticket_sell:${prodBet.id}`]
+  );
+  check('reprint creates NO duplicate sale transaction', sellTx.rows[0].n === 1, `n=${sellTx.rows[0].n}`);
+
+  /* ------- 7) SBK coupon is what the receipt prints ------- */
+  check(
+    'ticket payload carries the original SBK coupon for the receipt',
+    /^SBK-/.test(String(sellP.json?.ticket?.coupon_code ?? '')),
+    `coupon_code=${sellP.json?.ticket?.coupon_code}`
+  );
+
+  /* ------- 8) winning ticket printed twice: pays exactly ONCE ------- */
+  await pool.query(
+    `UPDATE sportsbook_bets SET status = 'won', actual_payout = 50, settled_at = now() WHERE id = $1`,
+    [prodBet.id]
+  );
+  const chk1 = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}/check-payout`, { token: tokP1 });
+  check('person 1 check shows WIN — UNPAID', chk1.status === 200 && chk1.json?.status === 'won' && !chk1.json?.paid_at, JSON.stringify(chk1.json)?.slice(0, 200));
+  const pay1 = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}/payout`, { method: 'POST', token: tokP1 });
+  check('person 1 payout succeeds', pay1.status === 200 && Number(pay1.json?.paid_amount) === 50, `status=${pay1.status} paid=${pay1.json?.paid_amount}`);
+  const chk2 = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}/check-payout`, { token: tokP1 });
+  check('person 2 check shows ALREADY PAID', chk2.status === 200 && chk2.json?.status === 'already_paid', JSON.stringify(chk2.json)?.slice(0, 200));
+  const pay2 = await api(`/api/cashier/tickets/${encodeURIComponent(prodBet.coupon_code)}/payout`, { method: 'POST', token: tokP1 });
+  check('person 2 payout is REFUSED (409, no double payment)', pay2.status === 409, `status=${pay2.status}`);
+  const payTx = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM cashier_transactions WHERE tenant_id = $1 AND reference = $2`,
+    [TENANT, `ticket_payout:${prodBet.id}`]
+  );
+  check('exactly ONE payout transaction recorded', payTx.rows[0].n === 1, `n=${payTx.rows[0].n}`);
+
+  // Parallel double-click safety on a second winning ticket.
+  const wonBet2 = await insertBet({ userId: walkinId });
+  await api(`/api/cashier/tickets/${wonBet2.id}/sell`, { method: 'POST', token: tokP1 });
+  await pool.query(`UPDATE sportsbook_bets SET status = 'won', actual_payout = 50, settled_at = now() WHERE id = $1`, [wonBet2.id]);
+  const race = await Promise.all([
+    api(`/api/cashier/tickets/${wonBet2.id}/payout`, { method: 'POST', token: tokP1 }),
+    api(`/api/cashier/tickets/${wonBet2.id}/payout`, { method: 'POST', token: tokP1 }),
+    api(`/api/cashier/tickets/${wonBet2.id}/payout`, { method: 'POST', token: tokP1 }),
+  ]);
+  const okCount = race.filter((r) => r.status === 200).length;
+  check('3 PARALLEL payout clicks → exactly one success', okCount === 1, JSON.stringify(race.map((r) => r.status)));
+
+  /* ------- 9) label-branch cashier payout must NOT 500 ("Something went wrong") ------- */
+  const branchL = await insertUser({
+    email: 'branch-l@tickete2e.local', role: 'branch',
+    metadata: { branch_id: 'E2EL01' }, // real branches store only the human code
+  });
+  await insertUser({
+    email: 'cashier-l1@tickete2e.local', role: 'cashier',
+    metadata: { branch_id: 'E2EL01', permissions: perms, full_name: 'E2E Label Cashier' },
+  });
+  const tokL = await cashierLogin('cashier-l1@tickete2e.local', 'E2EL01');
+  const lBet = await insertBet({ userId: walkinId });
+  const sellL = await api(`/api/cashier/tickets/${lBet.id}/sell`, { method: 'POST', token: tokL });
+  check('label-branch cashier sell succeeds', sellL.status === 200, `status=${sellL.status}`);
+  await pool.query(`UPDATE sportsbook_bets SET status = 'won', actual_payout = 50, settled_at = now() WHERE id = $1`, [lBet.id]);
+  const payL = await api(`/api/cashier/tickets/${lBet.id}/payout`, { method: 'POST', token: tokL });
+  check(
+    'label-branch payout succeeds (no false "Something went wrong" 500)',
+    payL.status === 200,
+    `status=${payL.status} ${JSON.stringify(payL.json)?.slice(0, 200)}`
+  );
+  const lRow = await pool.query(`SELECT paid_branch_id FROM sportsbook_bets WHERE id = $1`, [lBet.id]);
+  check(
+    'paid_branch_id stamped with the canonical branch UUID',
+    lRow.rows[0]?.paid_branch_id === branchL,
+    `paid_branch_id=${lRow.rows[0]?.paid_branch_id}`
+  );
+
+  /* ------- 10) Admin Panel offline ticket list fields ------- */
+  const adminList2 = await api(
+    `/api/admin/bets?type=offline&search=${encodeURIComponent(prodBet.coupon_code)}`,
+    { token: adminTok }
+  );
+  const adminRow = (adminList2.json?.items ?? []).find((r) => r.id === prodBet.id);
+  check('admin offline list finds the ticket by SBK coupon', !!adminRow, JSON.stringify(adminList2.json)?.slice(0, 300));
+  check('admin list: Full Name populated', !!adminRow?.user_name && adminRow.user_name !== 'null', `user_name=${adminRow?.user_name}`);
+  check(
+    'admin list: anonymous walk-in shows the BRANCH name (not "Walk-in Player")',
+    adminRow?.user_name === 'E2E Branch A',
+    `user_name=${adminRow?.user_name}`
+  );
+  check('admin list: Branch resolved from sold_branch_id', adminRow?.branch_name === 'E2E Branch A', `branch_name=${adminRow?.branch_name}`);
+  check('admin list: Cashier is the seller', adminRow?.sold_by_cashier_name === 'E2E Prod Cashier 1', `cashier=${adminRow?.sold_by_cashier_name}`);
+  check('admin list: paid_at + paid amount present after payout', !!adminRow?.paid_at && Number(adminRow?.actual_payout) === 50, `paid_at=${adminRow?.paid_at} amount=${adminRow?.actual_payout}`);
+
+  // Branch with only a human code (no name) must still show that code.
+  const adminListL = await api(
+    `/api/admin/bets?type=offline&search=${encodeURIComponent(lBet.coupon_code)}`,
+    { token: adminTok }
+  );
+  const adminRowL = (adminListL.json?.items ?? []).find((r) => r.id === lBet.id);
+  check('admin list: code-only branch shows its code (not blank)', adminRowL?.branch_name === 'E2EL01', `branch_name=${adminRowL?.branch_name}`);
+
+  /* ------- 11) PAID DUPLICATE COPIES (admin "Enable Duplicate Slip") ------- */
+  // Save the tenant's real config keys, force-enable for the test, restore after.
+  const cfgRow = await pool.query(
+    `SELECT value FROM settings WHERE tenant_id = $1 AND key = 'general.config'`, [TENANT]);
+  const origVal = cfgRow.rows[0]?.value ?? {};
+  const hadDupKey = Object.prototype.hasOwnProperty.call(origVal, 'cashier_enable_duplicate_slip');
+  const hadMaxKey = Object.prototype.hasOwnProperty.call(origVal, 'cashier_max_duplicate_copies');
+  const origDup = origVal.cashier_enable_duplicate_slip;
+  const origMax = origVal.cashier_max_duplicate_copies;
+  const setDupCfg = (enabled, max) => pool.query(
+    `UPDATE settings
+        SET value = value || jsonb_build_object(
+              'cashier_enable_duplicate_slip', $2::boolean,
+              'cashier_max_duplicate_copies', $3::int)
+      WHERE tenant_id = $1 AND key = 'general.config'`,
+    [TENANT, enabled, max]);
+  const restoreDupCfg = async () => {
+    await pool.query(
+      `UPDATE settings SET value = value - 'cashier_enable_duplicate_slip' - 'cashier_max_duplicate_copies'
+        WHERE tenant_id = $1 AND key = 'general.config'`, [TENANT]);
+    if (hadDupKey || hadMaxKey) {
+      await pool.query(
+        `UPDATE settings SET value = value || $2::jsonb WHERE tenant_id = $1 AND key = 'general.config'`,
+        [TENANT, JSON.stringify({
+          ...(hadDupKey ? { cashier_enable_duplicate_slip: origDup } : {}),
+          ...(hadMaxKey ? { cashier_max_duplicate_copies: origMax } : {}),
+        })]);
+    }
+  };
+  await setDupCfg(true, 2);
+
+  try {
+    const future = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const past = new Date(Date.now() - 3600 * 1000).toISOString();
+
+    // Group ticket: 1 original + up to 2 paid copies (limit 2).
+    const grpBet = await insertBet({
+      userId: walkinId,
+      extraMeta: { selections: [{ starts_at: future, event: 'E2E FC vs Copy United' }] },
+    });
+    const sellG0 = await api(`/api/cashier/tickets/${grpBet.id}/sell`, { method: 'POST', token: tokA1 });
+    check('copy test: original sold normally', sellG0.status === 200 && sellG0.json?.already_sold === false, `status=${sellG0.status}`);
+
+    const sellG1 = await api(`/api/cashier/tickets/${grpBet.id}/sell`, { method: 'POST', token: tokA1 });
+    const c1 = sellG1.json?.ticket;
+    check('2nd print SELLS a new ticket (not already_sold)', sellG1.status === 200 && sellG1.json?.already_sold === false, `status=${sellG1.status} ${JSON.stringify(sellG1.json)?.slice(0, 200)}`);
+    check('copy 1 has its OWN new SBK coupon', /^SBK-/.test(String(c1?.coupon_code)) && c1?.coupon_code !== grpBet.coupon_code, `orig=${grpBet.coupon_code} copy=${c1?.coupon_code}`);
+    check('copy 1 has its own printed receipt code', !!c1?.printed_ticket_code && c1.printed_ticket_code !== sellG0.json?.ticket?.printed_ticket_code, `${c1?.printed_ticket_code}`);
+    check('copy 1 response says which ticket it duplicates', sellG1.json?.duplicate_of === grpBet.coupon_code, `duplicate_of=${sellG1.json?.duplicate_of}`);
+    check('copy 1 metadata links back to the original bet', c1?.metadata?.copy_of === grpBet.id && Number(c1?.metadata?.copy_number) === 1, `copy_of=${c1?.metadata?.copy_of} n=${c1?.metadata?.copy_number}`);
+
+    const sellG2 = await api(`/api/cashier/tickets/${grpBet.id}/sell`, { method: 'POST', token: tokA1 });
+    const c2 = sellG2.json?.ticket;
+    check('3rd print sells copy 2 with another distinct SBK', sellG2.status === 200 && /^SBK-/.test(String(c2?.coupon_code)) && new Set([grpBet.coupon_code, c1?.coupon_code, c2?.coupon_code]).size === 3, `codes=${grpBet.coupon_code},${c1?.coupon_code},${c2?.coupon_code}`);
+
+    const sellG3 = await api(`/api/cashier/tickets/${grpBet.id}/sell`, { method: 'POST', token: tokA1 });
+    check('4th print REFUSED — admin copy limit (2) reached (409)', sellG3.status === 409, `status=${sellG3.status} ${JSON.stringify(sellG3.json)?.slice(0, 200)}`);
+
+    const famTx = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM cashier_transactions
+        WHERE tenant_id = $1 AND type = 'ticket_sell'
+          AND reference IN ($2, $3, $4)`,
+      [TENANT, `ticket_sell:${grpBet.id}`, `ticket_sell:${c1?.bet_id}`, `ticket_sell:${c2?.bet_id}`]);
+    check('each paid copy recorded its OWN sale transaction (3 total)', famTx.rows[0].n === 3, `n=${famTx.rows[0].n}`);
+
+    // Copies must be sellable/payable through their own codes too.
+    const lookC1 = await api(`/api/cashier/tickets/${encodeURIComponent(c1.coupon_code)}`, { token: tokA2 });
+    check('copy is findable by its own SBK code', lookC1.status === 200 && lookC1.json?.bet_id === c1.bet_id, `status=${lookC1.status}`);
+
+    // Independent payouts: original and copy 1 win → each paper pays once.
+    await pool.query(
+      `UPDATE sportsbook_bets SET status = 'won', actual_payout = 50, settled_at = now() WHERE id = ANY($1::uuid[])`,
+      [[grpBet.id, c1.bet_id]]);
+    const payOrig = await api(`/api/cashier/tickets/${grpBet.id}/payout`, { method: 'POST', token: tokA1 });
+    check('original ticket pays out', payOrig.status === 200 && Number(payOrig.json?.paid_amount) === 50, `status=${payOrig.status}`);
+    const payC1 = await api(`/api/cashier/tickets/${c1.bet_id}/payout`, { method: 'POST', token: tokA1 });
+    check('copy 1 pays out INDEPENDENTLY', payC1.status === 200 && Number(payC1.json?.paid_amount) === 50, `status=${payC1.status} ${JSON.stringify(payC1.json)?.slice(0, 200)}`);
+    const payC1again = await api(`/api/cashier/tickets/${c1.bet_id}/payout`, { method: 'POST', token: tokA1 });
+    check('copy 1 second payout REFUSED (409)', payC1again.status === 409, `status=${payC1again.status}`);
+
+    // Copies appear as their own rows in the admin offline list.
+    const adminCopy = await api(
+      `/api/admin/bets?type=offline&search=${encodeURIComponent(c1.coupon_code)}`, { token: adminTok });
+    const copyRow = (adminCopy.json?.items ?? []).find((r) => r.id === c1.bet_id);
+    check('admin offline list shows the copy as its own ticket', !!copyRow, JSON.stringify(adminCopy.json)?.slice(0, 200));
+
+    // Kick-off guard: once a match started, NO paid copy (clear 400, no charge).
+    const startedBet = await insertBet({
+      userId: walkinId,
+      extraMeta: { selections: [{ starts_at: past, event: 'E2E Started Match' }] },
+    });
+    await api(`/api/cashier/tickets/${startedBet.id}/sell`, { method: 'POST', token: tokA1 });
+    const copyStarted = await api(`/api/cashier/tickets/${startedBet.id}/sell`, { method: 'POST', token: tokA1 });
+    check('copy of a STARTED match is refused (400, "do not collect a stake")', copyStarted.status === 400 && /started/i.test(String(copyStarted.json?.message ?? '')), `status=${copyStarted.status} ${JSON.stringify(copyStarted.json)?.slice(0, 200)}`);
+
+    // Real legs (when sports data exists): the copy must clone them.
+    const futSel = await pool.query(
+      `SELECT s.id FROM sports_selections s
+         JOIN sports_markets m ON m.id = s.market_id
+         JOIN sports_events ev ON ev.id = m.event_id
+        WHERE ev.starts_at > now() + interval '2 hours' LIMIT 1`);
+    if (futSel.rows[0]) {
+      const legBet = await insertBet({ userId: walkinId });
+      await pool.query(
+        `INSERT INTO sportsbook_bet_legs (tenant_id, bet_id, selection_id, odds_at_placement, status)
+         VALUES ($1, $2, $3, 2.5, 'pending')`, [TENANT, legBet.id, futSel.rows[0].id]);
+      await api(`/api/cashier/tickets/${legBet.id}/sell`, { method: 'POST', token: tokA1 });
+      const legCopy = await api(`/api/cashier/tickets/${legBet.id}/sell`, { method: 'POST', token: tokA1 });
+      const legCopyId = legCopy.json?.ticket?.bet_id;
+      const legN = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM sportsbook_bet_legs WHERE bet_id = $1`, [legCopyId]);
+      check('copy CLONES the bet legs (settles independently)', legCopy.status === 200 && legN.rows[0].n === 1, `status=${legCopy.status} legs=${legN.rows[0]?.n}`);
+      await pool.query(`DELETE FROM sportsbook_bet_legs WHERE bet_id IN ($1, $2)`, [legBet.id, legCopyId]);
+    } else {
+      console.log('SKIP  legs-clone check (no future sports selection in DB)');
+    }
+
+    // Toggle OFF → the old reprint behavior is fully preserved.
+    await setDupCfg(false, 2);
+    const reprintOff = await api(`/api/cashier/tickets/${startedBet.id}/sell`, { method: 'POST', token: tokA1 });
+    check('duplicate slip OFF → plain reprint (already_sold, same code)', reprintOff.status === 200 && reprintOff.json?.already_sold === true, `status=${reprintOff.status} ${JSON.stringify(reprintOff.json)?.slice(0, 200)}`);
+  } finally {
+    await restoreDupCfg();
+  }
 
   /* ---------------- teardown ---------------- */
   await pool.query(`DELETE FROM printed_ticket_counters WHERE tenant_id = $1 AND code_prefix IN ($2, $3)`, [TENANT, prefixA, prefixB]);

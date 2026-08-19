@@ -71,9 +71,12 @@ export function listTopLeagues() {
   return http.get<TopLeague[]>('/api/admin/game-picks/top-leagues');
 }
 
-export function listAvailableLeagues(search?: string) {
+export function listAvailableLeagues(search?: string, limit?: number) {
+  const query: Record<string, string | number> = {};
+  if (search) query.search = search;
+  if (limit) query.limit = limit;
   return http.get<AvailableLeague[]>('/api/admin/game-picks/top-leagues/available', {
-    query: search ? { search } : undefined,
+    query: Object.keys(query).length ? query : undefined,
   });
 }
 

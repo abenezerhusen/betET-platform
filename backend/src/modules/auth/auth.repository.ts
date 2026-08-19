@@ -99,6 +99,36 @@ export async function branchIdentifierExists(
   return (r.rowCount ?? 0) > 0;
 }
 
+/**
+ * Resolve any branch identifier an operator might type at cashier login
+ * (branch user UUID, human branch code, username, email or phone) to the
+ * canonical branch user UUID. Same matching rules as
+ * `branchIdentifierExists`, but returns the id so callers can persist the
+ * linkage.
+ */
+export async function resolveBranchUserId(
+  client: PoolClient,
+  tenantId: string,
+  branchIdentifier: string
+): Promise<string | null> {
+  const r = await client.query<{ id: string }>(
+    `SELECT id
+       FROM users
+      WHERE tenant_id = $1
+        AND role = 'branch'
+        AND (
+          id::text = $2
+          OR LOWER(COALESCE(metadata->>'branch_id', '')) = LOWER($2)
+          OR LOWER(COALESCE(metadata->>'username', '')) = LOWER($2)
+          OR email::text = $2::citext
+          OR phone = $2
+        )
+      LIMIT 1`,
+    [tenantId, branchIdentifier]
+  );
+  return r.rows[0]?.id ?? null;
+}
+
 export async function branchIdentifierMatchesBranchUserId(
   client: PoolClient,
   tenantId: string,

@@ -399,6 +399,36 @@ export async function login(tenantId: string, input: LoginInput): Promise<TokenP
     // Success path.
     await repo.resetFailedAttempts(client, user.id);
 
+    // Cashier/sales accounts pick their branch AT LOGIN (many accounts have
+    // no fixed branch in metadata — the login above accepts any valid branch
+    // identifier). Persist the resolved branch user UUID so downstream
+    // branch-scoped features (strict ticket branch separation, sold/paid
+    // branch stamps) can attribute this session's actions to a branch.
+    if (input.branchId && ['cashier', 'sales'].includes(user.role)) {
+      try {
+        const activeBranchUserId = await repo.resolveBranchUserId(
+          client,
+          tenantId,
+          input.branchId.trim()
+        );
+        if (activeBranchUserId) {
+          await client.query(
+            `UPDATE users
+                SET metadata = jsonb_set(
+                      COALESCE(metadata, '{}'::jsonb),
+                      '{active_branch_user_id}',
+                      to_jsonb($2::text),
+                      true
+                    )
+              WHERE id = $1`,
+            [user.id, activeBranchUserId]
+          );
+        }
+      } catch {
+        // Best-effort: never block a valid login on branch stamping.
+      }
+    }
+
     const familyId = crypto.randomUUID();
     const refreshJti = crypto.randomUUID();
     const accessJti = crypto.randomUUID();

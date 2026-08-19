@@ -5,6 +5,7 @@ import { Settings, Plus, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from '../../lib/toast';
 import * as settingsApi from '../../lib/api/settings';
 import * as paymentMethodsApi from '../../lib/api/payment-methods';
+import * as gamePicksApi from '../../lib/api/gamePicks';
 import { useAuthStore } from '../../store/auth';
 
 /* -------------------------------------------------------------------------- */
@@ -53,9 +54,20 @@ const defaultGeneral: settingsApi.GeneralConfig = {
   cashier_cancel_window_minutes: 5,
   cashier_enable_withdraw_request: true,
   cashier_enable_duplicate_slip: false,
+  cashier_max_duplicate_copies: 3,
   cashier_max_daily_cancel_count: 0,
   operation_hours: {},
   operation_hours_enforce_bets: false,
+};
+
+const defaultAnnouncement: settingsApi.AnnouncementConfig = {
+  enabled: false,
+  title: '',
+  message: '',
+  image_url: '',
+  button_text: '',
+  button_url: '',
+  frequency: 'session',
 };
 
 /** Spec event codes for the SMS Config tab. Each toggle controls whether
@@ -93,6 +105,25 @@ const DEFAULT_NAVBAR_ITEMS: settingsApi.NavbarItem[] = [
   { id: 'nav-more', label: 'More', href: '/more', bucket: 'more', is_active: true, display_order: 6 },
 ];
 
+/** Built-in default Top Leagues. Pre-populated into the Top Leagues tab when
+ *  nothing has been saved yet, so they are visible and individually deletable
+ *  here, and adding a new league keeps them (the whole list is saved). League
+ *  values are the exact provider names used by the user panel. */
+const DEFAULT_TOP_LEAGUES: settingsApi.TopBetEntry[] = [
+  { id: 'tl-1', league: 'England - Premier League', league_group: 'England', sport_type: 'Football' },
+  { id: 'tl-2', league: 'Spain - LaLiga', league_group: 'Spain', sport_type: 'Football' },
+  { id: 'tl-3', league: 'Italy - Serie A', league_group: 'Italy', sport_type: 'Football' },
+  { id: 'tl-4', league: 'Germany - Bundesliga', league_group: 'Germany', sport_type: 'Football' },
+  { id: 'tl-5', league: 'France - Ligue 1', league_group: 'France', sport_type: 'Football' },
+  { id: 'tl-6', league: 'Portugal - Liga Portugal', league_group: 'Portugal', sport_type: 'Football' },
+  { id: 'tl-7', league: 'Netherlands - Eredivisie', league_group: 'Netherlands', sport_type: 'Football' },
+  { id: 'tl-8', league: 'Sweden - Superettan', league_group: 'Sweden', sport_type: 'Football' },
+  { id: 'tl-9', league: 'Denmark - Superligaen', league_group: 'Denmark', sport_type: 'Football' },
+  { id: 'tl-10', league: 'Belgium - First Division A', league_group: 'Belgium', sport_type: 'Football' },
+  { id: 'tl-11', league: 'International Clubs - UEFA Champions League', league_group: 'UEFA', sport_type: 'Football' },
+  { id: 'tl-12', league: 'International Clubs - UEFA Europa League', league_group: 'UEFA', sport_type: 'Football' },
+];
+
 function normalizeNavbarRows(rows: settingsApi.NavbarItem[]): settingsApi.NavbarItem[] {
   return rows.map((item, idx) => ({
     ...item,
@@ -109,6 +140,7 @@ export function GeneralConfig() {
   const isAuth = useAuthStore((s) => s.isAuthenticated);
   const [activeTab, setActiveTab] = useState('company');
   const [general, setGeneral] = useState<settingsApi.GeneralConfig>(defaultGeneral);
+  const [announcement, setAnnouncement] = useState<settingsApi.AnnouncementConfig>(defaultAnnouncement);
   const [topBets, setTopBets] = useState<settingsApi.TopBetEntry[]>([]);
   const [topMatches, setTopMatches] = useState<settingsApi.TopMatchEntry[]>([]);
   const [promotions, setPromotions] = useState<settingsApi.PromotionBanner[]>([]);
@@ -151,10 +183,12 @@ export function GeneralConfig() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  /* Top-bets entry form */
+  /* Top-leagues entry form (saved under the legacy top-bets settings key) */
   const [newLeague, setNewLeague] = useState('');
   const [newGroup, setNewGroup] = useState('');
   const [newSport, setNewSport] = useState('Football');
+  /* All leagues present in the synchronized sports DB — the dropdown source. */
+  const [availableLeagues, setAvailableLeagues] = useState<gamePicksApi.AvailableLeague[]>([]);
 
   /* Top-matches entry form */
   const [newMatch, setNewMatch] = useState('');
@@ -186,9 +220,10 @@ export function GeneralConfig() {
     if (!isAuth) return;
     setLoading(true);
     try {
-      const [generalRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, navbarRes, methodsRes] =
+      const [generalRes, announcementRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, navbarRes, methodsRes, leaguesRes] =
         await Promise.all([
           settingsApi.getGeneralConfig().catch(() => ({} as settingsApi.GeneralConfig)),
+          settingsApi.getAnnouncementConfig().catch(() => ({} as settingsApi.AnnouncementConfig)),
           settingsApi.listTopBets().catch(() => ({ items: [] })),
           settingsApi.listTopMatches().catch(() => ({ items: [] })),
           settingsApi.listPromotions().catch(() => ({ items: [] })),
@@ -196,9 +231,16 @@ export function GeneralConfig() {
           settingsApi.listGameThumbnails().catch(() => ({ items: [] })),
           settingsApi.listNavbarItems().catch(() => ({ items: [] })),
           paymentMethodsApi.listPaymentMethods().catch(() => ({ items: [] })),
+          gamePicksApi
+            .listAvailableLeagues(undefined, 5000)
+            .catch(() => [] as gamePicksApi.AvailableLeague[]),
         ]);
       setGeneral({ ...defaultGeneral, ...(generalRes ?? {}) });
-      setTopBets((betsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `b-${i}` })));
+      setAnnouncement({ ...defaultAnnouncement, ...(announcementRes ?? {}) });
+      const savedTopBets = (betsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `b-${i}` }));
+      // Nothing saved yet → show the built-in defaults so the admin can see
+      // and manage them; the first add/remove persists the whole list.
+      setTopBets(savedTopBets.length > 0 ? savedTopBets : DEFAULT_TOP_LEAGUES);
       setTopMatches(
         (matchesRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `m-${i}` }))
       );
@@ -213,6 +255,9 @@ export function GeneralConfig() {
       const loadedNavbar = normalizeNavbarRows(navbarRes.items ?? []);
       setNavbarItems(loadedNavbar.length > 0 ? loadedNavbar : DEFAULT_NAVBAR_ITEMS);
       setMethods(methodsRes.items ?? []);
+      setAvailableLeagues(
+        (leaguesRes ?? []).slice().sort((a, b) => a.league.localeCompare(b.league))
+      );
     } catch (err) {
       toast(`Failed to load settings: ${(err as Error)?.message ?? err}`, 'error');
     } finally {
@@ -236,6 +281,20 @@ export function GeneralConfig() {
       const out = await settingsApi.updateGeneralConfig(general);
       setGeneral({ ...defaultGeneral, ...(out ?? general) });
       toast('General settings saved.');
+    } catch (err) {
+      toast(`Save failed: ${(err as Error)?.message ?? err}`, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const out = await settingsApi.updateAnnouncementConfig(announcement);
+      setAnnouncement({ ...defaultAnnouncement, ...(out ?? announcement) });
+      toast('Announcement popup saved.');
     } catch (err) {
       toast(`Save failed: ${(err as Error)?.message ?? err}`, 'error');
     } finally {
@@ -333,8 +392,9 @@ export function GeneralConfig() {
     { id: 'footer-settings', label: 'Footer Settings' },
     { id: 'navbar-settings', label: 'Navbar Settings' },
     { id: 'game-thumbnails', label: 'Game Thumbnails' },
-    { id: 'top-bets', label: 'Top Bets' },
+    { id: 'top-bets', label: 'Top Leagues' },
     { id: 'top-matches', label: 'Top Matches' },
+    { id: 'announcement', label: 'Announcement Popup' },
     { id: 'sms', label: 'SMS Config' },
     { id: 'cashier', label: 'Cashier Config' },
     { id: 'hours', label: 'Operation Hours' },
@@ -945,16 +1005,34 @@ export function GeneralConfig() {
       )}
 
       {/* ------------------------------------------------------------------ */
-        /* Top Bets                                                          */
+        /* Top Leagues (stored under the legacy top-bets settings key)        */
         /* ------------------------------------------------------------------ */}
       {activeTab === 'top-bets' && (
         <div className="bg-white rounded-lg shadow p-6 space-y-4">
           <p className="text-xs text-gray-500">
             Saved to <code>POST /api/admin/settings/top-bets</code>. The user panel renders these
-            leagues in the "Top Bets" section of the home page.
+            leagues in its "Top Leagues" lists (sidebar and home Top Leagues tab). While this list
+            is empty, the user panel shows its built-in default Top Leagues.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input value={newLeague} onChange={(e) => setNewLeague(e.target.value)} placeholder="League (e.g. Premier League)" className="rounded-md border-gray-300" />
+            <select
+              value={newLeague}
+              onChange={(e) => {
+                const v = e.target.value;
+                setNewLeague(v);
+                // Auto-fill the group with the country prefix of the
+                // provider league name ("Netherlands - Eredivisie" → "Netherlands").
+                setNewGroup(v.includes(' - ') ? v.split(' - ')[0].trim() : '');
+              }}
+              className="rounded-md border-gray-300"
+            >
+              <option value="">Select league…</option>
+              {availableLeagues
+                .filter((a) => !topBets.some((r) => r.league.toLowerCase() === a.league.toLowerCase()))
+                .map((a) => (
+                  <option key={a.league} value={a.league}>{a.league}</option>
+                ))}
+            </select>
             <input value={newGroup} onChange={(e) => setNewGroup(e.target.value)} placeholder="League group" className="rounded-md border-gray-300" />
             <input value={newSport} onChange={(e) => setNewSport(e.target.value)} placeholder="Sport" className="rounded-md border-gray-300" />
             <button
@@ -1074,6 +1152,106 @@ export function GeneralConfig() {
             ]}
             data={topMatches}
           />
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */
+        /* Announcement Popup                                                 */
+        /* ------------------------------------------------------------------ */}
+      {activeTab === 'announcement' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <div>
+            <h3 className="text-base font-semibold text-gray-800">Announcement Popup</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              A pop-up shown on the user panel home page when someone opens the site. Use it to
+              promote today&apos;s bonus, a jackpot or tournament, or an important notice. Turn it
+              off and nothing is shown. Saved to <code>PUT /api/admin/settings/announcement</code>.
+            </p>
+          </div>
+
+          <ToggleField
+            label="Enable Announcement Popup"
+            value={Boolean(announcement.enabled)}
+            onChange={(v) => setAnnouncement((p) => ({ ...p, enabled: v }))}
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field
+              label="Title"
+              value={announcement.title ?? ''}
+              onChange={(v) => setAnnouncement((p) => ({ ...p, title: v }))}
+              placeholder="e.g. Today's Daily Draw — 500,000 ETB"
+            />
+            <label className="text-sm space-y-1">
+              <span className="text-gray-700">How often to show</span>
+              <select
+                value={announcement.frequency ?? 'session'}
+                onChange={(e) =>
+                  setAnnouncement((p) => ({
+                    ...p,
+                    frequency: e.target.value as settingsApi.AnnouncementConfig['frequency'],
+                  }))
+                }
+                className="w-full rounded-md border-gray-300 text-sm"
+              >
+                <option value="always">Every visit</option>
+                <option value="session">Once per browser session</option>
+                <option value="daily">Once per day</option>
+              </select>
+            </label>
+          </div>
+
+          <label className="text-sm space-y-1 block">
+            <span className="text-gray-700">Message</span>
+            <textarea
+              value={announcement.message ?? ''}
+              onChange={(e) => setAnnouncement((p) => ({ ...p, message: e.target.value }))}
+              rows={5}
+              placeholder="Write the announcement text shown to users. Line breaks are preserved."
+              className="w-full rounded-md border-gray-300 text-sm"
+            />
+          </label>
+
+          <ImageUploadField
+            label="Image (optional)"
+            value={announcement.image_url ?? ''}
+            onChange={(v) => setAnnouncement((p) => ({ ...p, image_url: v }))}
+            placeholder="Upload a banner/image for the popup"
+            recommendedWidth={800}
+            recommendedHeight={400}
+            maxFileSizeMb={2}
+            supportedFormats="WEBP, JPG, PNG"
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field
+              label="Button Text (optional)"
+              value={announcement.button_text ?? ''}
+              onChange={(v) => setAnnouncement((p) => ({ ...p, button_text: v }))}
+              placeholder="e.g. Deposit Now"
+            />
+            <Field
+              label="Button Link (optional)"
+              value={announcement.button_url ?? ''}
+              onChange={(v) => setAnnouncement((p) => ({ ...p, button_url: v }))}
+              placeholder="e.g. /deposit or https://..."
+            />
+          </div>
+          <p className="text-xs text-gray-500">
+            Leave both button fields empty to hide the button. If a link is set, clicking the button
+            opens it; otherwise the button just closes the popup.
+          </p>
+
+          <div className="flex justify-end">
+            <button
+              onClick={(e) => void saveAnnouncement(e as unknown as React.FormEvent)}
+              disabled={saving}
+              className="inline-flex items-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+            >
+              <Save className="h-4 w-4 mr-2" />
+              {saving ? 'Saving...' : 'Save Announcement Popup'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1409,6 +1587,17 @@ export function GeneralConfig() {
               value={Boolean(general.cashier_enable_duplicate_slip)}
               onChange={(v) =>
                 setGeneral((p) => ({ ...p, cashier_enable_duplicate_slip: v }))
+              }
+            />
+            <Field
+              type="number"
+              label="Max Duplicate Copies (0 = unlimited)"
+              value={String(general.cashier_max_duplicate_copies ?? 3)}
+              onChange={(v) =>
+                setGeneral((p) => ({
+                  ...p,
+                  cashier_max_duplicate_copies: Number(v || 0),
+                }))
               }
             />
           </div>

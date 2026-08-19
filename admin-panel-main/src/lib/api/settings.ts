@@ -105,6 +105,7 @@ export interface GeneralConfig {
   cashier_cancel_window_minutes?: number;
   cashier_enable_withdraw_request?: boolean;
   cashier_enable_duplicate_slip?: boolean;
+  cashier_max_duplicate_copies?: number;
   cashier_max_daily_cancel_count?: number;
   // Operation Hours
   operation_hours?: OperationHours;
@@ -286,6 +287,21 @@ export const updateSecurityConfig = (v: SecurityConfig) =>
 export const getSmsAliasConfig = () => http.get<SmsAliasConfig>('/api/admin/settings/sms');
 export const updateSmsAliasConfig = (v: SmsAliasConfig) =>
   http.put<SmsAliasConfig>('/api/admin/settings/sms', v);
+
+/* Announcement Popup — promo/welcome modal shown on the user-panel home. */
+export interface AnnouncementConfig {
+  enabled: boolean;
+  title: string;
+  message: string;
+  image_url: string;
+  button_text: string;
+  button_url: string;
+  frequency: 'always' | 'session' | 'daily';
+}
+export const getAnnouncementConfig = () =>
+  http.get<AnnouncementConfig>('/api/admin/settings/announcement');
+export const updateAnnouncementConfig = (v: AnnouncementConfig) =>
+  http.put<AnnouncementConfig>('/api/admin/settings/announcement', v);
 
 /* Section 19 — Top Bets / Top Matches / Promotions list endpoints. */
 export const listTopBets = () =>

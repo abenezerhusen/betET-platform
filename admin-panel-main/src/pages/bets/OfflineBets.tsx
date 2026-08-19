@@ -93,13 +93,15 @@ function toRow(b: betsApi.AdminBet): OfflineBetRow {
     netWin: Number.isFinite(netWin) ? netWin : 0,
     betId: b.id.slice(0, 8),
     ticketCode: pickTicketCode(b),
-    paid: b.status === 'won' && payout > 0 ? 'Yes' : 'No',
+    // "Paid" means the cashier actually paid the ticket out (paid_at is
+    // stamped by the payout endpoint) — not merely that the bet was won.
+    paid: b.paid_at ? 'Yes' : 'No',
     status: STATUS_TO_LABEL[b.status] ?? b.status,
     paymentType: String(
       (b.metadata?.payment_type as string | undefined) ?? 'Cash'
     ),
-    paidAmount: b.status === 'won' ? payout : 0,
-    paidAt: b.settled_at ? new Date(b.settled_at).toLocaleString() : '—',
+    paidAmount: b.paid_at ? payout : 0,
+    paidAt: b.paid_at ? new Date(b.paid_at).toLocaleString() : '—',
     soldAt: b.sold_at ? new Date(b.sold_at).toLocaleString() : '—',
     date: b.placed_at ? new Date(b.placed_at).toLocaleString() : '—',
     branch:

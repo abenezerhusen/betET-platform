@@ -30,23 +30,34 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { sports, getSportForBackendKey } from "@/data/sportsCatalog";
-import { sportsApi } from "@/lib/api";
+import { sportsApi, publicConfigApi } from "@/lib/api";
 
 const GLOBE_ICON = "https://ext.same-assets.com/1203561035/3182885345.svg";
 
 // Featured leagues shortcut list. Kept identical to the previous design.
-const topLeagues: {
+type TopLeagueShortcut = {
   name: string;
   icon: string;
   sport: string;
   country: string;
   league: string;
-}[] = [
+};
+
+// Built-in default Top Leagues — shown until the admin configures the list in
+// Admin Panel → Settings → General → Top Leagues (which then takes over).
+const DEFAULT_TOP_LEAGUES: TopLeagueShortcut[] = [
   { name: "England - Premier Le...", icon: "https://ext.same-assets.com/1203561035/3447107198.png", sport: "football", country: "England", league: "Premier League" },
   { name: "Spain - La Liga", icon: "https://ext.same-assets.com/1203561035/1920343590.png", sport: "football", country: "Spain", league: "LaLiga" },
   { name: "Germany - Bundesliga", icon: "https://ext.same-assets.com/1203561035/2987763661.png", sport: "football", country: "Germany", league: "Bundesliga" },
   { name: "France - Ligue 1", icon: "https://ext.same-assets.com/1203561035/3982235625.png", sport: "football", country: "France", league: "Ligue 1" },
   { name: "Italy - Serie A", icon: "https://ext.same-assets.com/1203561035/2221869759.png", sport: "football", country: "Italy", league: "Serie A" },
+  { name: "Netherlands - Eredivisie", icon: "https://flagcdn.com/w40/nl.png", sport: "football", country: "Netherlands", league: "Eredivisie" },
+  { name: "Sweden - Superettan", icon: "https://flagcdn.com/w40/se.png", sport: "football", country: "Sweden", league: "Superettan" },
+  { name: "Denmark - Superliga", icon: "https://flagcdn.com/w40/dk.png", sport: "football", country: "Denmark", league: "Superligaen" },
+  { name: "Belgium - Pro League", icon: "https://flagcdn.com/w40/be.png", sport: "football", country: "Belgium", league: "First Division A" },
+  { name: "Portugal - Liga Portugal", icon: "https://flagcdn.com/w40/pt.png", sport: "football", country: "Portugal", league: "Liga Portugal" },
+  { name: "UEFA Champions League", icon: "https://flagcdn.com/w40/eu.png", sport: "football", country: "International Clubs", league: "UEFA Champions League" },
+  { name: "UEFA Europa League", icon: "https://flagcdn.com/w40/eu.png", sport: "football", country: "International Clubs", league: "UEFA Europa League" },
 ];
 
 interface RealLeague {
@@ -107,10 +118,51 @@ interface SportsCatalogProps {
   className?: string;
 }
 
+/**
+ * Map an admin-configured Top Leagues entry (Settings → General → Top
+ * Leagues) into a shortcut item. `league` holds the exact provider name
+ * ("Country - League"); country/league params come from splitting on the
+ * first " - " so navigation reconstructs the same exact string.
+ */
+function configEntryToShortcut(e: publicConfigApi.TopBetEntry): TopLeagueShortcut {
+  const full = (e.league ?? "").trim();
+  const sep = full.indexOf(" - ");
+  const country = sep > 0 ? full.slice(0, sep).trim() : (e.league_group ?? "").trim() || full;
+  const league = sep > 0 ? full.slice(sep + 3).trim() : full;
+  const sport = (e.sport_type ?? "Football").trim().toLowerCase().replace(/\s+/g, "-") || "football";
+  return {
+    name: full,
+    icon: FLAG_BY_COUNTRY[country.toLowerCase()] ?? GLOBE_ICON,
+    sport,
+    country,
+    league,
+  };
+}
+
 export function SportsCatalog({ onNavigate, className = "" }: SportsCatalogProps) {
   const router = useRouter();
   const [expandedSport, setExpandedSport] = useState<string | null>("football");
   const [expandedCountry, setExpandedCountry] = useState<string | null>(null);
+
+  // Admin-configured Top Leagues override the built-in defaults. Failures or
+  // an empty configuration keep the defaults (existing behaviour).
+  const [topLeagues, setTopLeagues] = useState<TopLeagueShortcut[]>(DEFAULT_TOP_LEAGUES);
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .listTopBets()
+      .then(({ items }) => {
+        if (cancelled) return;
+        const rows = (items ?? []).filter((e) => (e.league ?? "").trim());
+        if (rows.length > 0) setTopLeagues(rows.map(configEntryToShortcut));
+      })
+      .catch(() => {
+        /* keep defaults */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Real tree from GET /api/sports/catalog (null until loaded / on failure).
   const [realTree, setRealTree] = useState<RealSport[] | null>(null);

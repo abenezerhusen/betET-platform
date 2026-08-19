@@ -116,6 +116,10 @@ interface TopLeagueRef {
 // `league` MUST match the provider's exact league name (used to query the API,
 // e.g. "Spain - LaLiga" with no space, "Portugal - Liga Portugal"). `label`
 // is the friendly display text.
+//
+// This is the built-in DEFAULT list. When the admin configures leagues in
+// Admin Panel → Settings → General → Top Leagues, that configuration
+// replaces these defaults at runtime (see the listTopBets fetch below).
 const TOP_LEAGUES: TopLeagueRef[] = [
   { country: "England", league: "Premier League", flag: "https://flagcdn.com/w40/gb-eng.png" },
   { country: "Spain", league: "LaLiga", label: "La Liga", flag: "https://flagcdn.com/w40/es.png" },
@@ -124,7 +128,28 @@ const TOP_LEAGUES: TopLeagueRef[] = [
   { country: "France", league: "Ligue 1", flag: "https://flagcdn.com/w40/fr.png" },
   { country: "Portugal", league: "Liga Portugal", label: "Primeira Liga", flag: "https://flagcdn.com/w40/pt.png" },
   { country: "Netherlands", league: "Eredivisie", flag: "https://flagcdn.com/w40/nl.png" },
+  { country: "Sweden", league: "Superettan", flag: "https://flagcdn.com/w40/se.png" },
+  { country: "Denmark", league: "Superligaen", label: "Superliga", flag: "https://flagcdn.com/w40/dk.png" },
+  { country: "Belgium", league: "First Division A", label: "Pro League", flag: "https://flagcdn.com/w40/be.png" },
+  { country: "International Clubs", league: "UEFA Champions League", label: "UEFA Champions League", flag: "https://flagcdn.com/w40/eu.png" },
+  { country: "International Clubs", league: "UEFA Europa League", label: "UEFA Europa League", flag: "https://flagcdn.com/w40/eu.png" },
 ];
+
+/**
+ * Map an admin-configured Top Leagues entry (stored under the legacy
+ * top-bets settings key) into a TopLeagueRef. The entry's `league` is the
+ * exact provider name ("Country - League"): splitting on the first " - "
+ * and rejoining in the fetch below reproduces the same exact string.
+ */
+function configEntryToRef(e: publicConfigApi.TopBetEntry): TopLeagueRef {
+  const full = (e.league ?? "").trim();
+  const sep = full.indexOf(" - ");
+  return {
+    country: sep > 0 ? full.slice(0, sep).trim() : "",
+    league: sep > 0 ? full.slice(sep + 3).trim() : full,
+    flag: leagueFlagFor(full),
+  };
+}
 
 /**
  * Shape returned by `MatchCard`. Every instance is sourced from the
@@ -412,16 +437,37 @@ function HomePageInner() {
   // come with the live `starts_at` so we leave them alone.
   const upcomingMatches = useMemo(() => matches, [matches]);
 
+  // Admin-configured Top Leagues (Settings → General → Top Leagues) replace
+  // the built-in defaults; failures or an empty configuration keep the
+  // defaults so behaviour is unchanged until the admin saves a list.
+  const [topLeagueRefs, setTopLeagueRefs] = useState<TopLeagueRef[]>(TOP_LEAGUES);
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .listTopBets()
+      .then(({ items }) => {
+        if (cancelled) return;
+        const rows = (items ?? []).filter((e) => (e.league ?? "").trim());
+        if (rows.length > 0) setTopLeagueRefs(rows.map(configEntryToRef));
+      })
+      .catch(() => {
+        /* keep defaults */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Real matches for the headline "TOP LEAGUES" tab. Fetched per configured
   // league so the tab shows the same fixtures the rest of the world sees.
   const [topLeagueMatches, setTopLeagueMatches] = useState<HomeMatch[]>([]);
   useEffect(() => {
     let cancelled = false;
     Promise.all(
-      TOP_LEAGUES.map((l) =>
+      topLeagueRefs.map((l) =>
         sportsApi
           .listSportsMatches({
-            league: `${l.country} - ${l.league}`,
+            league: l.country ? `${l.country} - ${l.league}` : l.league,
             status: "upcoming",
             limit: 25,
           })
@@ -445,7 +491,7 @@ function HomePageInner() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [topLeagueRefs]);
 
   // Load the REAL market book for the opened fixture (all synced markets +
   // odds), refreshing periodically so live prices track the provider. Cleared

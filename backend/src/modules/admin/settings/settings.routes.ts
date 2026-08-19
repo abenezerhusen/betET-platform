@@ -143,6 +143,7 @@ const generalConfigSchema = z
     cashier_cancel_window_minutes: z.number().int().nonnegative().optional(),
     cashier_enable_withdraw_request: z.boolean().optional(),
     cashier_enable_duplicate_slip: z.boolean().optional(),
+    cashier_max_duplicate_copies: z.number().int().nonnegative().max(100).optional(),
     cashier_max_daily_cancel_count: z.number().int().nonnegative().optional(),
     /* Operation Hours — per day-of-week (mon..sun) */
     operation_hours: z
@@ -214,6 +215,21 @@ const mainConfigSchema = z
   })
   .passthrough();
 
+
+/* Announcement Popup — the promo/welcome modal on the user-panel home
+ * page. Persisted under general.announcement. All fields optional so the
+ * admin can toggle it on and fill in copy incrementally. */
+const announcementConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    title: z.string().trim().max(240).optional(),
+    message: z.string().trim().max(5000).optional(),
+    image_url: z.string().trim().max(2_000_000).optional(), // may be base64 data URL
+    button_text: z.string().trim().max(80).optional(),
+    button_url: z.string().trim().max(2048).optional(),
+    frequency: z.enum(['always', 'session', 'daily']).optional(),
+  })
+  .passthrough();
 
 const paymentConfigSchema = z
   .object({
@@ -340,6 +356,9 @@ router.get('/general', readBlockHandler('general.config'));
 router.get('/main', readBlockHandler('main.config'));
 router.get('/payment', readBlockHandler('payment.config'));
 router.get('/sms', readBlockHandler('sms.provider.config'));
+
+router.get('/announcement', readBlockHandler('general.announcement'));
+router.put('/announcement', writeBlockHandler('general.announcement', announcementConfigSchema));
 
 router.put('/security', writeBlockHandler('security.config', securityConfigSchema));
 router.put('/general', writeBlockHandler('general.config', generalConfigSchema));

@@ -362,10 +362,20 @@ async function listAgentTickets(req: Request, query: TicketsQuery) {
   const { scope, tenantId, agentId } = resolveScope(req, query);
   const { from, to } = resolveRange(query);
 
+  // A ticket-code / phone search must find the ticket regardless of the
+  // date picker. The picker defaults to "today", so without this a valid
+  // SBK / TKT / coupon lookup for a ticket sold on an earlier day would
+  // return nothing. When a search term is present we widen the ticket-list
+  // window to all history (agent/branch/status scoping still applies). The
+  // KPI cards are computed by a separate query and stay date-scoped.
+  const searching = Boolean(query.search);
+  const effFrom = searching ? new Date('1970-01-01T00:00:00.000Z') : from;
+  const effTo = searching ? new Date('2999-12-31T23:59:59.999Z') : to;
+
   return withTenantClient(
     { tenantId: scope.tenantId, bypassRls: scope.bypassRls, readOnly: true },
     async (client) => {
-      const params: unknown[] = [tenantId, from, to];
+      const params: unknown[] = [tenantId, effFrom, effTo];
       let idx = 4;
       let agentClause = '';
       if (agentId) {
