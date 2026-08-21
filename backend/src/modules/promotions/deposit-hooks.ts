@@ -21,6 +21,7 @@ import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { emitToUser, Events } from '../../realtime/socket';
 import { evaluateInternalBonusEvent } from '../admin/bonuses/bonuses.service';
 import { awardRaffleTicketsForDeposit } from '../admin/promotions/raffles.routes';
+import { grantFirstDepositBonus } from './first-deposit';
 
 /**
  * Pay the referrer their reward when this is the referred user's first
@@ -239,6 +240,26 @@ export async function runPostDepositPromotions(params: {
     logger.error(
       { err, tenantId: params.tenantId, userId: params.userId },
       'post-deposit referral promotion failed'
+    );
+  }
+
+  // 4. First Deposit (Welcome) bonus — best-effort, self-guarded (only grants
+  //    on a genuine first qualifying deposit when the promo is enabled).
+  try {
+    await grantFirstDepositBonus({
+      tenantId: params.tenantId,
+      userId: params.userId,
+      amount: amountNum,
+      source: params.source,
+      depositRef:
+        typeof params.metadata?.reference === 'string'
+          ? (params.metadata.reference as string)
+          : undefined,
+    });
+  } catch (err) {
+    logger.error(
+      { err, tenantId: params.tenantId, userId: params.userId },
+      'post-deposit first-deposit bonus failed'
     );
   }
 }

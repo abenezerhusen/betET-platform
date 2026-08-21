@@ -22,6 +22,7 @@
  */
 
 import crypto from 'crypto';
+import { env } from '../../config/env';
 import { withTenantClient } from '../../infrastructure/db/tenant-client';
 import { logger } from '../../infrastructure/logger';
 import {
@@ -268,6 +269,9 @@ export async function requestOtp(
     templateCode: TEMPLATE_BY_PURPOSE[params.purpose],
     message: MESSAGE_BY_PURPOSE[params.purpose],
     variables: { code, minutes: otp.expiryMinutes },
+    // Forwarded to code-based providers (e.g. Telegram Gateway) which deliver
+    // the verification code through a dedicated API rather than a text body.
+    code,
   });
 
   if (process.env.NODE_ENV !== 'production') {
@@ -286,7 +290,9 @@ export async function requestOtp(
     status: 'sent',
     resendRemaining: Math.max(0, otp.maxResendPerWindow - (gate.sendsInWindow + 1)),
     cooldownSeconds: otp.resendCooldownSeconds,
-    ...(process.env.NODE_ENV !== 'production' ? { devCode: code } : {}),
+    // Only echoed when dev-code exposure is enabled (never in production, and
+    // suppressed when OTP_EXPOSE_DEV_CODE=false → real OTP enforcement).
+    ...(env.exposeOtpDevCode ? { devCode: code } : {}),
   };
 }
 

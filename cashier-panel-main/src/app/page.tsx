@@ -605,10 +605,38 @@ function TicketsPage() {
         if (out?.ticket) setTicket(out.ticket);
         printTicketSlip(out?.ticket ?? current);
       } catch (err) {
-        // Sell failed — still print the receipt the cashier can show
-        // the player, surface the error too so they know.
-        setCouponError((err as Error).message || "Failed to mark ticket sold.");
-        printTicketSlip(current);
+        // Two kinds of sell failure:
+        //  (a) "Do not collect" blocks — the admin's duplicate-copy limit
+        //      is reached, or a match on the slip already kicked off. Here
+        //      the server rejects BEFORE creating/selling anything, so the
+        //      cashier must be warned and NO receipt should be printed
+        //      (otherwise they'd hand over a ticket and take money for a
+        //      copy that was never sold).
+        //  (b) Other (transient) failures — keep the existing behaviour:
+        //      print the receipt the cashier can show the player and
+        //      surface the error.
+        const apiErr = err as {
+          status?: number;
+          message?: string;
+          body?: { details?: { reason?: string } };
+        };
+        const reason = apiErr.body?.details?.reason ?? "";
+        const doNotCollect =
+          apiErr.status === 409 ||
+          reason === "copy_limit_reached" ||
+          reason === "match_started";
+        if (doNotCollect) {
+          setCouponError(
+            apiErr.message ||
+              "This copy is not allowed — do not collect the payment."
+          );
+          // Intentionally do NOT print a receipt for a blocked copy.
+        } else {
+          setCouponError(
+            apiErr.message || "Failed to mark ticket sold."
+          );
+          printTicketSlip(current);
+        }
       }
     } catch (err) {
       setCouponError((err as Error).message || "Failed to print ticket.");
@@ -764,6 +792,19 @@ function TicketsPage() {
               className="bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
             >
               {printLoading ? "Preparing..." : "Print Ticket"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setCouponCode("");
+                window.requestAnimationFrame(() => {
+                  sellInputRef.current?.focus({ preventScroll: true });
+                });
+              }}
+              disabled={printLoading || couponLoading || !couponCode.trim()}
+              className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Clear
             </Button>
           </div>
 
@@ -938,6 +979,19 @@ function TicketsPage() {
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {couponLoading ? "Checking..." : "Check Ticket"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setPayoutCode("");
+                window.requestAnimationFrame(() => {
+                  payoutInputRef.current?.focus({ preventScroll: true });
+                });
+              }}
+              disabled={couponLoading || payoutBusy || !payoutCode.trim()}
+              className="border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Clear
             </Button>
             {payoutInfo && (payoutInfo.status === "won" || payoutInfo.status === "cashback") ? (
               <Button

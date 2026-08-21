@@ -231,6 +231,7 @@ export interface TelegramGatewayConfig {
   gateway_token?: string;
   chat_config?: string;
   api_url?: string;
+  sender_username?: string;
 }
 
 /** OTP security policy — applies to SMS and Telegram OTPs alike. */

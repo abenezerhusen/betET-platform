@@ -107,6 +107,9 @@ export interface NotifyParams {
   log?: boolean;
   /** Pre-loaded settings snapshot to avoid a second DB round-trip. */
   settings?: NotificationSettings;
+  /** Raw verification code for OTP sends; forwarded to code-based providers
+   *  (e.g. Telegram Gateway). Never persisted or logged. */
+  code?: string;
 }
 
 export interface NotifyResult {
@@ -236,6 +239,7 @@ export async function notify(params: NotifyParams): Promise<NotifyResult> {
       message,
       settings,
       eventType: params.event,
+      code: params.code,
     });
 
     await writeLog(params, {

@@ -19,6 +19,7 @@ import { BonusEngine } from './pages/promotions/BonusEngine';
 import { Affiliates } from './pages/promotions/Affiliates';
 import CashoutPromotion from './pages/promotions/CashoutPromotion';
 import RegistrationBonus from './pages/promotions/RegistrationBonus';
+import FirstDepositBonus from './pages/promotions/FirstDepositBonus';
 import RainBonus from './pages/promotions/RainBonus';
 import TaxBonus from './pages/bets/TaxBonus';
 import { SuperAdmin } from './pages/users/SuperAdmin';
@@ -132,6 +133,7 @@ const gatedRoutes: ReadonlyArray<{
   { path: '/promotions/affiliates', perm: 'promotions.affiliates.view', element: <Affiliates /> },
   { path: '/promotions/cashout-boost', perm: 'promotions.cashout.view', anyOf: ['promotions.bonus.view'], element: <CashoutPromotion /> },
   { path: '/promotions/registration-bonus', perm: 'promotions.registration_bonus.view', anyOf: ['promotions.bonus.view'], element: <RegistrationBonus /> },
+  { path: '/promotions/first-deposit-bonus', perm: 'promotions.first_deposit.view', anyOf: ['promotions.bonus.view'], element: <FirstDepositBonus /> },
   { path: '/promotions/rain-bonus', perm: 'promotions.rain.view', anyOf: ['promotions.bonus.view'], element: <RainBonus /> },
 
   /* Users */

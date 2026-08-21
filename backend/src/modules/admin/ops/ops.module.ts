@@ -7,6 +7,13 @@ import { promisify } from 'node:util';
 import { pool } from '../../../infrastructure/db/pool';
 import { withTenantClient } from '../../../infrastructure/db/tenant-client';
 import { getAdminScope, requireScopedTenantId } from '../admin-shared';
+import {
+  FIRST_DEPOSIT_CONFIG_KEY,
+  firstDepositBonusSchema,
+  loadFirstDepositConfig,
+  getFirstDepositBonusStats,
+  expireFirstDepositBonuses,
+} from '../../promotions/first-deposit';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -243,6 +250,54 @@ router.put(
         [tenantId, JSON.stringify(body)]
       );
       return body;
+    });
+  })
+);
+
+/* ---------------------- First Deposit (Welcome) Bonus ---------------------- */
+// Fully admin-configurable welcome bonus granted on a user's first qualifying
+// online deposit. Stored as a single settings row (no migration) and enforced
+// server-side in modules/promotions/first-deposit.ts. All values below are
+// configurable here; nothing is hard-coded in the grant/wagering logic.
+
+router.get(
+  '/promotions/first-deposit-bonus',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      return loadFirstDepositConfig(client, tenantId);
+    });
+  })
+);
+
+router.put(
+  '/promotions/first-deposit-bonus',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    const body = firstDepositBonusSchema.parse(req.body);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      await client.query(
+        `INSERT INTO settings (tenant_id, key, value)
+         VALUES ($1, $2, $3::jsonb)
+         ON CONFLICT (tenant_id,key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [tenantId, FIRST_DEPOSIT_CONFIG_KEY, JSON.stringify(body)]
+      );
+      return body;
+    });
+  })
+);
+
+router.get(
+  '/promotions/first-deposit-bonus/stats',
+  wrap(async (req) => {
+    const scope = getAdminScope(req);
+    const tenantId = requireScopedTenantId(scope);
+    // Enforce expiry lazily so stats reflect the true current state.
+    await expireFirstDepositBonuses(tenantId);
+    return withTenantClient({ tenantId, bypassRls: scope.bypassRls }, async (client) => {
+      return getFirstDepositBonusStats(client, tenantId);
     });
   })
 );

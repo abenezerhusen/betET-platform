@@ -68,6 +68,7 @@ const defaultSmsConfig: settingsApi.SmsAliasConfig = {
     gateway_token: '',
     chat_config: '',
     api_url: '',
+    sender_username: '',
   },
   otp: {
     expiry_minutes: 5,
@@ -465,9 +466,11 @@ export function SmsConfig() {
 
           <h3 className="text-md font-semibold pt-2">Telegram Gateway</h3>
           <p className="text-xs text-gray-500">
-            Prepared for future activation. Save your credentials now; delivery goes live once
-            the Telegram integration is enabled — no code changes required. These fields are not
-            validated yet.
+            Live. For OTP delivery via the Telegram Gateway API, set the Gateway Token and API
+            URL (https://gatewayapi.telegram.org) and enable Telegram as the OTP provider. The
+            Gateway is a paid service — verification codes only send while the Gateway account
+            has balance. The Bot Token / Chat Configuration fields are used only for the optional
+            Bot API fallback (non-OTP messages to a known chat id).
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <label className="space-y-1">
@@ -513,6 +516,25 @@ export function SmsConfig() {
                 placeholder="https://gateway.telegram.org (placeholder)"
                 className="w-full rounded-md border-gray-300"
               />
+            </label>
+            <label className="space-y-1">
+              <span className="text-gray-700">Sender Username</span>
+              <input
+                value={providerConfig.telegram?.sender_username ?? ''}
+                onChange={(e) =>
+                  setProviderConfig((p) => ({
+                    ...p,
+                    telegram: { ...(p.telegram ?? {}), sender_username: e.target.value },
+                  }))
+                }
+                placeholder="e.g. 1birr (must be a verified channel)"
+                className="w-full rounded-md border-gray-300"
+              />
+              <span className="block text-xs text-gray-500">
+                Optional. Must be a Telegram channel username verified in your
+                Gateway account, otherwise the send is rejected. Leave blank to
+                use the account default sender.
+              </span>
             </label>
             <label className="space-y-1">
               <span className="text-gray-700">Chat Configuration</span>

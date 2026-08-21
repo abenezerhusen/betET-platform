@@ -38,6 +38,35 @@ export async function claimBonus(
   });
 }
 
+export interface FirstDepositBonusStatus {
+  enabled: boolean;
+  has_bonus: boolean;
+  status: string | null;
+  awarded_amount: number;
+  wagering_required: number;
+  wagering_progress: number;
+  wagering_remaining: number;
+  progress_pct: number;
+  expires_at: string | null;
+  terms: {
+    bonus_name: string;
+    match_pct: number;
+    min_deposit: number;
+    max_bonus: number;
+    max_eligible_deposit: number;
+    wagering_multiplier: number;
+    qualifying_bet_type?: string;
+    min_selections: number;
+    min_selection_odds: number;
+    expires_in_days: number;
+  };
+}
+
+/** First Deposit (Welcome) bonus status for the logged-in user. */
+export async function getFirstDepositBonusStatus(): Promise<FirstDepositBonusStatus> {
+  return apiRequest('/api/user/bonuses/first-deposit');
+}
+
 export interface PaymentMethodItem {
   id: string;
   code: string;

@@ -28,6 +28,7 @@ import {
   flagOverdueUnresolvedTickets,
   settleAlreadyFinishedEvents,
 } from '../modules/sports/providers/results.service';
+import { expireFirstDepositBonuses } from '../modules/promotions/first-deposit';
 
 const TICK_MS = 5 * 60 * 1000; // 5 minutes
 let timer: NodeJS.Timeout | null = null;
@@ -63,6 +64,10 @@ async function runForTenant(tenantId: string): Promise<void> {
       'settlement-loop: flagged overdue tickets for manual review'
     );
   }
+
+  // 4) Expire past-expiry First Deposit (Welcome) bonuses (locks un-earned
+  //    bonus funds + marks EXPIRED). Best-effort; never throws.
+  await expireFirstDepositBonuses(tenantId);
 }
 
 async function tick(): Promise<void> {

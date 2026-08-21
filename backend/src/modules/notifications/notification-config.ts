@@ -38,6 +38,8 @@ export interface TelegramChannelSettings {
   gateway_token: string | null;
   chat_config: string | null;
   api_url: string | null;
+  /** Optional verified sender username shown on the Telegram OTP message. */
+  sender_username: string | null;
   configured: boolean;
 }
 
@@ -160,6 +162,7 @@ export function normalizeNotificationSettings(
     gateway_token: tgGateway,
     chat_config: clean(tg.chat_config),
     api_url: tgApiUrl,
+    sender_username: clean(tg.sender_username),
     // Transport is not implemented yet; "configured" means credentials
     // exist so the future integration can transmit without code changes.
     configured: Boolean(tgApiUrl && (tgBot || tgGateway)),

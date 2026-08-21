@@ -529,6 +529,97 @@ export function updateRegistrationBonusConfig(
   return http.put<RegistrationBonusConfig>('/api/admin/promotions/registration-bonus', config);
 }
 
+/* ─────────────────── First Deposit (Welcome) Bonus ─────────────────── */
+
+export interface FirstDepositBonusConfig {
+  is_enabled: boolean;
+  bonus_name: string;
+  description: string;
+  /** Match percentage of the eligible deposit (100 = 100%). */
+  match_pct: number;
+  /** Hard cap on the bonus amount (0 = uncapped). */
+  max_bonus: number;
+  /** Minimum deposit that qualifies. */
+  min_deposit: number;
+  /** Deposit above this is not matched (0 = no cap). */
+  max_eligible_deposit: number;
+  /** Turnover multiplier applied to the BONUS amount. */
+  wagering_multiplier: number;
+  qualifying_bet_type: 'accumulator' | 'any';
+  min_selections: number;
+  min_selection_odds: number;
+  expires_in_days: number;
+  max_claims_per_user: number;
+  start_date: string | null;
+  end_date: string | null;
+  daily_budget: number;
+  monthly_budget: number;
+  total_budget: number;
+  max_total_claims: number;
+  eligible_user_groups: string[];
+  existing_bonus_policy: 'continue' | 'cancel';
+}
+
+export interface FirstDepositBonusStats {
+  total_claimed: number;
+  total_bonus_issued: number;
+  total_bonus_unlocked: number;
+  total_bonus_expired: number;
+  total_qualifying_turnover: number;
+  total_deposited: number;
+  active: number;
+  completed: number;
+  expired: number;
+  cancelled: number;
+  issued_today: number;
+  issued_month: number;
+}
+
+const DEFAULT_FIRST_DEPOSIT_BONUS: FirstDepositBonusConfig = {
+  is_enabled: false,
+  bonus_name: 'First Deposit Welcome',
+  description: '',
+  match_pct: 100,
+  max_bonus: 500,
+  min_deposit: 10,
+  max_eligible_deposit: 500,
+  wagering_multiplier: 5,
+  qualifying_bet_type: 'accumulator',
+  min_selections: 3,
+  min_selection_odds: 1.4,
+  expires_in_days: 7,
+  max_claims_per_user: 1,
+  start_date: null,
+  end_date: null,
+  daily_budget: 0,
+  monthly_budget: 0,
+  total_budget: 0,
+  max_total_claims: 0,
+  eligible_user_groups: [],
+  existing_bonus_policy: 'continue',
+};
+
+export function getFirstDepositBonusConfig(): Promise<FirstDepositBonusConfig> {
+  return http
+    .get<FirstDepositBonusConfig>('/api/admin/promotions/first-deposit-bonus')
+    .then((r) => ({ ...DEFAULT_FIRST_DEPOSIT_BONUS, ...r }));
+}
+
+export function updateFirstDepositBonusConfig(
+  config: FirstDepositBonusConfig
+): Promise<FirstDepositBonusConfig> {
+  return http.put<FirstDepositBonusConfig>(
+    '/api/admin/promotions/first-deposit-bonus',
+    config
+  );
+}
+
+export function getFirstDepositBonusStats(): Promise<FirstDepositBonusStats> {
+  return http.get<FirstDepositBonusStats>(
+    '/api/admin/promotions/first-deposit-bonus/stats'
+  );
+}
+
 /* ───────────────────────── Rain Bonus (game drops) ───────────────────────── */
 
 export type RainGameId = 'fast-keno' | 'aviator';

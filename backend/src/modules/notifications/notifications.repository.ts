@@ -6,6 +6,12 @@ export interface TelegramGatewayConfig {
   gateway_token?: string;
   chat_config?: string;
   api_url?: string;
+  /**
+   * Optional verified Telegram channel username used as the OTP sender.
+   * Must be a username owned/verified in the Telegram Gateway account or the
+   * Gateway rejects the send; leave empty to use the account default sender.
+   */
+  sender_username?: string;
 }
 
 /**

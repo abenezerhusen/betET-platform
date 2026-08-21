@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Gift, Trophy, Ticket, X } from "lucide-react";
-import { promotionsApi, publicConfigApi, jackpotsApi } from "@/lib/api";
+import { promotionsApi, publicConfigApi, jackpotsApi, bonusesApi } from "@/lib/api";
 import type { PublicJackpot } from "@/lib/api/jackpots";
+import type { PublicFirstDepositBonus } from "@/lib/api/publicConfig";
+import type { FirstDepositBonusStatus } from "@/lib/api/bonuses";
+import { useAuth } from "@/context/AuthContext";
 
 type PromoView = {
   id: string;
@@ -393,6 +396,124 @@ function JackpotCard({
 }
 
 /* ------------------------------------------------------------------ */
+/* First Deposit (Welcome) bonus card                                   */
+/* ------------------------------------------------------------------ */
+function FirstDepositCard({
+  promo,
+  status,
+}: {
+  promo: PublicFirstDepositBonus;
+  status: FirstDepositBonusStatus | null;
+}) {
+  const router = useRouter();
+  const matchPct = promo.match_pct ?? 100;
+  const maxBonus = promo.max_bonus ?? 0;
+  const minDeposit = promo.min_deposit ?? 0;
+  const wagerX = promo.wagering_multiplier ?? 0;
+  const minSel = promo.min_selections ?? 0;
+  const minOdds = promo.min_selection_odds ?? 0;
+  const expiresDays = promo.expires_in_days ?? 0;
+
+  const hasActiveBonus = Boolean(status?.has_bonus && status?.status === "active");
+  const progressPct = Math.min(100, Math.max(0, status?.progress_pct ?? 0));
+
+  return (
+    <div
+      className="rounded-lg overflow-hidden border"
+      style={{
+        background: "var(--mezzo-bg-secondary)",
+        borderColor: "var(--mezzo-accent-yellow)",
+      }}
+    >
+      <div className="p-4 sm:p-6">
+        <div className="flex items-start gap-4">
+          <div
+            className="p-3 rounded-full flex-shrink-0"
+            style={{ background: "var(--mezzo-bg-tertiary)" }}
+          >
+            <Gift className="w-6 h-6 text-[var(--mezzo-accent-yellow)]" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold">
+              {promo.bonus_name || "First Deposit Bonus"}
+            </h2>
+            <p className="text-gray-300 mt-1">
+              {promo.description ||
+                `Get ${matchPct}% extra on your first deposit${
+                  maxBonus > 0 ? `, up to ${maxBonus.toFixed(0)} ETB` : ""
+                }.`}
+            </p>
+
+            <ul className="text-sm text-gray-400 mt-3 space-y-1">
+              <li>
+                • {matchPct}% match
+                {maxBonus > 0 ? ` up to ${maxBonus.toFixed(0)} ETB` : ""}
+                {minDeposit > 0 ? ` · min deposit ${minDeposit.toFixed(0)} ETB` : ""}
+              </li>
+              {wagerX > 0 && (
+                <li>
+                  • Wager the bonus {wagerX}× on{" "}
+                  {minSel > 0
+                    ? `${minSel}+ selection accumulators`
+                    : "qualifying accumulators"}{" "}
+                  {minOdds > 0 ? `@ ${minOdds.toFixed(2)}+ odds each` : ""}
+                </li>
+              )}
+              {expiresDays > 0 && <li>• Valid for {expiresDays} days after credit.</li>}
+            </ul>
+
+            {hasActiveBonus && status ? (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs text-gray-300 mb-1">
+                  <span>Wagering progress</span>
+                  <span>
+                    {status.wagering_progress.toFixed(0)} /{" "}
+                    {status.wagering_required.toFixed(0)} ETB
+                  </span>
+                </div>
+                <div
+                  className="h-2 w-full rounded-full overflow-hidden"
+                  style={{ background: "var(--mezzo-bg-tertiary)" }}
+                >
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${progressPct}%`,
+                      background: "var(--mezzo-accent-green)",
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  {status.wagering_remaining > 0 ? (
+                    <>
+                      Wager <strong>{status.wagering_remaining.toFixed(2)} ETB</strong> more
+                      to unlock <strong>{status.awarded_amount.toFixed(2)} ETB</strong>.
+                    </>
+                  ) : (
+                    <>Wagering complete — bonus unlocked!</>
+                  )}
+                  {status.expires_at
+                    ? ` Expires ${new Date(status.expires_at).toLocaleDateString()}.`
+                    : ""}
+                </p>
+              </div>
+            ) : (
+              <button
+                className="mt-4 px-6 py-2 rounded text-black font-semibold"
+                style={{ background: "var(--mezzo-accent-green)" }}
+                onClick={() => router.push("/deposit")}
+              >
+                Deposit now
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Main Page                                                            */
 /* ------------------------------------------------------------------ */
 export default function PromotionsPage() {
@@ -409,6 +530,10 @@ export default function PromotionsPage() {
   const [jackpots, setJackpots] = useState<PublicJackpot[]>([]);
   const [selectedJackpot, setSelectedJackpot] = useState<PublicJackpot | null>(null);
   const [jackpotEntryCount, setJackpotEntryCount] = useState(0);
+  const { isAuthenticated } = useAuth();
+  const [firstDeposit, setFirstDeposit] = useState<PublicFirstDepositBonus | null>(null);
+  const [firstDepositStatus, setFirstDepositStatus] =
+    useState<FirstDepositBonusStatus | null>(null);
 
   const loadPromotions = () => {
     setLoading(true);
@@ -476,6 +601,41 @@ export default function PromotionsPage() {
   useEffect(() => {
     void loadPromotions();
   }, []);
+
+  // First Deposit (Welcome) bonus — public advert + (when logged in) live progress.
+  useEffect(() => {
+    let cancelled = false;
+    publicConfigApi
+      .getPublicFirstDepositBonus()
+      .then((res) => {
+        if (!cancelled) setFirstDeposit(res);
+      })
+      .catch(() => {
+        if (!cancelled) setFirstDeposit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setFirstDepositStatus(null);
+      return;
+    }
+    let cancelled = false;
+    bonusesApi
+      .getFirstDepositBonusStatus()
+      .then((res) => {
+        if (!cancelled) setFirstDepositStatus(res);
+      })
+      .catch(() => {
+        if (!cancelled) setFirstDepositStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
 
   useEffect(() => {
     const onVisible = () => {
@@ -573,6 +733,12 @@ export default function PromotionsPage() {
 
           <div className="space-y-6">
             {loading && <p className="text-sm text-gray-400">Loading promotions...</p>}
+
+            {/* ---- First Deposit (Welcome) bonus ---- */}
+            {firstDeposit?.enabled &&
+              (activeCategory === "all" || activeCategory === "welcome-bonuses") && (
+                <FirstDepositCard promo={firstDeposit} status={firstDepositStatus} />
+              )}
 
             {/* ---- Jackpots section ---- */}
             {!loading && (showJackpotsOnly || activeCategory === "all") && hasActiveJackpots && (

@@ -74,6 +74,10 @@ export async function applyBetWageringProgress(params: {
           const required = Number(a.wagering_required ?? 0);
           if (required <= 0) continue;
           const cfg = (a.config ?? {}) as Record<string, unknown>;
+          // Bonuses whose turnover is counted at SETTLEMENT (e.g. First Deposit
+          // Welcome) are handled by their own settlement hook — skip them here
+          // so their turnover is never double-counted at placement.
+          if (String(cfg.wager_stage ?? '') === 'settlement') continue;
           const minOdds = Number(cfg.min_odds ?? 0);
           if (minOdds > 0 && params.odds < minOdds) continue;
 

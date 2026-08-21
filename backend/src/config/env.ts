@@ -31,6 +31,13 @@ const envSchema = z.object({
   ACCOUNT_LOCK_DURATION_MINUTES: z.coerce.number().int().positive().default(15),
   PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(60),
 
+  // Production-enforcement switch for OTP. When 'false', the plaintext OTP is
+  // NEVER echoed to the client (`dev_code`), so a real code delivered via
+  // SMS/Telegram is genuinely required — even outside NODE_ENV=production.
+  // Left unset it defaults to the historical behaviour (exposed only when
+  // NODE_ENV !== 'production'). It is always forced off in production.
+  OTP_EXPOSE_DEV_CODE: z.enum(['true', 'false']).optional(),
+
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   LOGIN_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
 
@@ -165,6 +172,17 @@ export const env = {
   MAX_FAILED_LOGIN_ATTEMPTS: parsed.MAX_FAILED_LOGIN_ATTEMPTS,
   ACCOUNT_LOCK_DURATION_MINUTES: parsed.ACCOUNT_LOCK_DURATION_MINUTES,
   PASSWORD_RESET_TOKEN_TTL_MINUTES: parsed.PASSWORD_RESET_TOKEN_TTL_MINUTES,
+
+  /**
+   * Whether the plaintext OTP may be returned to the client as `dev_code`.
+   * Always false in production. Outside production it follows the historical
+   * default (exposed) unless OTP_EXPOSE_DEV_CODE is explicitly set to 'false',
+   * which enables real (production-grade) OTP enforcement in any environment.
+   */
+  get exposeOtpDevCode(): boolean {
+    if (parsed.NODE_ENV === 'production') return false;
+    return parsed.OTP_EXPOSE_DEV_CODE !== 'false';
+  },
 
   LOGIN_RATE_LIMIT_MAX: parsed.LOGIN_RATE_LIMIT_MAX,
   LOGIN_RATE_LIMIT_WINDOW_MINUTES: parsed.LOGIN_RATE_LIMIT_WINDOW_MINUTES,

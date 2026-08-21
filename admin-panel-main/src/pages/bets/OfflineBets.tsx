@@ -66,6 +66,22 @@ const LABEL_TO_STATUS: Record<string, string> = {
 const num = (s: string | number | null | undefined): number =>
   typeof s === 'number' ? s : Number(s ?? 0);
 
+// Accumulator bonus % by number of legs — mirrors the printed slip
+// (ThermalTicketView) so the admin "Net Pay" matches the paper the
+// customer holds.
+function accumulatorBonusPct(numBets: number): number {
+  if (numBets < 2) return 0;
+  if (numBets === 2) return 3;
+  if (numBets === 3) return 5;
+  if (numBets === 4) return 7;
+  if (numBets === 5) return 10;
+  if (numBets >= 6 && numBets <= 8) return 15;
+  if (numBets >= 9 && numBets <= 11) return 20;
+  if (numBets >= 12 && numBets <= 15) return 25;
+  if (numBets >= 16) return 30;
+  return 0;
+}
+
 function pickTicketCode(b: betsApi.AdminBet): string {
   return (
     b.printed_ticket_code ||
@@ -172,7 +188,16 @@ const SlipBody = ({ bet }: { bet: betsApi.AdminBetDetail }) => {
     ) || 1;
   const tax = num(bet.metadata?.tax) || 0;
   const winningTax = num(bet.metadata?.winning_tax) || 0;
-  const netPay = num(bet.actual_payout) - winningTax;
+  // Once the ticket is actually paid out (won), show the realised net pay.
+  // Otherwise show the POTENTIAL net pay the customer would receive on a
+  // win — computed exactly like the printed slip so the admin figure
+  // matches the paper (was previously 0.00 for unsettled tickets).
+  const bonusPct = accumulatorBonusPct(bet.legs.length);
+  const potentialNetPay = stake * totalOdds * (1 + bonusPct / 100) * 0.85;
+  const netPay =
+    num(bet.actual_payout) > 0
+      ? num(bet.actual_payout) - winningTax
+      : potentialNetPay;
   const matchHash = String(
     bet.metadata?.match_hash ??
       (bet.legs.length ? bet.legs.map((l) => l.id.slice(0, 6)).join('-') : '—')

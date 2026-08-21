@@ -323,7 +323,7 @@ export async function registerRequestOtp(
       ...(out.cooldownSeconds !== undefined
         ? { cooldown_seconds: out.cooldownSeconds }
         : {}),
-      ...(env.NODE_ENV !== 'production' && out.devCode
+      ...(env.exposeOtpDevCode && out.devCode
         ? { dev_code: out.devCode }
         : {}),
     });
@@ -440,7 +440,7 @@ export async function forgotPasswordRequestOtp(
       ...(out.cooldownSeconds !== undefined
         ? { cooldown_seconds: out.cooldownSeconds }
         : {}),
-      ...(env.NODE_ENV !== 'production' && out.devCode
+      ...(env.exposeOtpDevCode && out.devCode
         ? { dev_code: out.devCode }
         : {}),
     });

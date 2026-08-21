@@ -30,6 +30,7 @@ import {
   loadMaintenanceConfig,
 } from '../admin/settings/maintenance-config';
 import { loadAnnouncementConfig } from '../admin/settings/announcement-config';
+import { loadFirstDepositConfig } from '../promotions/first-deposit';
 import {
   deriveAuthConfig,
   loadNotificationSettings,
@@ -311,6 +312,42 @@ router.get('/announcement', async (req, res, next) => {
       loadAnnouncementConfig(client, tenantId)
     );
     res.json(cfg.enabled ? cfg : { enabled: false });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/public/first-deposit-bonus
+ * Public-safe First Deposit (Welcome) bonus advert. Returns only the display
+ * terms (never budgets, caps or per-user limits) so the promotions page can
+ * show the offer to logged-out visitors. When disabled, returns enabled=false.
+ */
+router.get('/first-deposit-bonus', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const cfg = await withTenantClient({ tenantId }, (client) =>
+      loadFirstDepositConfig(client, tenantId)
+    );
+    if (!cfg.is_enabled) {
+      res.json({ enabled: false });
+      return;
+    }
+    res.json({
+      enabled: true,
+      bonus_name: cfg.bonus_name,
+      description: cfg.description,
+      match_pct: cfg.match_pct,
+      min_deposit: cfg.min_deposit,
+      max_bonus: cfg.max_bonus,
+      max_eligible_deposit: cfg.max_eligible_deposit,
+      wagering_multiplier: cfg.wagering_multiplier,
+      qualifying_bet_type: cfg.qualifying_bet_type,
+      min_selections: cfg.min_selections,
+      min_selection_odds: cfg.min_selection_odds,
+      expires_in_days: cfg.expires_in_days,
+    });
   } catch (err) {
     next(err);
   }

@@ -2,6 +2,9 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import { claimBonusSchema, listBonusesQuerySchema } from './user.dto';
 import { claimBonus, listBonuses } from './bonuses.service';
+import { getUserScope } from './user-shared';
+import { withTenantClient } from '../../infrastructure/db/tenant-client';
+import { getUserFirstDepositBonusStatus } from '../promotions/first-deposit';
 import * as swagger from '../../swagger/registry';
 
 const router = Router();
@@ -39,6 +42,24 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     next(err);
   }
 });
+
+// First Deposit (Welcome) bonus status + public-safe terms for the current user.
+router.get(
+  '/first-deposit',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const scope = getUserScope(req);
+      const out = await withTenantClient(
+        { tenantId: scope.tenantId },
+        (client) =>
+          getUserFirstDepositBonusStatus(client, scope.tenantId, scope.userId)
+      );
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 router.post(
   '/:id/claim',

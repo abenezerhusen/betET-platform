@@ -23,6 +23,7 @@ import {
 } from '../../bets/sportsbook-tax';
 import { applyLossCashback } from '../../promotions/loss-cashback';
 import { accrueAffiliateOnBetSettle } from '../../promotions/affiliate-hooks';
+import { applyFirstDepositWageringOnSettle } from '../../promotions/first-deposit';
 import { resetUserStreak } from '../streaks/streaks.module';
 import { phoneSearchPattern, phoneDigitsSql } from '../admin-shared';
 
@@ -575,6 +576,20 @@ export async function settleBetFromLegs(
       betId: params.betId,
       stake,
       payout: newStatus === 'won' ? credit : 0,
+    });
+    // First Deposit (Welcome) turnover — counts qualifying accumulators at
+    // settlement. Idempotent per bet inside; skips void bets (not reached here
+    // since void is handled above). Uses placement odds for the min-odds rule.
+    const legOdds = legs.rows.map((l) => Number(l.odds_at_placement));
+    void applyFirstDepositWageringOnSettle({
+      tenantId: params.tenantId,
+      userId: bet.user_id,
+      betId: params.betId,
+      stake,
+      betType: bet.bet_type ?? null,
+      legCount: legs.rows.length,
+      minLegOdds: legOdds.length ? Math.min(...legOdds) : 0,
+      outcome: newStatus === 'won' ? 'won' : 'lost',
     });
   }
 

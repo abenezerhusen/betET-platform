@@ -56,6 +56,8 @@ const administratorCatalog: Permission[] = [
   { id: 'promotions.bonus.manage', name: 'Manage Bonus Engine', description: 'Configure bonus rules and campaigns', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.registration_bonus.view', name: 'View Registration Bonus', description: 'View the registration (sign-up) bonus configuration', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.registration_bonus.manage', name: 'Manage Registration Bonus', description: 'Enable/disable and configure the registration (sign-up) bonus', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.first_deposit.view', name: 'View First Deposit Bonus', description: 'View the first deposit (welcome) bonus configuration and stats', category: 'Promotions', scopes: adminScopes },
+  { id: 'promotions.first_deposit.manage', name: 'Manage First Deposit Bonus', description: 'Enable/disable and configure the first deposit (welcome) bonus', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.cashout.view', name: 'View Cash Out Boost', description: 'View the cash out boost promotion configuration', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.cashout.manage', name: 'Manage Cash Out Boost', description: 'Enable/disable and configure the cash out boost promotion', category: 'Promotions', scopes: adminScopes },
   { id: 'promotions.rain.view', name: 'View Rain Bonus', description: 'View the rain bonus configuration and history', category: 'Promotions', scopes: adminScopes },

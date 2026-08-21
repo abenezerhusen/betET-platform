@@ -28,6 +28,10 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: development
+      # Production-grade OTP enforcement: never echo the OTP to the client, so a
+      # real code delivered via SMS/Telegram is genuinely required to register /
+      # reset password (kept even though NODE_ENV is development for local dev).
+      OTP_EXPOSE_DEV_CODE: "false"
       DATABASE_URL: postgresql://playcore:playcore_dev_password@postgres:5432/playcore
       JWT_SECRET: dev_jwt_secret_change_in_production_min_32_chars
       # Stable agent-token secret so agent (mobile app) JWTs survive backend

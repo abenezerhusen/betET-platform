@@ -57,6 +57,7 @@ const menuItems: MenuItem[] = [
       { title: 'Affiliates', path: '/promotions/affiliates', perm: 'promotions.affiliates.view', icon: <ChevronRight size={16} /> },
       { title: 'Cash Out Boost', path: '/promotions/cashout-boost', perm: 'promotions.cashout.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
       { title: 'Registration Bonus', path: '/promotions/registration-bonus', perm: 'promotions.registration_bonus.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
+      { title: 'Bonus Type', path: '/promotions/first-deposit-bonus', perm: 'promotions.first_deposit.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
       { title: 'Rain Bonus', path: '/promotions/rain-bonus', perm: 'promotions.rain.view', anyOf: ['promotions.bonus.view'], icon: <ChevronRight size={16} /> },
     ],
   },

@@ -216,6 +216,9 @@ export function Header() {
   // Resend cooldown countdowns (seconds). While > 0 the resend button is
   // disabled — mirrors the backend OTP resend-protection policy.
   const [registerCooldown, setRegisterCooldown] = useState(0);
+  // Channel the OTP was actually sent through (from the request-otp response),
+  // so the input helper text tells the user exactly where to look for the code.
+  const [otpChannel, setOtpChannel] = useState<"sms" | "telegram" | null>(null);
 
   // Forgot-password flow state. Three-step wizard:
   //   phone → enter code → set new password.
@@ -349,6 +352,7 @@ export function Header() {
     setRegisterOtp("");
     setRegisterStep("form");
     setRegisterCooldown(0);
+    setOtpChannel(null);
   };
 
   const completeRegister = async (parsed: {
@@ -394,6 +398,7 @@ export function Header() {
         if (res.otp_required) {
           setRegisterStep("otp");
           setRegisterCooldown(res.cooldown_seconds ?? 60);
+          setOtpChannel(res.channel ?? authConfig?.otp_channel ?? null);
           if (res.dev_code) setRegisterOtp(res.dev_code);
           return;
         }
@@ -446,6 +451,7 @@ export function Header() {
     try {
       const res = await authApi.requestRegisterOtp({ phone: registerPhone });
       setRegisterCooldown(res.cooldown_seconds ?? 60);
+      setOtpChannel(res.channel ?? authConfig?.otp_channel ?? null);
       if (res.dev_code) setRegisterOtp(res.dev_code);
     } catch (err) {
       const wait = retryAfterOf(err);
@@ -1349,10 +1355,27 @@ export function Header() {
             )}
             {registerStep === "otp" && (
               <div className="space-y-2">
-                <p className="text-sm text-gray-400">
-                  Enter the verification code sent to{" "}
+                {(otpChannel ?? authConfig?.otp_channel) === "telegram" ? (
+                  <div className="space-y-0.5">
+                    <p className="text-sm text-gray-300">
+                      Enter the OTP number sent to your Telegram.
+                    </p>
+                    <p className="text-sm text-gray-400" lang="am">
+                      ወደ ቴሌግራምዎ የተላከውን OTP ቁጥር ያስገቡ።
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5">
+                    <p className="text-sm text-gray-300">
+                      Enter the OTP number sent to your SMS.
+                    </p>
+                    <p className="text-sm text-gray-400" lang="am">
+                      ወደ ስልክዎ በSMS የተላከውን OTP ቁጥር ያስገቡ።
+                    </p>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500">
                   <span className="text-white">{registerPhone}</span>
-                  {authConfig?.otp_channel === "telegram" ? " via Telegram" : " via SMS"}.
                 </p>
                 <Input
                   value={registerOtp}

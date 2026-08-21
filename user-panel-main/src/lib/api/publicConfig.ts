@@ -126,6 +126,26 @@ export function getOperationHours(): Promise<OperationHoursPayload> {
   return apiRequest<OperationHoursPayload>('/api/public/operation-hours');
 }
 
+export interface PublicFirstDepositBonus {
+  enabled: boolean;
+  bonus_name?: string;
+  description?: string;
+  match_pct?: number;
+  min_deposit?: number;
+  max_bonus?: number;
+  max_eligible_deposit?: number;
+  wagering_multiplier?: number;
+  qualifying_bet_type?: string;
+  min_selections?: number;
+  min_selection_odds?: number;
+  expires_in_days?: number;
+}
+
+/** Public advert for the First Deposit (Welcome) bonus (no auth required). */
+export function getPublicFirstDepositBonus(): Promise<PublicFirstDepositBonus> {
+  return apiRequest<PublicFirstDepositBonus>('/api/public/first-deposit-bonus');
+}
+
 /* -------------------------------------------------------------------------- */
 /* Footer Links                                                               */
 /* -------------------------------------------------------------------------- */

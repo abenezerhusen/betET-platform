@@ -17,6 +17,12 @@ export interface ProviderSendParams {
   settings: NotificationSettings;
   /** Optional event key for logging/telemetry. */
   eventType?: string;
+  /**
+   * Raw verification code, when this send is an OTP. Providers that deliver
+   * codes via a dedicated verification API (e.g. Telegram Gateway) need the
+   * numeric code itself rather than the rendered message text. Never logged.
+   */
+  code?: string;
 }
 
 export interface ProviderSendResult {
