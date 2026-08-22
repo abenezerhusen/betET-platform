@@ -195,6 +195,7 @@ export async function upsertEvents(
   if (events.length === 0) return 0;
   const payload = events.map((ev) => ({
     provider_event_id: ev.providerEventId,
+    provider_sport_key: ev.providerSportKey,
     sport: ev.sport,
     league: ev.league,
     home_team: ev.homeTeam,
@@ -215,11 +216,15 @@ export async function upsertEvents(
             x.home_score, x.away_score,
             CASE WHEN x.minute IS NULL THEN '{}'::jsonb
                  ELSE jsonb_build_object('minute', x.minute) END,
-            jsonb_build_object('provider', 'odds_api',
-                               'provider_event_id', x.provider_event_id)
+            -- strip_nulls so a missing sport_key never overwrites an existing one
+            jsonb_strip_nulls(
+              jsonb_build_object('provider', 'odds_api',
+                                 'provider_event_id', x.provider_event_id,
+                                 'provider_sport_key', x.provider_sport_key)
+            )
        FROM jsonb_to_recordset($2::jsonb) AS x(
-              provider_event_id text, sport text, league text,
-              home_team text, away_team text, starts_at timestamptz,
+              provider_event_id text, provider_sport_key text, sport text,
+              league text, home_team text, away_team text, starts_at timestamptz,
               status text, home_score int, away_score int, minute int
             )
      ON CONFLICT (tenant_id, (metadata->>'provider_event_id'))
@@ -261,6 +266,9 @@ export async function upsertEvent(
   const providerMeta = JSON.stringify({
     provider: 'odds_api',
     provider_event_id: ev.providerEventId,
+    // Only include the league key when known so a null never clobbers an
+    // existing value on the merge (metadata || providerMeta).
+    ...(ev.providerSportKey ? { provider_sport_key: ev.providerSportKey } : {}),
   });
 
   if (found.rows[0]) {
@@ -387,7 +395,18 @@ export async function upsertMarkets(
 export interface EventNeedingOdds {
   id: string;
   provider_event_id: string;
+  /** Provider league key ("soccer_epl"), when persisted on the event. */
+  provider_sport_key: string | null;
   status: string;
+}
+
+export interface LeagueKeyNeedingOdds {
+  /** Provider league key to fetch: GET /sports/{sport_key}/odds. */
+  provider_sport_key: string;
+  /** True when any of the league's due events belongs to a priority league. */
+  is_priority: boolean;
+  /** True when the league has a live match due (priced first). */
+  has_live: boolean;
 }
 
 /**
@@ -411,6 +430,7 @@ export async function listEventsNeedingOdds(
   const r = await client.query<EventNeedingOdds>(
     `SELECT id,
             metadata->>'provider_event_id' AS provider_event_id,
+            metadata->>'provider_sport_key' AS provider_sport_key,
             status
        FROM sports_events
       WHERE tenant_id = $1
@@ -447,6 +467,91 @@ export async function listEventsNeedingOdds(
 }
 
 /**
+ * DISTINCT provider league keys ("soccer_epl") that have upcoming/live matches
+ * needing odds this cycle. Drives the league-key odds phase: one
+ * GET /sports/{key}/odds per returned key prices ALL that league's fixtures at
+ * once (instead of a per-event fan-out that skipped events lacking a learned
+ * sport_key). Ordered so live and marquee (priority) leagues are priced first,
+ * then by soonest kickoff — so a partial (budget-limited) run still covers what
+ * matters most and resumes with the rest next cycle.
+ */
+export async function listLeagueKeysNeedingOdds(
+  client: PoolClient,
+  tenantId: string,
+  opts: {
+    liveIntervalSeconds: number;
+    prematchIntervalSeconds: number;
+    windowHours: number;
+    /** League names fetched first, regardless of kickoff date. */
+    priorityLeagues?: string[];
+    /** Cap on distinct league keys returned per run (budget guard). */
+    limit?: number;
+  }
+): Promise<LeagueKeyNeedingOdds[]> {
+  const priority = opts.priorityLeagues ?? [];
+  const limit = opts.limit ?? 500;
+  const r = await client.query<LeagueKeyNeedingOdds>(
+    `SELECT metadata->>'provider_sport_key'          AS provider_sport_key,
+            bool_or(league = ANY($6))                AS is_priority,
+            bool_or(status = 'live')                 AS has_live,
+            min(starts_at)                           AS earliest
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata ? 'provider_sport_key'
+        AND status IN ('scheduled', 'live')
+        AND (
+          (status = 'live' AND (
+             metadata->>'odds_synced_at' IS NULL
+             OR (metadata->>'odds_synced_at')::timestamptz < now() - make_interval(secs => $2)
+          ))
+          OR
+          (status = 'scheduled'
+             AND starts_at < now() + make_interval(hours => $4)
+             AND starts_at > now() - interval '3 hours'
+             AND (
+               metadata->>'odds_synced_at' IS NULL
+               OR (metadata->>'odds_synced_at')::timestamptz < now() - make_interval(secs => $3)
+             ))
+        )
+      GROUP BY metadata->>'provider_sport_key'
+      ORDER BY has_live DESC, is_priority DESC, earliest ASC
+      LIMIT $5`,
+    [
+      tenantId,
+      opts.liveIntervalSeconds,
+      opts.prematchIntervalSeconds,
+      opts.windowHours,
+      limit,
+      priority,
+    ]
+  );
+  return r.rows;
+}
+
+/**
+ * Map provider event ids → our internal event ids (provider-sourced only).
+ * Used by the league-key odds phase to attach a league's returned odds to the
+ * matching sports_events rows.
+ */
+export async function getEventIdsByProviderIds(
+  client: PoolClient,
+  tenantId: string,
+  providerEventIds: string[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (providerEventIds.length === 0) return out;
+  const r = await client.query<{ id: string; provider_event_id: string }>(
+    `SELECT id, metadata->>'provider_event_id' AS provider_event_id
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata->>'provider_event_id' = ANY($2::text[])`,
+    [tenantId, providerEventIds]
+  );
+  for (const row of r.rows) out.set(String(row.provider_event_id), row.id);
+  return out;
+}
+
+/**
  * Provider-sourced events for ONE league whose odds are missing/stale — used
  * for on-demand pre-pricing when a user opens that league board. Ordered by
  * soonest kickoff so the fixtures the user sees first get real odds first.
@@ -465,6 +570,7 @@ export async function listLeagueEventsNeedingOdds(
   const r = await client.query<EventNeedingOdds>(
     `SELECT id,
             metadata->>'provider_event_id' AS provider_event_id,
+            metadata->>'provider_sport_key' AS provider_sport_key,
             status
        FROM sports_events
       WHERE tenant_id = $1

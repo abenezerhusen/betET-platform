@@ -578,6 +578,46 @@ export class OddsApiClient {
    * distinct league. Ids whose league key is not known yet are skipped (they
    * get learned by the next events import and priced on the following pass).
    */
+  /**
+   * Prime the in-memory event→sport_key map from a persisted value (learned
+   * previously and stored on the event). Lets the per-event/on-demand odds
+   * paths (getOdds / getOddsMulti) work immediately after a process restart —
+   * before any fresh events import has repopulated the map.
+   */
+  primeSportKey(eventId: string | number, sportKey: string | null | undefined): void {
+    learnEventSportKey(String(eventId), sportKey ?? undefined);
+  }
+
+  /**
+   * Odds for a WHOLE league in ONE request: GET /sports/{sport_key}/odds.
+   * Returns every upcoming fixture (within the optional commence window) with
+   * its h2h prices — the coverage-complete primitive the odds phase iterates
+   * over per league key. Also learns each event's sport_key for later
+   * per-event lookups. Never paginates (v4 has none).
+   */
+  async getLeagueOdds(
+    sportKey: string,
+    bookmakers: string,
+    opts: { from?: string; to?: string },
+    budget?: RequestBudget
+  ): Promise<OddsApiOddsResponse[]> {
+    const sports = await this.getSports(budget);
+    const group = sports.find((s) => s.key === sportKey)?.group;
+    const data = await this.getJson<Array<Record<string, unknown>>>(
+      `/sports/${encodeURIComponent(sportKey)}/odds`,
+      {
+        regions: REGIONS,
+        markets: ODDS_MARKETS,
+        oddsFormat: 'decimal',
+        bookmakers: sanitizeBookmakers(bookmakers),
+        commenceTimeFrom: opts.from ? toApiDate(opts.from) : undefined,
+        commenceTimeTo: opts.to ? toApiDate(opts.to) : undefined,
+      },
+      budget
+    );
+    return (Array.isArray(data) ? data : []).map((raw) => this.toEvent(raw, group));
+  }
+
   async getOddsMulti(
     eventIds: Array<string | number>,
     bookmakers: string,

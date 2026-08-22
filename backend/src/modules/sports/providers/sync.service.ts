@@ -53,7 +53,6 @@ export interface SyncResult {
 const EVENTS_PER_SPORT = 5000; // provider page ceiling
 const MAX_PAGES_PER_SPORT = 4; // paginate dense sports (football) weeks ahead
 const ODDS_MULTI_CHUNK = 10; // /odds/multi ceiling (counts as 1 request)
-const MAX_EVENTS_PER_ODDS_RUN = 300; // bound odds requests per cycle (budget)
 
 // Re-importing 27k fixtures every 15 min starves the tight request budget and
 // leaves nothing for ODDS. Fixtures barely change, so refresh the catalogue at
@@ -156,7 +155,20 @@ async function getPriorityLeagues(tenantId: string): Promise<string[]> {
   }
 }
 
-/** Refresh odds for provider events whose prices are stale. */
+/**
+ * Refresh odds for provider events whose prices are stale — LEAGUE-KEY driven.
+ *
+ * the-odds-api (v4) has no cross-league odds endpoint: odds are fetched per
+ * league key ("soccer_epl") via GET /sports/{key}/odds, and ONE such call
+ * returns every upcoming fixture in that league. So instead of a per-event
+ * fan-out (which skipped any event whose sport_key wasn't in the in-memory
+ * map — the bug that left ~99% of fixtures unpriced), we enumerate every
+ * DISTINCT league key that has matches needing odds and price it in one call.
+ *
+ * Budget-aware: leagues are ordered live/priority/soonest first, and we stop
+ * the moment the request budget is exhausted — the remainder is picked up on
+ * the next sync cycle.
+ */
 async function syncOdds(
   tenantId: string,
   cfg: ResolvedProviderConfig,
@@ -164,54 +176,77 @@ async function syncOdds(
   budget: RequestBudget
 ): Promise<number> {
   const priorityLeagues = await getPriorityLeagues(tenantId);
-  const due = await withTenantClient({ tenantId }, (c) =>
-    repo.listEventsNeedingOdds(c, tenantId, {
+
+  // Every league key with upcoming/live matches that need pricing this cycle.
+  const leagueKeys = await withTenantClient({ tenantId }, (c) =>
+    repo.listLeagueKeysNeedingOdds(c, tenantId, {
       liveIntervalSeconds: cfg.liveIntervalSeconds,
       prematchIntervalSeconds: cfg.prematchIntervalSeconds,
       windowHours: cfg.syncWindowHours,
-      limit: MAX_EVENTS_PER_ODDS_RUN,
       priorityLeagues,
     })
   );
-  if (due.length === 0) return 0;
+  if (leagueKeys.length === 0) return 0;
 
-  // Map provider event id → our internal event id for the response join.
-  const idByProvider = new Map<string, string>();
-  for (const row of due) idByProvider.set(String(row.provider_event_id), row.id);
+  // Commence window: include matches that started up to 3h ago (live) through
+  // the end of the sync window (mirrors listEventsNeedingOdds' bounds).
+  const fromIso = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  const toIso = new Date(
+    Date.now() + cfg.syncWindowHours * 60 * 60 * 1000
+  ).toISOString();
 
   let oddsUpserted = 0;
-  for (let i = 0; i < due.length; i += ODDS_MULTI_CHUNK) {
-    if (budget.remaining() <= 0) break;
-    const chunk = due.slice(i, i + ODDS_MULTI_CHUNK);
-    const providerIds = chunk.map((r) => r.provider_event_id);
+  for (const { provider_sport_key: sportKey } of leagueKeys) {
+    if (budget.remaining() <= 0) break; // budget spent — resume next cycle
+    if (!sportKey) continue;
 
     let responses;
     try {
-      responses = await client.getOddsMulti(providerIds, cfg.bookmaker, budget);
+      responses = await client.getLeagueOdds(
+        sportKey,
+        cfg.bookmaker,
+        { from: fromIso, to: toIso },
+        budget
+      );
     } catch (err) {
-      logger.warn({ err, tenantId }, 'odds-sync: getOddsMulti failed for chunk');
-      break; // most likely budget exhausted or upstream error — stop this run
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes('rate_limited') ||
+        msg.includes('budget') ||
+        msg.includes('429')
+      ) {
+        break; // quota gone — the rest is priced next cycle
+      }
+      logger.warn({ err, tenantId, sportKey }, 'odds-sync: league odds fetch failed');
+      continue;
     }
+    if (responses.length === 0) continue;
 
-    const synced: string[] = [];
+    // Attach each returned fixture's odds to our matching event row.
+    const idByProvider = await withTenantClient({ tenantId }, (c) =>
+      repo.getEventIdsByProviderIds(
+        c,
+        tenantId,
+        responses.map((r) => String(r.id))
+      )
+    );
+    if (idByProvider.size === 0) continue;
+
+    const stamped: string[] = [];
     await withTenantClient({ tenantId }, async (c) => {
       for (const resp of responses) {
         const ourId = idByProvider.get(String(resp.id));
         if (!ourId) continue;
         const markets = normalizeOdds(resp, cfg.bookmaker);
-        if (markets.length === 0) continue;
-        oddsUpserted += await repo.upsertMarkets(c, tenantId, ourId, markets);
-        synced.push(ourId);
+        if (markets.length > 0) {
+          oddsUpserted += await repo.upsertMarkets(c, tenantId, ourId, markets);
+        }
+        stamped.push(ourId);
       }
-      // Stamp every event we requested (even if it had no usable markets) so
-      // we don't hammer the same empty events every tick.
-      await repo.touchOddsSynced(
-        c,
-        tenantId,
-        chunk.map((r) => r.id)
-      );
+      // Stamp every matched fixture (even ones with no usable markets) so we
+      // don't re-hammer the same league every tick within the freshness window.
+      await repo.touchOddsSynced(c, tenantId, stamped);
     });
-    void synced;
   }
   return oddsUpserted;
 }
@@ -243,11 +278,13 @@ export async function ensureEventOdds(
     const ev = await withTenantClient({ tenantId }, (c) =>
       c.query<{
         pid: string | null;
+        sport_key: string | null;
         status: string;
         starts_at: Date;
         synced_at: string | null;
       }>(
         `SELECT metadata->>'provider_event_id' AS pid,
+                metadata->>'provider_sport_key' AS sport_key,
                 status,
                 starts_at,
                 metadata->>'odds_synced_at' AS synced_at
@@ -273,6 +310,9 @@ export async function ensureEventOdds(
     }
 
     const client = new OddsApiClient({ apiUrl: cfg.apiUrl, apiKey: cfg.apiKey });
+    // Prime the league key from the persisted value so the per-event odds call
+    // works even right after a restart (before any fresh events import).
+    client.primeSportKey(e.pid, e.sport_key);
     const budget = getTenantBudget(tenantId, cfg.maxRequestsPerHour);
     const resp = await client.getOdds(e.pid, cfg.bookmaker, budget);
     if (!resp) return false;
@@ -334,7 +374,12 @@ export async function ensureLeagueOdds(
 
     const client = new OddsApiClient({ apiUrl: cfg.apiUrl, apiKey: cfg.apiKey });
     const idByProvider = new Map<string, string>();
-    for (const d of due) idByProvider.set(String(d.provider_event_id), d.id);
+    for (const d of due) {
+      idByProvider.set(String(d.provider_event_id), d.id);
+      // Prime league keys so getOddsMulti can group these ids right after a
+      // restart (before an events import has repopulated the in-memory map).
+      client.primeSportKey(d.provider_event_id, d.provider_sport_key);
+    }
 
     let oddsUpserted = 0;
     const responses = await client.getOddsMulti(

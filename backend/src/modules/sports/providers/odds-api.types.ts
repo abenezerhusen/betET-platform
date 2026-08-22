@@ -131,6 +131,9 @@ export interface NormalizedMarket {
 
 export interface NormalizedEvent {
   providerEventId: string;
+  /** Provider league key ("soccer_epl") — persisted so the odds phase knows
+   *  which /sports/{sport_key}/odds endpoint to call for each event. */
+  providerSportKey: string | null;
   sport: string;
   league: string | null;
   homeTeam: string;

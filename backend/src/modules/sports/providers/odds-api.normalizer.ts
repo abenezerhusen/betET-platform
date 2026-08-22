@@ -119,6 +119,13 @@ export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
 
   return {
     providerEventId: String(event.id),
+    // The provider league key ("soccer_epl") — from sport_key (or the league
+    // slug the client mirrors it onto). Persisted so the odds phase can price
+    // by league without relying on the fragile in-memory sport_key map.
+    providerSportKey:
+      (event.sport_key ?? '').trim() ||
+      (event.league?.slug ?? '').trim() ||
+      null,
     sport,
     // Prefer the provider's display name (sport_title); fall back to a
     // prettified sport_key so a fixture is never stored as NULL (which the
