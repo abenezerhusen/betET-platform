@@ -25,6 +25,7 @@ import type {
 } from './odds-api.types';
 import { logger } from '../../../infrastructure/logger';
 import { isSupportedProviderMarketKey } from './market-registry';
+import { canonicalLeague } from './leagues-catalog';
 
 /**
  * Provider market keys we receive but do not (yet) ingest are logged ONCE each
@@ -147,13 +148,16 @@ export function normalizeEvent(event: OddsApiEvent): NormalizedEvent | null {
       (event.league?.slug ?? '').trim() ||
       null,
     sport,
-    // Prefer the provider's display name (sport_title); fall back to a
-    // prettified sport_key so a fixture is never stored as NULL (which the
-    // frontend renders as "Unknown League").
+    // Store the league as canonical "Country - League" keyed off the stable
+    // provider sport_key, so the user panel's country/flag split and the
+    // Top-League shortcuts match. Falls back to the provider's own title (then a
+    // prettified slug) so a fixture is never stored as NULL / dropped when a key
+    // isn't in the catalog yet.
     league:
-      (event.league?.name ?? '').trim() ||
-      prettifyLeagueSlug(event.league?.slug) ||
-      null,
+      canonicalLeague(
+        (event.sport_key ?? '').trim() || (event.league?.slug ?? '').trim(),
+        (event.league?.name ?? '').trim() || prettifyLeagueSlug(event.league?.slug)
+      ) || null,
     homeTeam: home,
     awayTeam: away,
     startsAt: new Date(startsAt).toISOString(),

@@ -6,6 +6,7 @@ import { authenticateToken } from '../../middleware/authenticate';
 import * as swagger from '../../swagger/registry';
 import { env } from '../../config/env';
 import { ensureEventOdds, ensureLeagueOdds } from './providers/sync.service';
+import { resolveLeagueName } from './providers/leagues-catalog';
 
 const router = Router();
 
@@ -79,12 +80,16 @@ router.get(
     const q = listQuery.parse(req.query);
     const offset = (q.page - 1) * q.limit;
     const status = mapStatus(q.status);
+    // Top-League shortcuts / admin config send name variants ("England - EPL",
+    // "Spain - LaLiga", raw provider titles, …). Resolve them to the canonical
+    // stored name so the board isn't wrongly empty ("No upcoming matches").
+    const leagueFilter = q.league ? resolveLeagueName(q.league) : undefined;
     // Opening a specific league board pre-prices that league's soonest
     // unpriced fixtures (one provider request, budget-guarded, best-effort) so
     // real odds appear immediately instead of the league looking empty while
     // the background worker catches up. No-op for the general/home board.
-    if (q.league) {
-      await ensureLeagueOdds(tenantId, q.league).catch(() => {});
+    if (leagueFilter) {
+      await ensureLeagueOdds(tenantId, leagueFilter).catch(() => {});
     }
     return withTenantClient({ tenantId }, async (client) => {
       const filters = ['ev.tenant_id = $1'];
@@ -110,9 +115,9 @@ router.get(
         filters.push(`lower(ev.sport) = lower($${i++})`);
         values.push(q.sport);
       }
-      if (q.league) {
+      if (leagueFilter) {
         filters.push(`lower(ev.league) = lower($${i++})`);
-        values.push(q.league);
+        values.push(leagueFilter);
       }
       // Only surface fixtures that carry REAL odds from the provider. The
       // 100 req/hr provider budget can price a subset of the imported
