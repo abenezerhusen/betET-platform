@@ -47,7 +47,11 @@ const DEFAULTS = {
   ],
   prematchIntervalSeconds: 900,
   liveIntervalSeconds: 120,
-  maxRequestsPerHour: 100,
+  // Headroom for cheap featured league pricing (~1 request/league) PLUS the
+  // proactive per-event full-board enrichment (BTTS/Double Chance/DNB/etc., one
+  // request/fixture). Raise this in the admin panel to enrich more fixtures per
+  // hour — it's the hard governor on provider credit spend.
+  maxRequestsPerHour: 600,
   // 45 days — captures season openers (e.g. EPL) that are weeks away, so ALL
   // leagues (not just what's playing this week) get imported.
   syncWindowHours: 1080,

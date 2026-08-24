@@ -65,6 +65,17 @@ const lastEventsImport = new Map<string, number>();
 // to scope the LIVE phase to only the leagues that can have a live match.
 const LIVE_WINDOW_HOURS = 4;
 
+// Proactive FULL-board enrichment: every upcoming fixture's complete per-event
+// market board (BTTS, Double Chance, DNB, team totals, alt lines) is pulled in
+// the background — not just when a match is opened — so the board grid shows all
+// markets everywhere. Secondary pre-match markets barely move, so a fixture's
+// full board is refreshed at most this often (featured 1x2/O/U/AH stay on the
+// faster prematch cadence via syncOdds). Soonest kickoffs are enriched first and
+// the request budget governs how much runs per cycle.
+const FULL_ODDS_FRESHNESS_SECONDS = 3 * 60 * 60; // 3h
+// Cap the DB fetch per cycle; the hourly request budget is the real governor.
+const FULL_ODDS_PER_CYCLE = 300;
+
 /**
  * Leagues users actually browse (the "Top Leagues" rail). Their odds are
  * fetched FIRST regardless of kickoff date, so marquee fixtures (e.g. the EPL
@@ -251,6 +262,77 @@ async function syncOdds(
       // Stamp every matched fixture (even ones with no usable markets) so we
       // don't re-hammer the same league every tick within the freshness window.
       await repo.touchOddsSynced(c, tenantId, stamped);
+    });
+  }
+  return oddsUpserted;
+}
+
+/**
+ * Proactively enrich upcoming fixtures with their FULL per-event market board so
+ * every card shows all markets (BTTS, Double Chance, DNB, team totals, alt
+ * lines) without the user opening the match. the-odds-api serves these markets
+ * ONLY from the per-event endpoint, so this costs one request per fixture — done
+ * soonest-kickoff-first and stopped when the budget runs out (the rest resumes
+ * next cycle). Each fixture is refreshed at most every FULL_ODDS_FRESHNESS.
+ *
+ * Returns the number of selections written this cycle.
+ */
+async function enrichFullOdds(
+  tenantId: string,
+  cfg: ResolvedProviderConfig,
+  client: OddsApiClient,
+  budget: RequestBudget
+): Promise<number> {
+  if (budget.remaining() <= 0) return 0;
+  const priorityLeagues = await getPriorityLeagues(tenantId);
+
+  const due = await withTenantClient({ tenantId }, (c) =>
+    repo.listEventsNeedingFullOdds(c, tenantId, {
+      windowHours: cfg.syncWindowHours,
+      fullFreshnessSeconds: FULL_ODDS_FRESHNESS_SECONDS,
+      limit: FULL_ODDS_PER_CYCLE,
+      priorityLeagues,
+    })
+  );
+  if (due.length === 0) return 0;
+
+  let oddsUpserted = 0;
+  for (const e of due) {
+    if (budget.remaining() <= 0) break; // budget spent — resume next cycle
+    if (!e.provider_event_id || !e.provider_sport_key) continue;
+    client.primeSportKey(e.provider_event_id, e.provider_sport_key);
+
+    let resp;
+    try {
+      resp = await client.getEventOdds(
+        e.provider_sport_key,
+        e.provider_event_id,
+        cfg.bookmaker,
+        budget
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes('rate_limited') ||
+        msg.includes('budget') ||
+        msg.includes('429')
+      ) {
+        break; // quota gone — the rest is enriched next cycle
+      }
+      logger.warn({ err, tenantId, eventId: e.id }, 'odds-sync: full-board enrich failed');
+      continue;
+    }
+
+    await withTenantClient({ tenantId }, async (c) => {
+      if (resp) {
+        const markets = normalizeOdds(resp, cfg.bookmaker);
+        if (markets.length > 0) {
+          oddsUpserted += await repo.upsertMarkets(c, tenantId, e.id, markets);
+        }
+      }
+      // Stamp even when the provider returned nothing so we don't re-hammer the
+      // same fixture every cycle within the freshness window.
+      await repo.touchFullOddsSynced(c, tenantId, [e.id]);
     });
   }
   return oddsUpserted;
@@ -564,7 +646,13 @@ export async function runSync(
     }
 
     // ---- Phase: odds -------------------------------------------------------
+    // 1) Cheap featured pricing (1x2 / O/U / handicap) for EVERY upcoming
+    //    fixture — one request prices a whole league.
     oddsUpserted = await syncOdds(tenantId, cfg, client, budget);
+    // 2) Proactive FULL per-event board (BTTS, Double Chance, DNB, team totals,
+    //    alt lines) so every card shows all markets without opening the match.
+    //    Soonest-first, budget-governed; the rest resumes next cycle.
+    oddsUpserted += await enrichFullOdds(tenantId, cfg, client, budget);
 
     await withTenantClient({ tenantId }, (c) =>
       repo.setSyncState(c, tenantId, {

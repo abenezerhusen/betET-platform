@@ -604,6 +604,53 @@ export async function getEventIdsByProviderIds(
 }
 
 /**
+ * Provider-sourced events whose FULL per-event market board (btts,
+ * double_chance, dnb, team totals, alt lines …) is missing/stale and should be
+ * proactively enriched this cycle — so every match card shows all markets
+ * without the user having to open it. Uses its own `full_odds_synced_at` marker
+ * (the league phase only sets `odds_synced_at` for featured markets). Ordered
+ * live → priority league → soonest kickoff so the fixtures users see first get
+ * the full board first; the caller stops when the request budget runs out and
+ * resumes next cycle.
+ */
+export async function listEventsNeedingFullOdds(
+  client: PoolClient,
+  tenantId: string,
+  opts: {
+    windowHours: number;
+    fullFreshnessSeconds: number;
+    limit: number;
+    priorityLeagues?: string[];
+  }
+): Promise<EventNeedingOdds[]> {
+  const priority = opts.priorityLeagues ?? [];
+  const r = await client.query<EventNeedingOdds>(
+    `SELECT id,
+            metadata->>'provider_event_id' AS provider_event_id,
+            metadata->>'provider_sport_key' AS provider_sport_key,
+            status
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata ? 'provider_event_id'
+        AND metadata ? 'provider_sport_key'
+        AND status IN ('scheduled', 'live')
+        AND starts_at > now() - interval '3 hours'
+        AND starts_at < now() + make_interval(hours => $2)
+        AND (
+          metadata->>'full_odds_synced_at' IS NULL
+          OR (metadata->>'full_odds_synced_at')::timestamptz
+               < now() - make_interval(secs => $3)
+        )
+      ORDER BY (status = 'live') DESC,
+               (league = ANY($5)) DESC,
+               starts_at ASC
+      LIMIT $4`,
+    [tenantId, opts.windowHours, opts.fullFreshnessSeconds, opts.limit, priority]
+  );
+  return r.rows;
+}
+
+/**
  * Provider-sourced events for ONE league whose odds are missing/stale — used
  * for on-demand pre-pricing when a user opens that league board. Ordered by
  * soonest kickoff so the fixtures the user sees first get real odds first.
