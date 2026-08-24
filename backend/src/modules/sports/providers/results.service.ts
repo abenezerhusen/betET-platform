@@ -30,6 +30,7 @@ import {
 } from '../../admin/settlement/settlement.service';
 import { extractScorePair, mapStatus } from './odds-api.normalizer';
 import { gradeSelection } from './market-grading';
+import { listResultLeagueKeys } from './provider.repository';
 import type { OddsApiClient, RequestBudget } from './odds-api.client';
 import type { ResolvedProviderConfig } from './provider.config';
 import type { PoolClient } from 'pg';
@@ -327,8 +328,11 @@ async function resolveEventsWithPendingBets(
   budget: RequestBudget
 ): Promise<{ finalized: number; settled: number; cancelled: number }> {
   const due = await withTenantClient({ tenantId, bypassRls: true }, (c) =>
-    c.query<{ id: string; pid: string }>(
-      `SELECT DISTINCT e.id, e.metadata->>'provider_event_id' AS pid, e.starts_at
+    c.query<{ id: string; pid: string; sport_key: string | null }>(
+      `SELECT DISTINCT e.id,
+              e.metadata->>'provider_event_id' AS pid,
+              e.metadata->>'provider_sport_key' AS sport_key,
+              e.starts_at
          FROM sports_events e
         WHERE e.tenant_id = $1
           AND e.metadata ? 'provider_event_id'
@@ -361,6 +365,17 @@ async function resolveEventsWithPendingBets(
 
   for (const row of due.rows) {
     if (budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
+    // Without a provider league key we'd have to scan every league scoreboard
+    // to find this id (and legacy odds-api.io ids never match the current
+    // provider anyway) — a budget sink for nothing. Skip: the overdue-flagging
+    // pass surfaces it for manual settlement instead.
+    if (!row.sport_key) {
+      checkedIds.push(row.id);
+      continue;
+    }
+    // Prime the learned map so getEventById hits this fixture's league
+    // scoreboard directly (one request) instead of scanning all leagues.
+    client.primeSportKey(row.pid, row.sport_key);
     let event;
     try {
       event = await client.getEventById(row.pid, budget);
@@ -488,27 +503,18 @@ async function runResultsPass(
     logger.warn({ err, tenantId }, 'odds-sync: targeted results pass failed');
   }
 
-  // 1) Which sports have past-kickoff fixtures still open? Only those are
-  //    worth a request. Uses the sport slugs AS STORED (they come from the
-  //    provider's own sport.slug at import) — never the admin-configured
-  //    list, whose spellings can differ (e.g. `mixed-martial-arts` vs `mma`)
-  //    and would silently exclude whole sports from results forever.
-  //    Events older than the max lookback are excluded so a handful of
-  //    ancient unresolvable fixtures can't pin the window in the past.
-  const needing = await withTenantClient({ tenantId }, async (c) => {
-    const r = await c.query<{ sport: string; oldest: Date | null }>(
-      `SELECT lower(sport) AS sport, min(starts_at) AS oldest
-         FROM sports_events
-        WHERE tenant_id = $1
-          AND metadata ? 'provider_event_id'
-          AND status IN ('scheduled', 'live')
-          AND starts_at < now()
-          AND starts_at > now() - make_interval(hours => $2)
-        GROUP BY lower(sport)`,
-      [tenantId, RESULTS_LOOKBACK_HOURS]
-    );
-    return r.rows;
-  });
+  // 1) Which LEAGUE KEYS have past-kickoff fixtures still open? Only those are
+  //    worth a request. Driven by the provider league key stored on the event
+  //    (soccer_epl, …) so we fetch scores for ONLY the few leagues that
+  //    actually have matches to finalize — instead of fanning a /scores call
+  //    across every league of the sport, which exhausted the hourly budget and
+  //    starved the events/odds import. Events older than the max lookback are
+  //    excluded so a handful of ancient unresolvable fixtures can't pin the
+  //    window in the past. (Legacy fixtures with no league key are handled by
+  //    the targeted pass + overdue flagging instead.)
+  const needing = await withTenantClient({ tenantId }, (c) =>
+    listResultLeagueKeys(c, tenantId, { lookbackHours: RESULTS_LOOKBACK_HOURS })
+  );
 
   if (needing.length === 0) {
     return {
@@ -522,7 +528,7 @@ async function runResultsPass(
   //    (HTTP, outside any transaction). The scores feed carries
   //    `completed: true/false` plus the final `scores` array — completed
   //    matches are recorded directly. `daysFrom` is sized to reach the
-  //    sport's OLDEST still-open kickoff (capped at the provider's 3-day
+  //    league's OLDEST still-open kickoff (capped at the provider's 3-day
   //    maximum). the-odds-api exposes no "cancelled" state, so abandoned
   //    fixtures are handled by the targeted pass + overdue flagging instead.
   const nowMs = Date.now();
@@ -531,7 +537,7 @@ async function runResultsPass(
 
   for (const row of needing) {
     if (budget.remaining() <= RESULTS_BUDGET_RESERVE) break;
-    const sport = row.sport;
+    const sportKey = row.provider_sport_key;
     const oldestMs = row.oldest ? new Date(row.oldest).getTime() : nowMs;
     const daysFrom = Math.min(
       MAX_SCORES_DAYS_FROM,
@@ -540,10 +546,12 @@ async function runResultsPass(
 
     let events;
     try {
-      events = await client.getScores(sport, daysFrom, budget);
+      // getScores accepts an exact league key (matched in the /sports catalog),
+      // so this fetches scores for just this league.
+      events = await client.getScores(sportKey, daysFrom, budget);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.warn({ err, tenantId, sport }, 'odds-sync: results fetch failed');
+      logger.warn({ err, tenantId, sportKey }, 'odds-sync: results fetch failed');
       // Rate limited / provider unavailable — stop this cycle; whatever we
       // already collected is still applied, the rest retries next cycle.
       if (msg.includes('429') || msg.includes('503') || msg.includes('rate_limited') || msg.includes('budget')) {

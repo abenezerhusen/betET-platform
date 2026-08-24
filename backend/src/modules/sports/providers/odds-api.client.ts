@@ -28,6 +28,10 @@
  */
 
 import { logger } from '../../../infrastructure/logger';
+import {
+  EVENT_ODDS_MARKETS_PARAM,
+  FEATURED_MARKETS_PARAM,
+} from './market-registry';
 import type {
   OddsApiEvent,
   OddsApiLeagueRef,
@@ -489,9 +493,24 @@ export class OddsApiClient {
    * In-play events. v4 has no dedicated live endpoint — a match is live when
    * its scoreboard row (GET /sports/{key}/scores?daysFrom=1) has
    * completed=false and commence_time in the past.
+   *
+   * `sportKeys` scopes the scan to specific league keys (from the DB — the
+   * leagues that actually have a fixture in its in-play window right now) so a
+   * live tick costs a handful of requests instead of one per league of the
+   * whole sport. When omitted it falls back to scanning every active league.
    */
-  async getLiveEvents(budget?: RequestBudget): Promise<OddsApiEvent[]> {
-    const keys = await this.sportKeysFor(undefined, budget);
+  async getLiveEvents(
+    budget?: RequestBudget,
+    sportKeys?: string[]
+  ): Promise<OddsApiEvent[]> {
+    const sports = await this.getSports(budget);
+    const keys =
+      sportKeys && sportKeys.length > 0
+        ? sportKeys.map((key) => ({
+            key,
+            group: sports.find((s) => s.key === key)?.group,
+          }))
+        : await this.sportKeysFor(undefined, budget);
     const now = Date.now();
     const out: OddsApiEvent[] = [];
     for (const k of keys) {
@@ -607,7 +626,11 @@ export class OddsApiClient {
       `/sports/${encodeURIComponent(sportKey)}/odds`,
       {
         regions: REGIONS,
-        markets: ODDS_MARKETS,
+        // Featured markets (h2h + spreads + totals) — the ONLY markets the
+        // bulk /odds endpoint serves. One call prices 1x2 + Asian handicap +
+        // over/under for every fixture in the league (where the bookmaker
+        // offers them). Non-featured markets come from getEventOdds on demand.
+        markets: FEATURED_MARKETS_PARAM,
         oddsFormat: 'decimal',
         bookmakers: sanitizeBookmakers(bookmakers),
         commenceTimeFrom: opts.from ? toApiDate(opts.from) : undefined,
@@ -616,6 +639,44 @@ export class OddsApiClient {
       budget
     );
     return (Array.isArray(data) ? data : []).map((raw) => this.toEvent(raw, group));
+  }
+
+  /**
+   * Comprehensive odds for a SINGLE event: GET /sports/{key}/events/{id}/odds.
+   *
+   * This is the ONLY endpoint that serves the-odds-api's non-featured markets
+   * (btts, double_chance, draw_no_bet, team totals, alternate lines, …). It
+   * returns one event with every requested market the bookmaker offers, so an
+   * opened match can show its full gradable board from ONE request. Costs 1
+   * quota credit per market returned per region, so it is used on demand only
+   * (never fanned across the whole catalogue). Returns null when the event has
+   * no odds upstream.
+   */
+  async getEventOdds(
+    sportKey: string,
+    eventId: string | number,
+    bookmakers: string,
+    budget?: RequestBudget,
+    markets: string = EVENT_ODDS_MARKETS_PARAM
+  ): Promise<OddsApiOddsResponse | null> {
+    if (!sportKey) return null;
+    const sports = await this.getSports(budget);
+    const group = sports.find((s) => s.key === sportKey)?.group;
+    const data = await this.getJson<Record<string, unknown>>(
+      `/sports/${encodeURIComponent(sportKey)}/events/${encodeURIComponent(
+        String(eventId)
+      )}/odds`,
+      {
+        regions: REGIONS,
+        markets,
+        oddsFormat: 'decimal',
+        bookmakers: sanitizeBookmakers(bookmakers),
+      },
+      budget
+    );
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    if (!('id' in data)) return null;
+    return this.toEvent(data, group);
   }
 
   async getOddsMulti(

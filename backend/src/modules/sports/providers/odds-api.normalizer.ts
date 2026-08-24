@@ -23,6 +23,26 @@ import type {
   OddsApiOutcome,
   OddsApiOddsResponse,
 } from './odds-api.types';
+import { logger } from '../../../infrastructure/logger';
+import { isSupportedProviderMarketKey } from './market-registry';
+
+/**
+ * Provider market keys we receive but do not (yet) ingest are logged ONCE each
+ * so new upstream markets are discoverable for future implementation instead of
+ * vanishing silently. Module-level dedupe keeps the logs quiet across the run.
+ */
+const loggedUnsupportedMarkets = new Set<string>();
+function noteUnsupportedProviderMarket(key: string): void {
+  const k = (key ?? '').toLowerCase().trim();
+  if (!k || isSupportedProviderMarketKey(k) || loggedUnsupportedMarkets.has(k)) {
+    return;
+  }
+  loggedUnsupportedMarkets.add(k);
+  logger.info(
+    { providerMarketKey: k },
+    'odds-normalizer: provider market not yet ingested (logged for future support)'
+  );
+}
 
 export function mapStatus(raw: string | undefined): NormalizedStatus {
   switch ((raw ?? '').toLowerCase()) {
@@ -163,6 +183,47 @@ const isCleanLine = (line: number): boolean => Number.isInteger(line * 2);
 const signed = (line: number): string => (line > 0 ? `+${line}` : `${line}`);
 
 /**
+ * Resolve a provider double_chance outcome name to exactly one canonical label
+ * ("Home or Draw" | "Home or Away" | "Draw or Away") the grader understands.
+ * Robust to every observed provider wording: full team-name pairs
+ * ("Arsenal/Chelsea"), worded ("Home or Draw"), and coded ("1X"/"12"/"X2").
+ * Returns null when the outcome doesn't resolve to exactly two of {H,D,A} — so
+ * an ambiguous outcome is skipped rather than mis-labelled.
+ */
+export function classifyDoubleChance(
+  name: string,
+  homeName: string,
+  awayName: string
+): 'Home or Draw' | 'Home or Away' | 'Draw or Away' | null {
+  const n = norm(name);
+  if (!n) return null;
+  const has = { h: false, d: false, a: false };
+
+  // Compact coded forms first (unambiguous).
+  if (n === '1x' || n === 'x1') return 'Home or Draw';
+  if (n === '12' || n === '21') return 'Home or Away';
+  if (n === 'x2' || n === '2x') return 'Draw or Away';
+
+  // Team-name substring match (most reliable for team-pair wording).
+  if (homeName && n.includes(homeName)) has.h = true;
+  if (awayName && n.includes(awayName)) has.a = true;
+
+  // Token scan for worded / coded fragments.
+  for (const t of n.split(/[\/,&+]|\bor\b|\band\b|\s+/).map((x) => x.trim())) {
+    if (!t) continue;
+    if (t === '1' || t === 'home' || t === 'h') has.h = true;
+    else if (t === '2' || t === 'away' || t === 'a') has.a = true;
+    else if (t === 'x' || t === 'draw' || t === 'tie') has.d = true;
+  }
+
+  const count = Number(has.h) + Number(has.d) + Number(has.a);
+  if (count !== 2) return null;
+  if (has.h && has.d) return 'Home or Draw';
+  if (has.h && has.a) return 'Home or Away';
+  return 'Draw or Away';
+}
+
+/**
  * Normalize ONE event's odds into every market we can settle from the final
  * score. Odds come from the requested bookmaker's markets[].outcomes arrays
  * (bookmaker matched by v4 key or title, falling back to the first available
@@ -174,12 +235,29 @@ export function normalizeOdds(
   response: OddsApiOddsResponse,
   bookmaker: string
 ): NormalizedMarket[] {
+  // The configured `bookmaker` is a comma-separated PREFERENCE LIST
+  // (e.g. "pinnacle,williamhill,marathonbet"), not a single key. Pick the
+  // first preferred book present in this payload; if none are present, fall
+  // back to whichever returned book offers the MOST markets so we still surface
+  // the fullest gradable board (books differ wildly — some only carry h2h,
+  // while a sharp book like pinnacle also carries totals/handicap/btts/DC/DNB).
   const books = response.bookmakers ?? [];
-  const wanted = norm(bookmaker);
-  const book =
-    books.find((b) => norm(b.key) === wanted) ??
-    books.find((b) => norm(b.title) === wanted) ??
-    books[0];
+  const preferences = (bookmaker ?? '')
+    .toLowerCase()
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let book = undefined as (typeof books)[number] | undefined;
+  for (const pref of preferences) {
+    book = books.find((b) => norm(b.key) === pref || norm(b.title) === pref);
+    if (book) break;
+  }
+  if (!book && books.length > 0) {
+    book = books.reduce(
+      (best, b) => ((b.markets?.length ?? 0) > (best.markets?.length ?? 0) ? b : best),
+      books[0]
+    );
+  }
   const markets: OddsApiMarket[] = book?.markets ?? [];
   const homeName = norm(response.home_team);
   const awayName = norm(response.away_team);
@@ -205,8 +283,10 @@ export function normalizeOdds(
     return outcomes.find((o) => norm(o.name) === name);
   };
 
-  /* ---- h2h → 1x2 (Home / Draw / Away) ------------------------------------ */
-  for (const m of byKey('h2h')) {
+  /* ---- h2h / h2h_3_way → 1x2 (Home / Draw / Away) ------------------------ */
+  // h2h_3_way is the soccer alias of h2h (match winner incl. draw); both map to
+  // the same 1x2 family. `add()` dedupes so a payload carrying both is fine.
+  for (const m of [...byKey('h2h'), ...byKey('h2h_3_way')]) {
     const outcomes = m.outcomes ?? [];
     const home = validOdds(outcomeFor(outcomes, 'home')?.price);
     const away = validOdds(outcomeFor(outcomes, 'away')?.price);
@@ -251,6 +331,76 @@ export function normalizeOdds(
         ],
       });
     }
+  }
+
+  /* ---- double_chance → 1X / 12 / X2 -------------------------------------- */
+  // Provider outcome names vary widely ("Arsenal/Draw", "Home or Draw", "1X",
+  // team-name pairs…). classifyDoubleChance resolves each to exactly one of the
+  // three canonical pairs by matching team names AND coded/worded tokens, so we
+  // store the grader's expected labels regardless of the provider's wording.
+  for (const m of byKey('double_chance')) {
+    const picks = new Map<string, number>();
+    for (const o of m.outcomes ?? []) {
+      const price = validOdds(o.price);
+      if (price === null) continue;
+      const label = classifyDoubleChance(o.name ?? '', homeName, awayName);
+      if (label && !picks.has(label)) picks.set(label, price);
+    }
+    // Preserve the natural 1X / 12 / X2 order for display consistency.
+    const order = ['Home or Draw', 'Home or Away', 'Draw or Away'];
+    const selections = order
+      .filter((lbl) => picks.has(lbl))
+      .map((lbl) => ({ label: lbl, oddsDecimal: picks.get(lbl)! }));
+    if (selections.length > 0) {
+      add({ marketType: 'double_chance', label: 'Double Chance', selections });
+    }
+  }
+
+  /* ---- team_totals / alternate_team_totals → per-team Over/Under ---------- */
+  // Team totals grade against ONE team's score. The provider carries the team
+  // in the outcome `description`; we split into tt_home:<line> / tt_away:<line>
+  // (clean lines only — quarter/whole-line push handled by the grader).
+  {
+    const homeByLine = new Map<number, { over?: number; under?: number }>();
+    const awayByLine = new Map<number, { over?: number; under?: number }>();
+    for (const m of [...byKey('team_totals'), ...byKey('alternate_team_totals')]) {
+      for (const o of m.outcomes ?? []) {
+        const line = toNumber(o.point);
+        const price = validOdds(o.price);
+        if (line === null || price === null || line <= 0 || !isCleanLine(line)) {
+          continue;
+        }
+        const team = norm(o.description);
+        const isHome = !!team && (team === homeName || team.includes(homeName) || homeName.includes(team));
+        const isAway = !!team && (team === awayName || team.includes(awayName) || awayName.includes(team));
+        const map = isHome ? homeByLine : isAway ? awayByLine : null;
+        if (!map) continue;
+        const side = norm(o.name);
+        const entry = map.get(line) ?? {};
+        if (side.startsWith('over')) entry.over = price;
+        else if (side.startsWith('under')) entry.under = price;
+        map.set(line, entry);
+      }
+    }
+    const emitTeamTotals = (
+      map: Map<number, { over?: number; under?: number }>,
+      family: 'tt_home' | 'tt_away',
+      who: string
+    ): void => {
+      for (const [line, pair] of map) {
+        if (pair.over === undefined || pair.under === undefined) continue;
+        add({
+          marketType: `${family}:${line}`,
+          label: `${who} Total ${line}`,
+          selections: [
+            { label: `Over ${line}`, oddsDecimal: pair.over },
+            { label: `Under ${line}`, oddsDecimal: pair.under },
+          ],
+        });
+      }
+    };
+    emitTeamTotals(homeByLine, 'tt_home', 'Home');
+    emitTeamTotals(awayByLine, 'tt_away', 'Away');
   }
 
   /* ---- totals / alternate_totals → Over/Under per clean line -------------- */
@@ -318,6 +468,13 @@ export function normalizeOdds(
         ],
       });
     }
+  }
+
+  // Surface any provider market we received but don't yet ingest (HT/FT,
+  // corners, cards, player props, correct_score, period markets…) so coverage
+  // gaps are discoverable — never silently dropped.
+  for (const m of markets) {
+    if (m.key) noteUnsupportedProviderMarket(m.key);
   }
 
   return out;

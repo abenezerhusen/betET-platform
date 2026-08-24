@@ -529,6 +529,58 @@ export async function listLeagueKeysNeedingOdds(
 }
 
 /**
+ * DISTINCT provider league keys ("soccer_epl") that currently have a match in
+ * its IN-PLAY window — kicked off within the last `lookbackHours` and not yet
+ * finished/cancelled. Lets the LIVE phase fetch scores for ONLY those few
+ * leagues instead of fanning a /scores call across every league of the sport
+ * (the request-budget sink that was starving the events/odds import).
+ */
+export async function listInPlayLeagueKeys(
+  client: PoolClient,
+  tenantId: string,
+  opts: { lookbackHours: number }
+): Promise<string[]> {
+  const r = await client.query<{ provider_sport_key: string }>(
+    `SELECT DISTINCT metadata->>'provider_sport_key' AS provider_sport_key
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata ? 'provider_sport_key'
+        AND status IN ('scheduled', 'live')
+        AND starts_at <= now()
+        AND starts_at > now() - make_interval(hours => $2)`,
+    [tenantId, opts.lookbackHours]
+  );
+  return r.rows.map((row) => row.provider_sport_key).filter(Boolean);
+}
+
+/**
+ * DISTINCT provider league keys that have a PAST-KICKOFF still-open fixture
+ * within the results lookback window, with the oldest such kickoff per league
+ * (used to size the /scores `daysFrom`). Lets the windowed results pass fetch
+ * scores for ONLY the leagues that actually have matches to finalize instead of
+ * fanning across every league of the sport.
+ */
+export async function listResultLeagueKeys(
+  client: PoolClient,
+  tenantId: string,
+  opts: { lookbackHours: number }
+): Promise<Array<{ provider_sport_key: string; oldest: Date | null }>> {
+  const r = await client.query<{ provider_sport_key: string; oldest: Date | null }>(
+    `SELECT metadata->>'provider_sport_key' AS provider_sport_key,
+            min(starts_at)                  AS oldest
+       FROM sports_events
+      WHERE tenant_id = $1
+        AND metadata ? 'provider_sport_key'
+        AND status IN ('scheduled', 'live')
+        AND starts_at < now()
+        AND starts_at > now() - make_interval(hours => $2)
+      GROUP BY metadata->>'provider_sport_key'`,
+    [tenantId, opts.lookbackHours]
+  );
+  return r.rows.filter((row) => Boolean(row.provider_sport_key));
+}
+
+/**
  * Map provider event ids → our internal event ids (provider-sourced only).
  * Used by the league-key odds phase to attach a league's returned odds to the
  * matching sports_events rows.
@@ -616,6 +668,34 @@ export async function touchOddsSynced(
     `UPDATE sports_events
         SET metadata = COALESCE(metadata, '{}'::jsonb)
               || jsonb_build_object('odds_synced_at', now()),
+            updated_at = now()
+      WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+    [tenantId, eventIds]
+  );
+}
+
+/**
+ * Stamp BOTH odds_synced_at and full_odds_synced_at for the given events.
+ *
+ * The bulk league-odds phase only fetches FEATURED markets (1x2 / totals /
+ * handicap) and stamps `odds_synced_at`. The per-event on-demand fetch pulls
+ * the FULL gradable board (btts, double_chance, dnb, team totals, …) and needs
+ * its OWN freshness marker so it isn't skipped just because the cheaper
+ * featured refresh ran first — otherwise an opened match would never show its
+ * secondary markets. Stamping both keeps the list board's featured freshness
+ * accurate too.
+ */
+export async function touchFullOddsSynced(
+  client: PoolClient,
+  tenantId: string,
+  eventIds: string[]
+): Promise<void> {
+  if (eventIds.length === 0) return;
+  await client.query(
+    `UPDATE sports_events
+        SET metadata = COALESCE(metadata, '{}'::jsonb)
+              || jsonb_build_object('odds_synced_at', now(),
+                                    'full_odds_synced_at', now()),
             updated_at = now()
       WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
     [tenantId, eventIds]

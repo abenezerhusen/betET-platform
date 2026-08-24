@@ -60,6 +60,11 @@ const ODDS_MULTI_CHUNK = 10; // /odds/multi ceiling (counts as 1 request)
 const EVENTS_IMPORT_INTERVAL_MS = 45 * 60 * 1000; // 45 min
 const lastEventsImport = new Map<string, number>();
 
+// A football match (plus half-time + stoppage) fits comfortably inside this
+// window, so any league with a kickoff this recent may still be in play. Used
+// to scope the LIVE phase to only the leagues that can have a live match.
+const LIVE_WINDOW_HOURS = 4;
+
 /**
  * Leagues users actually browse (the "Top Leagues" rail). Their odds are
  * fetched FIRST regardless of kickoff date, so marquee fixtures (e.g. the EPL
@@ -287,7 +292,10 @@ export async function ensureEventOdds(
                 metadata->>'provider_sport_key' AS sport_key,
                 status,
                 starts_at,
-                metadata->>'odds_synced_at' AS synced_at
+                -- Use the FULL-board stamp (not the featured-only odds_synced_at
+                -- the league phase sets) so opening a match actually fetches its
+                -- secondary markets instead of being skipped as "fresh".
+                metadata->>'full_odds_synced_at' AS synced_at
            FROM sports_events
           WHERE id = $1 AND tenant_id = $2
           LIMIT 1`,
@@ -314,7 +322,16 @@ export async function ensureEventOdds(
     // works even right after a restart (before any fresh events import).
     client.primeSportKey(e.pid, e.sport_key);
     const budget = getTenantBudget(tenantId, cfg.maxRequestsPerHour);
-    const resp = await client.getOdds(e.pid, cfg.bookmaker, budget);
+
+    // Full gradable board (1x2 + O/U + AH + BTTS + Double Chance + DNB + team
+    // totals) via the per-event endpoint — the ONLY one that serves non-featured
+    // markets. Falls back to the featured-only odds when the league key isn't
+    // known yet or the per-event fetch returns nothing, so an opened match still
+    // shows real 1x2 prices.
+    let resp = e.sport_key
+      ? await client.getEventOdds(e.sport_key, e.pid, cfg.bookmaker, budget)
+      : null;
+    if (!resp) resp = await client.getOdds(e.pid, cfg.bookmaker, budget);
     if (!resp) return false;
     const markets = normalizeOdds(resp, cfg.bookmaker);
 
@@ -322,7 +339,9 @@ export async function ensureEventOdds(
       if (markets.length > 0) {
         await repo.upsertMarkets(c, tenantId, eventId, markets);
       }
-      await repo.touchOddsSynced(c, tenantId, [eventId]);
+      // Stamp the full-board marker (also refreshes odds_synced_at) so repeated
+      // opens within the freshness window don't re-hit the provider.
+      await repo.touchFullOddsSynced(c, tenantId, [eventId]);
     });
     return markets.length > 0;
   } catch (err) {
@@ -489,12 +508,21 @@ export async function runSync(
 
     // ---- Phase: events -----------------------------------------------------
     if (opts.phase === 'live') {
-      // One request returns all live events across sports.
-      const live = await client.getLiveEvents(budget);
-      const filtered = live.filter((e) =>
-        cfg.sports.includes((e.sport?.slug ?? e.sport?.name ?? '').toLowerCase())
+      // Only scan leagues that actually have a fixture in its in-play window
+      // right now (kicked off within the last few hours, not yet finished), so
+      // a live tick costs a handful of requests instead of one per league of
+      // the whole sport — the fan-out that was exhausting the hourly budget and
+      // starving the events/odds import.
+      const liveKeys = await withTenantClient({ tenantId }, (c) =>
+        repo.listInPlayLeagueKeys(c, tenantId, { lookbackHours: LIVE_WINDOW_HOURS })
       );
-      eventsUpserted += await upsertEventBatch(tenantId, filtered, cfg.leagues);
+      if (liveKeys.length > 0) {
+        const live = await client.getLiveEvents(budget, liveKeys);
+        const filtered = live.filter((e) =>
+          cfg.sports.includes((e.sport?.slug ?? e.sport?.name ?? '').toLowerCase())
+        );
+        eventsUpserted += await upsertEventBatch(tenantId, filtered, cfg.leagues);
+      }
     } else if (
       Date.now() - (lastEventsImport.get(tenantId) ?? 0) >=
       EVENTS_IMPORT_INTERVAL_MS

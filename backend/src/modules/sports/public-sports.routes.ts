@@ -398,6 +398,12 @@ router.get(
   wrap(async (req) => {
     const tenantId = requireTenantId(req);
     return withTenantClient({ tenantId }, async (client) => {
+      // Only surface leagues that actually have BETTABLE matches — i.e. an
+      // upcoming (or live) fixture carrying real 1x2 odds — so the sidebar
+      // matches the board exactly. Without the odds/time guard, stale
+      // fixtures (e.g. legacy events with no current prices, or past-kickoff
+      // ones the board hides) would list a league that then shows "No upcoming
+      // matches for this league right now" when opened.
       const rows = await client.query<{
         sport: string;
         league: string | null;
@@ -408,10 +414,18 @@ router.get(
                 league,
                 SUM(CASE WHEN status = 'live'      THEN 1 ELSE 0 END)::text AS live,
                 SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END)::text AS upcoming
-           FROM sports_events
+           FROM sports_events ev
           WHERE tenant_id = $1
             AND status IN ('live','scheduled')
+            AND (status = 'live' OR starts_at > now())
             ${PROVIDER_ONLY ? `AND (metadata ? 'provider_event_id')` : ''}
+            AND EXISTS (
+              SELECT 1 FROM sports_markets m
+                JOIN sports_selections s ON s.market_id = m.id
+               WHERE m.event_id = ev.id
+                 AND (m.market_type ILIKE '1x2' OR m.label ILIKE '%match result%')
+                 AND s.odds_decimal IS NOT NULL
+            )
           GROUP BY lower(sport), league`,
         [tenantId]
       );
