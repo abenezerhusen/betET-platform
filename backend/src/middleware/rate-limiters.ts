@@ -45,11 +45,47 @@ const STANDARD_HEADERS = { standardHeaders: true, legacyHeaders: false } as cons
 /* Login / refresh / password reset                                          */
 /* ------------------------------------------------------------------------- */
 
+/**
+ * Login identifier (phone / email / username) from the request body. Used to
+ * scope the login limiter per-account so many legitimate users behind ONE
+ * shared/carrier-grade-NAT IP don't collapse into a single bucket and lock
+ * each other out with "Too many login attempts" (the false-positive that was
+ * bothering users). Falls back to empty when no identifier is present.
+ */
+function loginIdentifier(req: Request): string {
+  const b = (req.body ?? {}) as {
+    phone?: unknown;
+    email?: unknown;
+    username?: unknown;
+  };
+  const raw =
+    (typeof b.phone === 'string' && b.phone) ||
+    (typeof b.email === 'string' && b.email) ||
+    (typeof b.username === 'string' && b.username) ||
+    '';
+  return raw.trim().toLowerCase();
+}
+
 export const loginRateLimiter = rateLimit({
   windowMs: env.LOGIN_RATE_LIMIT_WINDOW_MINUTES * 60 * 1000,
   max: env.LOGIN_RATE_LIMIT_MAX,
   ...STANDARD_HEADERS,
-  keyGenerator: tenantScopedKey('login'),
+  // Only FAILED logins count toward the limit. A successful sign-in — and the
+  // app's normal re-logins after a session expiry, across tabs/devices that
+  // may share an IP — never consumes the budget. This is the main fix for the
+  // limiter tripping "for no reason" without a wrong-password attempt.
+  skipSuccessfulRequests: true,
+  // Scope per (IP, tenant, account) instead of a blunt IP+tenant bucket, so
+  // many users behind the same NAT / office / carrier IP each get their own
+  // counter and can't exhaust one another's. Brute-forcing a single account
+  // from one IP is still capped exactly as before. Falls back to the original
+  // IP+tenant key when no identifier is supplied.
+  keyGenerator: (req: Request): string => {
+    const tenant = req.tenant?.id ?? 'no-tenant';
+    const ip = normalizeIp(req.ip ?? 'no-ip');
+    const id = loginIdentifier(req);
+    return id ? `login:${ip}:${tenant}:${id}` : `login:${ip}:${tenant}`;
+  },
   message: {
     error: 'too_many_requests',
     message: 'Too many login attempts. Please try again later.',

@@ -46,9 +46,9 @@ const DEFAULT_TELEGRAM = "https://t.me/1birr_support";
 const DEFAULT_18_PLUS_TEXT = "18+ Only";
 
 export function Footer() {
-  // Always start collapsed on open/refresh so the footer does not cover
-  // the betting content. The user can expand it with the toggle button.
-  const [isOpen, setIsOpen] = useState(false);
+  // Start expanded on open/refresh so the footer content is visible by
+  // default. The user can collapse it with the toggle button.
+  const [isOpen, setIsOpen] = useState(true);
   // Admin-managed content (Settings → General). Static copy is the
   // fallback so the footer renders identically until the admin saves.
   const [cfg, setCfg] = useState<PublicGeneral | null>(null);

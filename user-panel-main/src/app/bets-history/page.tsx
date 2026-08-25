@@ -954,11 +954,11 @@ export default function BetsHistoryPage() {
               Hidden while an explicit date range is active (the date filter is
               then the mechanism for viewing older bets). */}
           {!loading && !error && !dateFilterActive && (
-            <div className="mt-6 flex flex-col items-center gap-1.5">
+            <div className="relative z-10 mt-6 pb-28 md:pb-2 flex flex-col items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setShowAll((v) => !v)}
-                className="px-5 py-2 rounded-lg text-sm font-semibold text-black transition-all hover:opacity-90"
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-black transition-all hover:opacity-90 active:scale-95 touch-target"
                 style={{ background: "var(--mezzo-accent-yellow)" }}
               >
                 {showAll ? "Show Recent (last 24h)" : "Show All Bets"}
