@@ -408,6 +408,11 @@ export default function BetsHistoryPage() {
   const [sportsRows, setSportsRows] = useState<BetHistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // By default My Bets shows only the last 24 hours of tickets; "Show All"
+  // expands to the user's complete history. A manual date-range filter always
+  // takes precedence over both (so older bets can be found by date).
+  const [showAll, setShowAll] = useState(false);
+  const dateFilterActive = !!(fromDate || toDate);
 
   // Which ticket IDs are expanded
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -452,8 +457,22 @@ export default function BetsHistoryPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const fromIso = fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined;
-    const toIso   = toDate   ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined;
+    // Precedence: an explicit date range wins; otherwise "Show All" loads the
+    // full history; otherwise the default is a rolling last-24-hours window.
+    // The 24h window is an ABSOLUTE (now − 24h) bound, so it stays correct
+    // across midnight and regardless of the user's timezone.
+    let fromIso: string | undefined;
+    let toIso: string | undefined;
+    if (dateFilterActive) {
+      fromIso = fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined;
+      toIso   = toDate   ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined;
+    } else if (showAll) {
+      fromIso = undefined;
+      toIso   = undefined;
+    } else {
+      fromIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      toIso   = undefined;
+    }
 
     // Primary source: proper sportsbook_bets table.
     const primary = betsApi.listMyBets({ page: 1, limit: 100, from: fromIso, to: toIso });
@@ -489,7 +508,7 @@ export default function BetsHistoryPage() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, showAll, dateFilterActive]);
 
   /* ---- Mapped list ---- */
   const betsHistory = useMemo(
@@ -928,6 +947,27 @@ export default function BetsHistoryPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Show All / Show Recent toggle — governs the default 24h window.
+              Hidden while an explicit date range is active (the date filter is
+              then the mechanism for viewing older bets). */}
+          {!loading && !error && !dateFilterActive && (
+            <div className="mt-6 flex flex-col items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowAll((v) => !v)}
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-black transition-all hover:opacity-90"
+                style={{ background: "var(--mezzo-accent-yellow)" }}
+              >
+                {showAll ? "Show Recent (last 24h)" : "Show All Bets"}
+              </button>
+              <span className="text-[11px] text-gray-500">
+                {showAll
+                  ? "Showing your complete betting history."
+                  : "Showing bets from the last 24 hours."}
+              </span>
             </div>
           )}
         </div>
