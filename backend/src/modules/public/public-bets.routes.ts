@@ -93,6 +93,18 @@ const reserveSchema = z.object({
   currency: z.string().trim().min(2).max(8).default('ETB'),
   selections: z.array(legSchema).min(1).max(50),
   metadata: z.record(z.unknown()).default({}),
+  /**
+   * Optional kiosk attribution — the cashier + branch operating the walk-in
+   * kiosk that built this slip (threaded from the cashier panel's "Launch
+   * Fixtures" URL). Both are VALIDATED server-side against this tenant and
+   * ignored if they don't match a real cashier/branch, so they can never be
+   * spoofed into false attribution. When present, the reserved walk-in slip
+   * carries its owning branch/cashier from the moment it's created, so the
+   * admin Offline Bets list shows the branch, cashier and agent name instead
+   * of a bare "Walk-in Player" — even before the ticket is sold.
+   */
+  cashier_id: z.string().uuid().optional(),
+  branch_id: z.string().uuid().optional(),
 });
 
 function round2(n: number): number {
@@ -766,6 +778,52 @@ router.post(
           const betType =
             resolved.length === 1 ? 'single' : body.bet_type;
 
+          // Kiosk attribution (optional, validated). A walk-in slip is placed
+          // anonymously, so it used to have NO branch/cashier until a cashier
+          // pressed Sell — leaving reserved-but-unsold slips shown as a bare
+          // "Walk-in Player" with empty Branch/Cashier columns. When the
+          // cashier panel threads its cashier/branch ids through "Launch
+          // Fixtures", we verify they belong to THIS tenant (never trusting the
+          // client blindly) and stamp them now: the real cashier_id column plus
+          // metadata.branch_id/cashier_name/branch_label that the admin Offline
+          // Bets list already resolves for the Branch, Cashier and Full Name
+          // (agent) columns. A later Sell still overwrites sold_by_cashier_id /
+          // sold_branch_id with the actual selling cashier, so nothing regresses.
+          let attrCashierId: string | null = null;
+          let attrCashierName: string | null = null;
+          let attrBranchId: string | null = null;
+          let attrBranchLabel: string | null = null;
+          if (body.cashier_id) {
+            const r = await client.query<{ id: string; name: string | null }>(
+              `SELECT id,
+                      COALESCE(metadata->>'full_name', metadata->>'name',
+                               email::text, phone) AS name
+                 FROM users
+                WHERE tenant_id = $1 AND id = $2 AND role <> 'user'
+                LIMIT 1`,
+              [tenantId, body.cashier_id]
+            );
+            if (r.rows[0]) {
+              attrCashierId = r.rows[0].id;
+              attrCashierName = r.rows[0].name;
+            }
+          }
+          if (body.branch_id) {
+            const r = await client.query<{ id: string; label: string | null }>(
+              `SELECT id,
+                      COALESCE(metadata->>'name', metadata->>'label',
+                               metadata->>'branch_id', email::text) AS label
+                 FROM users
+                WHERE tenant_id = $1 AND id = $2 AND role = 'branch'
+                LIMIT 1`,
+              [tenantId, body.branch_id]
+            );
+            if (r.rows[0]) {
+              attrBranchId = r.rows[0].id;
+              attrBranchLabel = r.rows[0].label;
+            }
+          }
+
           const inserted = await client.query<{
             id: string;
             coupon_code: string;
@@ -780,7 +838,7 @@ router.post(
                effective_stake, gross_payout_before_bonus,
                compensation_bonus_enabled, compensation_bonus_percent,
                winning_tax_enabled, winning_tax_percent,
-               metadata
+               metadata, cashier_id
              ) VALUES (
                $1, $2, 'offline', $3,
                $4, $5, $6, $7, 0,
@@ -789,7 +847,7 @@ router.post(
                $13, $14,
                $15, $16,
                $17, $18,
-               $8::jsonb
+               $8::jsonb, $19::uuid
              )
              RETURNING id, coupon_code, ticket_code, placed_at`,
             [
@@ -807,6 +865,12 @@ router.post(
                 walk_in: true,
                 picks_count: resolved.length,
                 selections: selectionsForReceipt,
+                // Validated kiosk attribution — resolved by the admin Offline
+                // Bets list for the Branch / Cashier / Full Name columns.
+                ...(attrBranchId ? { branch_id: attrBranchId } : {}),
+                ...(attrBranchLabel ? { branch_label: attrBranchLabel } : {}),
+                ...(attrCashierId ? { cashier_id: attrCashierId } : {}),
+                ...(attrCashierName ? { cashier_name: attrCashierName } : {}),
                 tax_snapshot: {
                   betting_tax_enabled: stakeTax.bet_tax_enabled,
                   betting_tax_percent: stakeTax.bet_tax_percent,
@@ -828,6 +892,8 @@ router.post(
               taxCfg.compensation_bonus_percent,
               taxCfg.winning_tax_enabled,
               taxCfg.winning_tax_percent,
+              // $19 — validated kiosk cashier (NULL when unattributed)
+              attrCashierId,
             ]
           );
           const betId = inserted.rows[0].id;

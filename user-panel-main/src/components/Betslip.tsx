@@ -18,6 +18,7 @@ import { useBets } from "@/context/BetContext";
 import { BetConfirmationModal } from "@/components/BetConfirmationModal";
 import { FastButton } from "@/components/FastButton";
 import { betsApi, gamesApi } from "@/lib/api";
+import { getKioskContext } from "@/lib/kiosk";
 import { useAuth } from "@/context/AuthContext";
 import { BetCodePanel } from "@/components/BetCodePanel";
 
@@ -230,10 +231,17 @@ export function Betslip({ onClose }: BetslipProps = {}) {
         };
       });
 
+      // Kiosk attribution — when this panel was opened via the cashier's
+      // "Launch Fixtures", stamp the owning cashier/branch onto the walk-in
+      // slip so it shows up (branch/cashier/agent) in admin Offline Bets even
+      // before it's sold. Empty for normal online players.
+      const kiosk = getKioskContext();
       const reservation = await betsApi.reserveOfflineBet({
         stake,
         bet_type: bets.length > 1 ? "combo" : "single",
         selections,
+        ...(kiosk.cashier_id ? { cashier_id: kiosk.cashier_id } : {}),
+        ...(kiosk.branch_id ? { branch_id: kiosk.branch_id } : {}),
         metadata: {
           placed_from: "user_panel",
           mode: "offline_branch_pay",

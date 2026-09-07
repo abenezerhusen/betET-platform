@@ -1,6 +1,7 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useMemo, useState, ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { captureKioskContextFromUrl } from "@/lib/kiosk";
 
 export interface Bet {
   id: string;
@@ -75,6 +76,14 @@ export function BetProvider({ children }: { children: ReactNode }) {
   // list so existing consumers see exactly what they used to see.
   const [slips, setSlips] = useState<Record<SlipId, Bet[]>>(emptySlips);
   const [activeSlip, setActiveSlipState] = useState<SlipId>(1);
+
+  // Capture kiosk (walk-in) attribution from the launch URL once, on first
+  // mount. No-op for normal online players (no kiosk_* params present). This
+  // lets the offline reservation stamp the owning branch/cashier so the admin
+  // Offline Bets list shows them instead of a bare "Walk-in Player".
+  useEffect(() => {
+    captureKioskContextFromUrl();
+  }, []);
 
   const setActiveSlip = useCallback((slip: SlipId) => {
     setActiveSlipState(slip);

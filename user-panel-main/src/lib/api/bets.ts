@@ -99,6 +99,14 @@ export interface OfflineReservationInput {
   currency?: string;
   selections: OfflineSelectionInput[];
   metadata?: Record<string, unknown>;
+  /**
+   * Kiosk attribution — the cashier + branch that launched this walk-in
+   * kiosk (threaded from the cashier panel's "Launch Fixtures" URL). Both are
+   * validated server-side; when they match a real cashier/branch the reserved
+   * slip shows the owning branch/cashier/agent in the admin Offline Bets list.
+   */
+  cashier_id?: string;
+  branch_id?: string;
 }
 
 export interface OfflineReservation {

@@ -401,6 +401,15 @@ function TicketsPage() {
   const [ticket, setTicket] = useState<CashierTicket | null>(null);
   const [payoutInfo, setPayoutInfo] = useState<CashierTicketCheck | null>(null);
   const [printLoading, setPrintLoading] = useState(false);
+  // Synchronous in-flight guard for the sell/print action. `printLoading`
+  // (React state) updates asynchronously, so two rapid fires (fast double
+  // tap, barcode wedge, mobile touch) can BOTH pass a `printLoading` check
+  // in the same tick — issuing two /sell calls that create an unwanted extra
+  // paid copy AND surface a "something went wrong" on the second (copy-limit
+  // / race). A ref flips synchronously so only one sell is ever in flight per
+  // user action, while still allowing DELIBERATE separate prints (each new
+  // click, after this one settles, sells its own ticket as intended).
+  const printBusyRef = useRef(false);
   const [payoutBusy, setPayoutBusy] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [removeLegBusy, setRemoveLegBusy] = useState<number | null>(null);
@@ -587,8 +596,12 @@ function TicketsPage() {
 
   const printTicket = async (ticketId: string) => {
     const id = ticketId.trim();
-    if (!id || printLoading) return;
+    // Ref guard flips synchronously (see printBusyRef) so an accidental
+    // double-fire can never issue two sells for one action; the state flag
+    // still drives the button's disabled/label UI.
+    if (!id || printBusyRef.current || printLoading) return;
     if (!ensureCashierPermission("sell_tickets")) return;
+    printBusyRef.current = true;
     setCouponError("");
     setActionMessage("");
     setPrintLoading(true);
@@ -642,6 +655,7 @@ function TicketsPage() {
       setCouponError((err as Error).message || "Failed to print ticket.");
     } finally {
       setPrintLoading(false);
+      printBusyRef.current = false;
     }
   };
 
@@ -1271,7 +1285,29 @@ function TicketsRightSidebar() {
     // Section 16 Flow B: cashier opens the user panel in a new tab,
     // builds the bet slip on behalf of the walk-in player, copies the
     // generated Ticket ID, returns here and pastes it into Sell Ticket.
-    window.open(USER_PANEL_URL, "_blank", "noopener,noreferrer");
+    //
+    // Thread the operating cashier + branch identity into the URL so the
+    // walk-in slip is attributed the moment it's reserved (the backend
+    // re-validates both ids). Without this, reserved-but-unsold walk-in slips
+    // showed as a bare "Walk-in Player" with empty Branch/Cashier columns in
+    // the admin Offline Bets list.
+    const session = getCashierSession();
+    const params = new URLSearchParams();
+    if (session?.user?.id) params.set("kiosk_cashier_id", session.user.id);
+    const branchUserId = session?.branch?.user_id?.trim();
+    if (branchUserId) params.set("kiosk_branch_id", branchUserId);
+    const cashierName =
+      session?.login_username ||
+      session?.user?.email ||
+      session?.user?.phone ||
+      "";
+    if (cashierName) params.set("kiosk_cashier_name", cashierName);
+    const branchLabel =
+      session?.branch?.branch_code || session?.branch?.label || "";
+    if (branchLabel) params.set("kiosk_branch_label", branchLabel);
+    const qs = params.toString();
+    const url = qs ? `${USER_PANEL_URL}?${qs}` : USER_PANEL_URL;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const loadSlips = useCallback(async () => {
