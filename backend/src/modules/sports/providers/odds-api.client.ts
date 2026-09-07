@@ -91,7 +91,25 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const EVENTS_ODDS_MARKETS = 'h2h,spreads,totals';
 /** Markets requested by the targeted per-event odds refresh. */
 const ODDS_MARKETS = 'h2h';
-const REGIONS = 'eu';
+/**
+ * Bookmaker regions requested on every odds/event call.
+ *
+ * The Odds API only returns an event (and its bookmakers) for the regions asked
+ * for — so an `eu`-only request silently drops every fixture priced only by
+ * UK/US/AU books and thins the bookmaker list for the rest. We therefore query
+ * ALL four regions by default so the merged bookmakers[] carries the maximum
+ * soccer coverage (more events surfaced + a richer board to pick the best book
+ * from). Credits are billed markets × regions; maximum coverage is the intent.
+ * Override with ODDS_API_REGIONS (comma list) if a plan ever needs narrowing.
+ */
+const REGIONS = ((): string => {
+  const parsed = (process.env.ODDS_API_REGIONS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => /^[a-z]{2}$/.test(s))
+    .join(',');
+  return parsed || 'eu,uk,us,au';
+})();
 /** the-odds-api caps /scores lookback at 3 days. */
 const MAX_SCORES_DAYS_FROM = 3;
 
