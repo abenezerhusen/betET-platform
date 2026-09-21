@@ -168,21 +168,27 @@ const administratorCatalog: Permission[] = [
   { id: 'apis.manage', name: 'Manage APIs & Integrations', description: 'Add / edit / remove integrations', category: 'APIs & Integrations', scopes: adminScopes },
 
   /* Settings ---------------------------------------------------------------- */
-  /* Settings catalog is Super-Admin-only per Section 22 spec. */
-  { id: 'settings.view', name: 'View Settings', description: 'Open the Settings section', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.general', name: 'Edit General Settings', description: 'Edit general settings', category: 'Settings', scopes: ['Super Admin'] },
+  /* Settings is assignable to Administrators too, so a Super Admin can grant a
+   * tenant Administrator permission to manage the Settings section. Frontend
+   * routes/sidebar and the backend (enforce-admin-permission `SETTINGS_ALL`)
+   * already gate these routes by the permission ID, so granting them takes
+   * effect immediately. Super Admin still holds the wildcard and is unaffected. */
+  { id: 'settings.view', name: 'View Settings', description: 'Open the Settings section', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.general', name: 'Edit General Settings', description: 'Edit general settings', category: 'Settings', scopes: adminScopes },
   /* `settings.main` is the canonical ID from Section 22; `settings.main_config`
-   * is kept as an alias for backwards-compat with older saved role rows. */
-  { id: 'settings.main', name: 'Edit Main Configuration', description: 'Edit main configuration', category: 'Settings', scopes: ['Super Admin'] },
+   * is kept as an alias for backwards-compat with older saved role rows and is
+   * intentionally left Super-Admin-only (hidden) so it never shows as a
+   * confusing duplicate — granting `settings.main` already covers it. */
+  { id: 'settings.main', name: 'Edit Main Configuration', description: 'Edit main configuration', category: 'Settings', scopes: adminScopes },
   { id: 'settings.main_config', name: 'Edit Main Configuration (alias)', description: 'Legacy alias for settings.main', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.payment', name: 'Edit Payment Configuration', description: 'Edit payment configuration', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.security', name: 'Edit Security Settings', description: 'Edit security settings', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.maintenance', name: 'Edit Maintenance Settings', description: 'Enter / exit maintenance mode', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.api_management', name: 'Edit API Management', description: 'Edit API management', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.sms', name: 'Edit SMS Config', description: 'Edit SMS configuration', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.game_picks', name: 'Edit Game Picks', description: 'Edit game pick lists', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.match_stats', name: 'Edit Match Stats', description: 'Edit match stats configuration', category: 'Settings', scopes: ['Super Admin'] },
-  { id: 'settings.sports_provider', name: 'Edit Sports Data Provider', description: 'Configure the real odds/match data provider (Odds-API.io): API key, bookmaker, sports, sync and manual sync', category: 'Settings', scopes: ['Super Admin'] },
+  { id: 'settings.payment', name: 'Edit Payment Configuration', description: 'Edit payment configuration', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.security', name: 'Edit Security Settings', description: 'Edit security settings', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.maintenance', name: 'Edit Maintenance Settings', description: 'Enter / exit maintenance mode', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.api_management', name: 'Edit API Management', description: 'Edit API management', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.sms', name: 'Edit SMS Config', description: 'Edit SMS configuration', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.game_picks', name: 'Edit Game Picks', description: 'Edit game pick lists', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.match_stats', name: 'Edit Match Stats', description: 'Edit match stats configuration', category: 'Settings', scopes: adminScopes },
+  { id: 'settings.sports_provider', name: 'Edit Sports Data Provider', description: 'Configure the real odds/match data provider (Odds-API.io): API key, bookmaker, sports, sync and manual sync', category: 'Settings', scopes: adminScopes },
 
   /* Marketing — Bulk SMS ---------------------------------------------------- */
   /* Super Admin by default; can be granted to an Administrator role so a
