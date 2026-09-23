@@ -6,6 +6,7 @@ import { toast } from '../../lib/toast';
 import * as settingsApi from '../../lib/api/settings';
 import * as paymentMethodsApi from '../../lib/api/payment-methods';
 import * as gamePicksApi from '../../lib/api/gamePicks';
+import * as adminGamesApi from '../../lib/api/games';
 import { useAuthStore } from '../../store/auth';
 
 /* -------------------------------------------------------------------------- */
@@ -145,6 +146,9 @@ export function GeneralConfig() {
   const [topMatches, setTopMatches] = useState<settingsApi.TopMatchEntry[]>([]);
   const [promotions, setPromotions] = useState<settingsApi.PromotionBanner[]>([]);
   const [gameThumbnails, setGameThumbnails] = useState<settingsApi.GameThumbnail[]>([]);
+  const [popularGames, setPopularGames] = useState<settingsApi.PopularGame[]>([]);
+  const [lobbyGames, setLobbyGames] = useState<adminGamesApi.LobbyGameOption[]>([]);
+  const [newPopularGameId, setNewPopularGameId] = useState('');
   const [footerLinks, setFooterLinks] = useState<settingsApi.FooterLinks>({
     company_description: "Ethiopia's modern sports betting platform. Bet on football, basketball, and more. Fast payouts, secure accounts.",
     live_chat_text: 'Available 24/7',
@@ -220,7 +224,7 @@ export function GeneralConfig() {
     if (!isAuth) return;
     setLoading(true);
     try {
-      const [generalRes, announcementRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, navbarRes, methodsRes, leaguesRes] =
+      const [generalRes, announcementRes, betsRes, matchesRes, promosRes, footerRes, thumbsRes, navbarRes, methodsRes, leaguesRes, popularRes, lobbyGamesRes] =
         await Promise.all([
           settingsApi.getGeneralConfig().catch(() => ({} as settingsApi.GeneralConfig)),
           settingsApi.getAnnouncementConfig().catch(() => ({} as settingsApi.AnnouncementConfig)),
@@ -234,6 +238,8 @@ export function GeneralConfig() {
           gamePicksApi
             .listAvailableLeagues(undefined, 5000)
             .catch(() => [] as gamePicksApi.AvailableLeague[]),
+          settingsApi.listPopularGames().catch(() => ({ items: [] as settingsApi.PopularGame[] })),
+          adminGamesApi.listPublicLobbyGames().catch(() => [] as adminGamesApi.LobbyGameOption[]),
         ]);
       setGeneral({ ...defaultGeneral, ...(generalRes ?? {}) });
       setAnnouncement({ ...defaultAnnouncement, ...(announcementRes ?? {}) });
@@ -252,6 +258,10 @@ export function GeneralConfig() {
       setGameThumbnails(
         (thumbsRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `t-${i}` }))
       );
+      setPopularGames(
+        (popularRes.items ?? []).map((r, i) => ({ ...r, id: r.id || `pg-${i}` }))
+      );
+      setLobbyGames(lobbyGamesRes ?? []);
       const loadedNavbar = normalizeNavbarRows(navbarRes.items ?? []);
       setNavbarItems(loadedNavbar.length > 0 ? loadedNavbar : DEFAULT_NAVBAR_ITEMS);
       setMethods(methodsRes.items ?? []);
@@ -348,6 +358,15 @@ export function GeneralConfig() {
     }
   };
 
+  const persistPopularGames = async (rows: settingsApi.PopularGame[]) => {
+    setPopularGames(rows);
+    try {
+      await settingsApi.savePopularGames(rows);
+    } catch (err) {
+      toast(`Failed to save popular games: ${(err as Error)?.message ?? err}`, 'error');
+    }
+  };
+
   const persistNavbarItems = async (rows: settingsApi.NavbarItem[]) => {
     const previous = navbarItems;
     const normalized = normalizeNavbarRows(rows);
@@ -392,6 +411,7 @@ export function GeneralConfig() {
     { id: 'footer-settings', label: 'Footer Settings' },
     { id: 'navbar-settings', label: 'Navbar Settings' },
     { id: 'game-thumbnails', label: 'Game Thumbnails' },
+    { id: 'popular-games', label: 'Popular Games' },
     { id: 'top-bets', label: 'Top Leagues' },
     { id: 'top-matches', label: 'Top Matches' },
     { id: 'announcement', label: 'Announcement Popup' },
@@ -1000,6 +1020,146 @@ export function GeneralConfig() {
               },
             ]}
             data={gameThumbnails}
+          />
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */
+        /* Popular Games                                                      */
+        /* ------------------------------------------------------------------ */}
+      {activeTab === 'popular-games' && (
+        <div className="bg-white rounded-lg shadow p-6 space-y-4">
+          <p className="text-xs text-gray-500">
+            Curate the games shown in the user panel home page{' '}
+            <strong>Popular Games</strong> section. Pick from the existing lobby games
+            (internal engine, external providers and catalog) — the games themselves and
+            their play/launch behaviour are unchanged. Up to 10 active games are shown on
+            the home page, in the order below. Saved to{' '}
+            <code>POST /api/admin/settings/popular-games</code> and consumed immediately by
+            the user panel.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <select
+              value={newPopularGameId}
+              onChange={(e) => setNewPopularGameId(e.target.value)}
+              className="md:col-span-3 rounded-md border-gray-300"
+            >
+              <option value="">Select a game…</option>
+              {lobbyGames
+                .filter((g) => !popularGames.some((r) => r.game_id.toLowerCase() === g.id.toLowerCase()))
+                .map((g) => (
+                  <option key={`${g.source}-${g.id}`} value={g.id}>
+                    {g.name} — {g.provider || g.source}
+                  </option>
+                ))}
+            </select>
+            <button
+              onClick={() => {
+                const g = lobbyGames.find((x) => x.id === newPopularGameId);
+                if (!g) return;
+                void persistPopularGames([
+                  ...popularGames,
+                  {
+                    id: String(Date.now()),
+                    game_id: g.id,
+                    game_name: g.name,
+                    thumbnail_url: g.thumbnail_url,
+                    source: g.source,
+                    is_active: true,
+                    display_order: popularGames.length,
+                  },
+                ]);
+                setNewPopularGameId('');
+              }}
+              className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
+              disabled={!newPopularGameId}
+            >
+              <Plus className="h-4 w-4 mr-2" /> Add
+            </button>
+          </div>
+          {lobbyGames.length === 0 && (
+            <p className="text-xs text-amber-600">
+              No lobby games loaded yet — make sure games are configured, then reload this page.
+            </p>
+          )}
+          <p className="text-xs text-gray-500">
+            Active games: {popularGames.filter((g) => g.is_active !== false).length} (the first 10 active
+            games appear on the home page).
+          </p>
+          <DataTable
+            columns={[
+              {
+                header: 'Thumbnail',
+                accessor: 'thumbnail_url' as const,
+                render: (value: string) => (
+                  <img src={value} alt="" className="h-10 w-16 object-cover rounded" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                ),
+              },
+              { header: 'Game', accessor: 'game_name' as const },
+              { header: 'Source', accessor: 'source' as const },
+              {
+                header: 'Active',
+                accessor: 'is_active' as const,
+                render: (value: boolean, row: settingsApi.PopularGame) => (
+                  <input
+                    type="checkbox"
+                    checked={value !== false}
+                    onChange={(e) =>
+                      void persistPopularGames(
+                        popularGames.map((g) =>
+                          g.id === row.id ? { ...g, is_active: e.target.checked } : g
+                        )
+                      )
+                    }
+                  />
+                ),
+              },
+              {
+                header: 'Order',
+                accessor: 'display_order' as const,
+                render: (_v, row: settingsApi.PopularGame) => (
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs px-2 py-1 border rounded"
+                      onClick={() => {
+                        const idx = popularGames.findIndex((x) => x.id === row.id);
+                        if (idx <= 0) return;
+                        const copy = [...popularGames];
+                        [copy[idx - 1], copy[idx]] = [copy[idx], copy[idx - 1]];
+                        void persistPopularGames(copy.map((x, i) => ({ ...x, display_order: i })));
+                      }}
+                    >
+                      Up
+                    </button>
+                    <button
+                      className="text-xs px-2 py-1 border rounded"
+                      onClick={() => {
+                        const idx = popularGames.findIndex((x) => x.id === row.id);
+                        if (idx < 0 || idx >= popularGames.length - 1) return;
+                        const copy = [...popularGames];
+                        [copy[idx], copy[idx + 1]] = [copy[idx + 1], copy[idx]];
+                        void persistPopularGames(copy.map((x, i) => ({ ...x, display_order: i })));
+                      }}
+                    >
+                      Down
+                    </button>
+                  </div>
+                ),
+              },
+              {
+                header: 'Action',
+                accessor: 'id' as const,
+                render: (value: string) => (
+                  <button
+                    className="text-red-600"
+                    onClick={() => void persistPopularGames(popularGames.filter((r) => r.id !== value))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                ),
+              },
+            ]}
+            data={popularGames}
           />
         </div>
       )}

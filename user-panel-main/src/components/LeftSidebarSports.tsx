@@ -13,7 +13,7 @@ import { SportsCatalog } from "@/components/SportsCatalog";
 export function LeftSidebarSports() {
   return (
     <aside
-      className="hidden md:block md:w-48 lg:w-52 flex-shrink-0 border-r"
+      className="hidden md:block md:w-48 lg:w-52 flex-shrink-0 border-r self-start sticky top-[120px] h-[calc(100vh-120px)]"
       style={{
         background: "var(--mezzo-bg-secondary)",
         borderColor: "var(--mezzo-border)",

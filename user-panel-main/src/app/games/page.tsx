@@ -357,10 +357,11 @@ export default function GamesPage() {
     const qs = params.toString();
     window.history.replaceState({}, "", `/games${qs ? `?${qs}` : ""}`);
 
+    // Match by id/slug across every source (internal engine, external
+    // provider, catalog) so a game tapped from the home page — regardless of
+    // its type — deep-launches here through the same permission/launch flow.
     const card = cards.find(
-      (c) =>
-        c.source === "internal" &&
-        (c.internalSlug === play || c.id === play),
+      (c) => c.internalSlug === play || c.id === play,
     );
     if (card) void openRealPlay(card);
     // openRealPlay is recreated each render; the ref guard keeps this a
@@ -535,14 +536,20 @@ export default function GamesPage() {
                   <ExpandedGameCard
                     key={game.key}
                     game={game}
-                    onOpen={() => setActiveGame(game)}
+                    // Tapping the thumbnail launches the game directly (same
+                    // auth/wallet/iframe flow as the Play button) — no
+                    // intermediate "Play (real)" detail screen.
+                    onOpen={() => void openRealPlay(game)}
                     onPlayReal={() => void openRealPlay(game)}
                   />
                 ) : (
                   <CompactGameCard
                     key={game.key}
                     game={game}
-                    onOpen={() => setActiveGame(game)}
+                    // Tapping the thumbnail launches the game directly (same
+                    // auth/wallet/iframe flow as the Play button) — no
+                    // intermediate "Play (real)" detail screen.
+                    onOpen={() => void openRealPlay(game)}
                     onPlayReal={() => void openRealPlay(game)}
                   />
                 ),

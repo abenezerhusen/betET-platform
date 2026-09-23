@@ -183,6 +183,19 @@ main {
   @apply ring-2 ring-[var(--mezzo-accent-yellow)];
 }
 
+/* Desktop MatchCard odds buttons — fixed, uniform size.
+ * `min-w-[40px]` let each button grow with its value ("11.00" is wider than
+ * "3.40", and "—" narrower still), so the 1/X/2 and 1X/X2/12 columns didn't
+ * line up from one match row to the next. A fixed width with slightly tighter
+ * padding (a touch smaller than before) makes every row's columns identical.
+ * The compound selector out-specifies the base `.odds-btn` padding, and the
+ * extra class is only applied to these desktop buttons — no other odds button
+ * anywhere else is affected. */
+.odds-btn.odds-btn--fixed {
+  width: 48px;
+  padding: 0.25rem 0.25rem;
+}
+
 /* ---------------------------------------------------------------------------
  * Unified "lemon" selected indicator for odds buttons rendered through the
  * shared <OddsButton /> component (home detailed view, match-details page,

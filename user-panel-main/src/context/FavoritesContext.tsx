@@ -13,23 +13,50 @@ interface FavoritesContextType {
 
 const FavoritesContext = createContext<FavoritesContextType | undefined>(undefined);
 
+/**
+ * Safely read a persisted string[] from localStorage.
+ *
+ * Previously we called `JSON.parse(localStorage.getItem(...))` unguarded. If
+ * that key ever held a corrupt / non-JSON / wrong-shaped value (interrupted
+ * write, storage eviction, an older app version, a browser extension, etc.),
+ * the parse threw inside the mount effect. Because this provider wraps the
+ * whole app and there was no error boundary, that single throw crashed the
+ * entire client with Next.js's generic "Application error" screen — and since
+ * the bad value stayed in localStorage, it re-threw on every reload, so the
+ * crash appeared permanent. We now parse defensively, validate the shape, and
+ * self-heal by dropping the corrupt value. Behaviour is unchanged for valid data.
+ */
+function readStringArray(key: string): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((v): v is string => typeof v === 'string');
+    }
+    // Wrong shape — treat as empty and clear the bad value.
+    window.localStorage.removeItem(key);
+    return [];
+  } catch {
+    // Corrupt / non-JSON — drop it so it can never brick the app again.
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+    return [];
+  }
+}
+
 export function FavoritesProvider({ children }: { children: ReactNode }) {
   const [favoriteMatches, setFavoriteMatches] = useState<string[]>([]);
   const [favoriteTeams, setFavoriteTeams] = useState<string[]>([]);
 
   // Load from localStorage on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedMatches = localStorage.getItem('mezzo_favorite_matches');
-      const savedTeams = localStorage.getItem('mezzo_favorite_teams');
-
-      if (savedMatches) {
-        setFavoriteMatches(JSON.parse(savedMatches));
-      }
-      if (savedTeams) {
-        setFavoriteTeams(JSON.parse(savedTeams));
-      }
-    }
+    setFavoriteMatches(readStringArray('mezzo_favorite_matches'));
+    setFavoriteTeams(readStringArray('mezzo_favorite_teams'));
   }, []);
 
   // Save to localStorage whenever favorites change

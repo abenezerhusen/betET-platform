@@ -300,9 +300,14 @@ export async function apiRequest<T = unknown>(
 
   if (cacheable && !opts.noDedupe) {
     inFlight.set(key, exec as Promise<unknown>);
-    void exec.finally(() => {
+    const cleanup = () => {
       if (inFlight.get(key) === (exec as Promise<unknown>)) inFlight.delete(key);
-    });
+    };
+    // Settle both fulfilment AND rejection here so a failed cached GET (e.g. a
+    // not-yet-deployed endpoint) never surfaces as an *unhandled* promise
+    // rejection via this bookkeeping chain. The caller keeps its own reference
+    // to `exec` and remains responsible for its own error handling.
+    exec.then(cleanup, cleanup);
   }
 
   return exec;

@@ -380,3 +380,24 @@ export const listGameThumbnails = () =>
   http.get<{ items: GameThumbnail[] }>('/api/admin/settings/game-thumbnails');
 export const saveGameThumbnails = (items: GameThumbnail[]) =>
   http.post<{ items: GameThumbnail[] }>('/api/admin/settings/game-thumbnails', { items });
+
+/* -------------------------------------------------------------------------- */
+/* Popular Games — admin-curated games shown in the user-panel home section.   */
+/* -------------------------------------------------------------------------- */
+
+export interface PopularGame {
+  id?: string;
+  /** References an existing lobby game by its id/slug (as the user panel sees it). */
+  game_id: string;
+  game_name?: string;
+  thumbnail_url?: string;
+  /** internal | external | catalog — informational, from the lobby source. */
+  source?: string;
+  is_active?: boolean;
+  display_order?: number;
+}
+
+export const listPopularGames = () =>
+  http.get<{ items: PopularGame[] }>('/api/admin/settings/popular-games');
+export const savePopularGames = (items: PopularGame[]) =>
+  http.post<{ items: PopularGame[] }>('/api/admin/settings/popular-games', { items });

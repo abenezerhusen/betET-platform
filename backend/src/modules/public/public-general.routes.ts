@@ -248,6 +248,23 @@ router.get('/game-thumbnails', async (req, res, next) => {
 });
 
 /**
+ * GET /api/public/popular-games
+ * Returns the admin-curated "Popular Games" list (Settings → General →
+ * Popular Games) so the user panel home page can render its Popular Games
+ * grid. Each entry references an existing lobby game by id.
+ */
+router.get('/popular-games', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const tenantId = requireTenantId(req);
+    const items = await readListSetting(tenantId, 'general.popular_games');
+    res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /api/public/navbar
  * Returns admin-managed navigation menu items (main + more buckets).
  */

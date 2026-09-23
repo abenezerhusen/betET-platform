@@ -191,6 +191,26 @@ export function listGameThumbnails(): Promise<{ items: GameThumbnailOverride[] }
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/* Popular Games — admin-curated games for the home "Popular Games" section    */
+/* -------------------------------------------------------------------------- */
+
+export interface PopularGameEntry {
+  /** References an existing lobby game by id/slug (as the Games page sees it). */
+  game_id: string;
+  game_name?: string;
+  thumbnail_url?: string;
+  source?: string;
+  is_active?: boolean;
+  display_order?: number;
+}
+
+export function listPopularGames(): Promise<{ items: PopularGameEntry[] }> {
+  return apiRequest<{ items: PopularGameEntry[] }>('/api/public/popular-games', {
+    cacheTtl: LIST_TTL,
+  });
+}
+
 export interface NavbarItem {
   id?: string;
   label: string;

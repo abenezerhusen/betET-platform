@@ -192,7 +192,7 @@ export function MatchCard({
     >
       {/* League Header */}
       <div
-        className="flex items-center justify-between px-3 py-1.5 text-xs text-gray-400"
+        className="flex items-center justify-between px-3 py-1 text-xs text-gray-400"
         style={{ background: "var(--mezzo-bg-tertiary)" }}
       >
         <div className="flex items-center gap-2">
@@ -228,15 +228,15 @@ export function MatchCard({
           nothing overflows (grid reflows to 2 rows on <sm phones).
           lg+ (≥1024px): original single-row layout with each market
           grouped — identical to the pre-existing desktop design. */}
-      <div className="px-3 py-2">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4">
+      <div className="px-3 py-1.5">
+        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-4">
           {/* Top meta row below lg combines teams + date + side-bets. */}
           <div className="flex items-start justify-between gap-3 lg:flex-1 lg:min-w-0">
             <div
               className="flex-1 min-w-0 cursor-pointer"
               onClick={handleMatchClick}
             >
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-sm font-medium text-white truncate">{homeTeam}</span>
                 {isLive && (
                   <span className="text-[var(--mezzo-accent-green)] font-bold text-base sm:text-lg">{liveScore.home}</span>
@@ -265,9 +265,14 @@ export function MatchCard({
                   </>
                 )}
               </div>
+              {/* Compact "+N" more-markets badge (mobile/tablet). Previously
+                  this carried `touch-target`, which forces a 44×44px min size
+                  and rendered the oversized green square. A small pill saves
+                  vertical space so more matches fit per screen — click behaviour
+                  is unchanged. */}
               <button
                 onClick={handleSideBets}
-                className="px-2.5 py-1 rounded text-[11px] font-bold whitespace-nowrap hover:opacity-80 transition-opacity touch-target"
+                className="px-2 py-0.5 rounded text-[11px] font-bold leading-none whitespace-nowrap hover:opacity-80 transition-opacity"
                 style={{ background: "var(--mezzo-accent-green)", color: "#000" }}
               >
                 +{sideBets}
@@ -275,10 +280,10 @@ export function MatchCard({
             </div>
           </div>
 
-          {/* Odds grid below lg. 4 cols on the tightest phones (Z Fold 5
-              folded @344, Galaxy S8+ @360, iPhone SE @375 …) to keep each
-              button legible; 8 cols once there's room (≥sm / 640px). */}
-          <div className={`grid grid-cols-4 sm:grid-cols-8 gap-1 lg:hidden ${oddsDisabledClass}`}>
+          {/* Odds grid below lg — 6 options in a single row (Match Result
+              1/X/2 + Double Chance 1X/X2/12), matching the desktop groups and
+              the reference layout. */}
+          <div className={`grid grid-cols-6 gap-1 lg:hidden ${oddsDisabledClass}`}>
             <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("1", num(odds.home), "Match Result"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1`) ? "active" : ""}`}
@@ -308,13 +313,6 @@ export function MatchCard({
               <div className="font-semibold">{fmt(odds.home1x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
-              className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
-            >
-              <div className="text-[10px] text-gray-500">12</div>
-              <div className="font-semibold">{fmt(odds.draw12)}</div>
-            </button>
-            <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("X2", num(odds.away2x), "Double Chance"); }}
               className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X2`) ? "active" : ""}`}
             >
@@ -322,18 +320,11 @@ export function MatchCard({
               <div className="font-semibold">{fmt(odds.away2x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", num(odds.yesScore), "Both Teams to Score"); }}
-              className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-Yes`) ? "active" : ""}`}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
+              className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
             >
-              <div className="text-[10px] text-gray-500">Yes</div>
-              <div className="font-semibold">{fmt(odds.yesScore)}</div>
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("No", num(odds.noScore), "Both Teams to Score"); }}
-              className={`odds-btn text-center ${isBetAdded(`${homeTeam}-${awayTeam}-No`) ? "active" : ""}`}
-            >
-              <div className="text-[10px] text-gray-500">No</div>
-              <div className="font-semibold">{fmt(odds.noScore)}</div>
+              <div className="text-[10px] text-gray-500">12</div>
+              <div className="font-semibold">{fmt(odds.draw12)}</div>
             </button>
           </div>
 
@@ -341,67 +332,49 @@ export function MatchCard({
           <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("1", num(odds.home), "Match Result"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1`) ? "active" : ""}`}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1</div>
               <div className="font-semibold">{fmt(odds.home)}</div>
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("X", num(odds.draw), "Match Result"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X`) ? "active" : ""}`}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X</div>
               <div className="font-semibold">{fmt(odds.draw)}</div>
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("2", num(odds.away), "Match Result"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-2`) ? "active" : ""}`}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">2</div>
               <div className="font-semibold">{fmt(odds.away)}</div>
             </button>
           </div>
 
-          {/* Desktop Double Chance Odds */}
+          {/* Desktop Double Chance Odds (1X / X2 / 12 — matches the mobile row) */}
           <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("1X", num(odds.home1x), "Double Chance"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1X`) ? "active" : ""}`}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-1X`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">1X</div>
               <div className="font-semibold">{fmt(odds.home1x)}</div>
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
-            >
-              <div className="text-[10px] text-gray-500">12</div>
-              <div className="font-semibold">{fmt(odds.draw12)}</div>
-            </button>
-            <button
               onClick={(e) => { e.stopPropagation(); handleOddClick("X2", num(odds.away2x), "Double Chance"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X2`) ? "active" : ""}`}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-X2`) ? "active" : ""}`}
             >
               <div className="text-[10px] text-gray-500">X2</div>
               <div className="font-semibold">{fmt(odds.away2x)}</div>
             </button>
-          </div>
-
-          {/* Desktop Both Score Odds */}
-          <div className={`hidden lg:flex items-center gap-1 ${oddsDisabledClass}`}>
             <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("Yes", num(odds.yesScore), "Both Teams to Score"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-Yes`) ? "active" : ""}`}
+              onClick={(e) => { e.stopPropagation(); handleOddClick("12", num(odds.draw12), "Double Chance"); }}
+              className={`odds-btn odds-btn--fixed text-center ${isBetAdded(`${homeTeam}-${awayTeam}-12`) ? "active" : ""}`}
             >
-              <div className="text-[10px] text-gray-500">Yes</div>
-              <div className="font-semibold">{fmt(odds.yesScore)}</div>
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleOddClick("No", num(odds.noScore), "Both Teams to Score"); }}
-              className={`odds-btn min-w-[40px] text-center ${isBetAdded(`${homeTeam}-${awayTeam}-No`) ? "active" : ""}`}
-            >
-              <div className="text-[10px] text-gray-500">No</div>
-              <div className="font-semibold">{fmt(odds.noScore)}</div>
+              <div className="text-[10px] text-gray-500">12</div>
+              <div className="font-semibold">{fmt(odds.draw12)}</div>
             </button>
           </div>
 

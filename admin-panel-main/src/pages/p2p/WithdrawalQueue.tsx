@@ -11,6 +11,10 @@ import {
   switchWithdrawalWallet,
   type WithdrawalQueueRow,
 } from '../../lib/api/p2p';
+import {
+  getSettings as getTelebirrSettings,
+  updateSettings as updateTelebirrSettings,
+} from '../../lib/api/telebirr';
 
 interface WithdrawalRow {
   id: string;
@@ -93,6 +97,41 @@ export function WithdrawalQueue() {
   const [switchTarget, setSwitchTarget] = useState<WithdrawalRow | null>(null);
   const [switchAgentId, setSwitchAgentId] = useState('');
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  // Master switch for user-facing Telebirr P2P withdrawals. `null` = unknown
+  // (still loading / not permitted). Backed by the existing telebirr settings
+  // (`withdrawal_enabled`); the backend merges partial updates so toggling it
+  // never touches any other Telebirr configuration.
+  const [withdrawalEnabled, setWithdrawalEnabled] = useState<boolean | null>(null);
+  const [savingToggle, setSavingToggle] = useState(false);
+
+  const loadWithdrawalToggle = useCallback(async () => {
+    try {
+      const res = await getTelebirrSettings();
+      const s = ((res.settings as Record<string, unknown> | undefined) ?? res) ?? {};
+      setWithdrawalEnabled(Boolean((s as Record<string, unknown>).withdrawal_enabled));
+    } catch {
+      // Missing permission or endpoint error — hide the control rather than
+      // block the queue. Leaves `null` so the card shows a neutral state.
+      setWithdrawalEnabled(null);
+    }
+  }, []);
+
+  const toggleWithdrawals = async (next: boolean) => {
+    setSavingToggle(true);
+    try {
+      await updateTelebirrSettings({ withdrawal_enabled: next });
+      setWithdrawalEnabled(next);
+      toast(
+        next
+          ? 'Telebirr P2P withdrawals enabled.'
+          : 'Telebirr P2P withdrawals disabled.',
+      );
+    } catch (e) {
+      toast(errMsg(e), 'error');
+    } finally {
+      setSavingToggle(false);
+    }
+  };
 
   const loadAgents = useCallback(async () => {
     try {
@@ -135,7 +174,8 @@ export function WithdrawalQueue() {
   useEffect(() => {
     void load();
     void loadAgents();
-  }, [load, loadAgents]);
+    void loadWithdrawalToggle();
+  }, [load, loadAgents, loadWithdrawalToggle]);
 
   const largeWithdrawals = useMemo(() => rows.filter((r) => r.status === 'Awaiting Approval'), [rows]);
 
@@ -225,6 +265,40 @@ export function WithdrawalQueue() {
           Refresh
         </button>
       </div>
+
+      {/* Master switch for user-facing Telebirr P2P withdrawals. When OFF, the
+          user panel shows "Telebirr P2P withdrawals are disabled for this
+          tenant." Toggling only flips `withdrawal_enabled` on the existing
+          Telebirr settings (backend merges partial updates). */}
+      {withdrawalEnabled !== null && (
+        <div className="bg-white rounded-lg shadow border-l-4 border-green-500">
+          <div className="flex items-center justify-between px-6 py-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-2 bg-green-50 rounded-lg">
+                <ArrowUpCircle className="h-5 w-5 text-green-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-medium text-gray-900">Telebirr P2P Withdrawals</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {withdrawalEnabled
+                    ? 'Enabled — users can request Telebirr P2P payouts.'
+                    : 'Disabled — users see “Telebirr P2P withdrawals are disabled for this tenant.”'}
+                </p>
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 ml-4">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={Boolean(withdrawalEnabled)}
+                disabled={savingToggle}
+                onChange={(e) => void toggleWithdrawals(e.target.checked)}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600 peer-disabled:opacity-50"></div>
+            </label>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white p-5 rounded-lg shadow-sm">

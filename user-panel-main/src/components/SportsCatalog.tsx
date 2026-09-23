@@ -46,11 +46,11 @@ type TopLeagueShortcut = {
 // Built-in default Top Leagues — shown until the admin configures the list in
 // Admin Panel → Settings → General → Top Leagues (which then takes over).
 const DEFAULT_TOP_LEAGUES: TopLeagueShortcut[] = [
-  { name: "England - Premier Le...", icon: "https://ext.same-assets.com/1203561035/3447107198.png", sport: "football", country: "England", league: "Premier League" },
-  { name: "Spain - La Liga", icon: "https://ext.same-assets.com/1203561035/1920343590.png", sport: "football", country: "Spain", league: "LaLiga" },
-  { name: "Germany - Bundesliga", icon: "https://ext.same-assets.com/1203561035/2987763661.png", sport: "football", country: "Germany", league: "Bundesliga" },
-  { name: "France - Ligue 1", icon: "https://ext.same-assets.com/1203561035/3982235625.png", sport: "football", country: "France", league: "Ligue 1" },
-  { name: "Italy - Serie A", icon: "https://ext.same-assets.com/1203561035/2221869759.png", sport: "football", country: "Italy", league: "Serie A" },
+  { name: "England - Premier Le...", icon: "https://flagcdn.com/w40/gb-eng.png", sport: "football", country: "England", league: "Premier League" },
+  { name: "Spain - La Liga", icon: "https://flagcdn.com/w40/es.png", sport: "football", country: "Spain", league: "LaLiga" },
+  { name: "Germany - Bundesliga", icon: "https://flagcdn.com/w40/de.png", sport: "football", country: "Germany", league: "Bundesliga" },
+  { name: "France - Ligue 1", icon: "https://flagcdn.com/w40/fr.png", sport: "football", country: "France", league: "Ligue 1" },
+  { name: "Italy - Serie A", icon: "https://flagcdn.com/w40/it.png", sport: "football", country: "Italy", league: "Serie A" },
   { name: "Netherlands - Eredivisie", icon: "https://flagcdn.com/w40/nl.png", sport: "football", country: "Netherlands", league: "Eredivisie" },
   { name: "Sweden - Superettan", icon: "https://flagcdn.com/w40/se.png", sport: "football", country: "Sweden", league: "Superettan" },
   { name: "Denmark - Superliga", icon: "https://flagcdn.com/w40/dk.png", sport: "football", country: "Denmark", league: "Superligaen" },
@@ -235,7 +235,7 @@ export function SportsCatalog({ onNavigate, className = "" }: SportsCatalogProps
               }
               className="sidebar-item w-full text-left text-xs text-gray-300 hover:text-white"
             >
-              <img src={league.icon} alt="" className="w-4 h-4" />
+              <img src={league.icon} alt="" className="w-4 h-3 rounded-sm object-cover" />
               <span className="truncate flex-1">{league.name}</span>
               <ChevronRight className="w-3 h-3 text-gray-500" />
             </button>

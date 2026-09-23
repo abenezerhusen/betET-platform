@@ -6,7 +6,11 @@ import { LeftSidebarSports } from "@/components/LeftSidebarSports";
 import { Betslip } from "@/components/Betslip";
 import { MatchCard } from "@/components/MatchCard";
 import MobileMainNavTabs from "@/components/MobileMainNavTabs";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  useHomeGames,
+  HomeGamesStrip,
+  HomePopularGames,
+} from "@/components/HomeGames";
 import { Calendar as CalendarIcon, ChevronDown, ChevronUp } from "lucide-react";
 import { OddsButton } from "@/components/OddsButton";
 import {
@@ -100,57 +104,6 @@ function filterMatchesByTime<T extends { date: string; time: string; startsAt?: 
   return bettable;
 }
 
-// ---------------------------------------------------------------------------
-// Top leagues definition (used by the Top Leagues tab)
-// ---------------------------------------------------------------------------
-
-interface TopLeagueRef {
-  country: string;
-  /** Exact provider league name (for the API query). */
-  league: string;
-  /** Optional friendly label for display (defaults to `league`). */
-  label?: string;
-  flag: string;
-}
-
-// `league` MUST match the provider's exact league name (used to query the API,
-// e.g. "Spain - LaLiga" with no space, "Portugal - Liga Portugal"). `label`
-// is the friendly display text.
-//
-// This is the built-in DEFAULT list. When the admin configures leagues in
-// Admin Panel → Settings → General → Top Leagues, that configuration
-// replaces these defaults at runtime (see the listTopBets fetch below).
-const TOP_LEAGUES: TopLeagueRef[] = [
-  { country: "England", league: "Premier League", flag: "https://flagcdn.com/w40/gb-eng.png" },
-  { country: "Spain", league: "LaLiga", label: "La Liga", flag: "https://flagcdn.com/w40/es.png" },
-  { country: "Italy", league: "Serie A", flag: "https://flagcdn.com/w40/it.png" },
-  { country: "Germany", league: "Bundesliga", flag: "https://flagcdn.com/w40/de.png" },
-  { country: "France", league: "Ligue 1", flag: "https://flagcdn.com/w40/fr.png" },
-  { country: "Portugal", league: "Liga Portugal", label: "Primeira Liga", flag: "https://flagcdn.com/w40/pt.png" },
-  { country: "Netherlands", league: "Eredivisie", flag: "https://flagcdn.com/w40/nl.png" },
-  { country: "Sweden", league: "Superettan", flag: "https://flagcdn.com/w40/se.png" },
-  { country: "Denmark", league: "Superligaen", label: "Superliga", flag: "https://flagcdn.com/w40/dk.png" },
-  { country: "Belgium", league: "First Division A", label: "Pro League", flag: "https://flagcdn.com/w40/be.png" },
-  { country: "International Clubs", league: "UEFA Champions League", label: "UEFA Champions League", flag: "https://flagcdn.com/w40/eu.png" },
-  { country: "International Clubs", league: "UEFA Europa League", label: "UEFA Europa League", flag: "https://flagcdn.com/w40/eu.png" },
-];
-
-/**
- * Map an admin-configured Top Leagues entry (stored under the legacy
- * top-bets settings key) into a TopLeagueRef. The entry's `league` is the
- * exact provider name ("Country - League"): splitting on the first " - "
- * and rejoining in the fetch below reproduces the same exact string.
- */
-function configEntryToRef(e: publicConfigApi.TopBetEntry): TopLeagueRef {
-  const full = (e.league ?? "").trim();
-  const sep = full.indexOf(" - ");
-  return {
-    country: sep > 0 ? full.slice(0, sep).trim() : "",
-    league: sep > 0 ? full.slice(sep + 3).trim() : full,
-    flag: leagueFlagFor(full),
-  };
-}
-
 /**
  * Shape returned by `MatchCard`. Every instance is sourced from the
  * provider via `/api/sports/matches`; there is no mock fallback.
@@ -199,17 +152,23 @@ interface HomeMatch {
  * so we can re-use the existing flag CDN URLs without making a second
  * round-trip.
  */
+// Same globe icon the sidebar menu (SportsCatalog) uses as its country/league
+// fallback, so international competitions (e.g. "Europe - UEFA Nations League")
+// show the SAME icon in the match list as they do in the menu instead of the
+// generic PlayCore logo.
+const GLOBE_ICON = "https://ext.same-assets.com/1203561035/3182885345.svg";
+
 function leagueFlagFor(league: string | null | undefined): string {
-  if (!league) return "/play-core-logo.png";
+  if (!league) return GLOBE_ICON;
   const country = league.split(" - ")[0]?.trim();
-  if (!country) return "/play-core-logo.png";
+  if (!country) return GLOBE_ICON;
   for (const sport of sportsCatalog) {
     const node = sport.countries.find(
       (c) => c.name.toLowerCase() === country.toLowerCase(),
     );
     if (node?.flag) return node.flag;
   }
-  return "/play-core-logo.png";
+  return GLOBE_ICON;
 }
 
 /**
@@ -336,7 +295,10 @@ function HomePageInner() {
   // switching matches doesn't refetch the same league twice.
   const pendingPreselectRef = useRef<HomeMatch | null>(null);
   const loadedLeagueKeyRef = useRef<string | null>(null);
-  const [activeTab, setActiveTab] = useState("upcoming");
+  // Home casino game surfaces (top rail + Popular Games grid). Single shared
+  // fetch of the same game universe the Games page shows.
+  const { games: homeGames, popular: homePopular, loading: homeGamesLoading } =
+    useHomeGames();
   const [showDetailedView, setShowDetailedView] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<any>(null);
   const [selectedLeague, setSelectedLeague] = useState("");
@@ -375,8 +337,19 @@ function HomePageInner() {
   // feed is meant to show matches happening today by default.
   const [upcomingFilter, setUpcomingFilter] = useState<TimeFilter>("today");
   const [upcomingCalendar, setUpcomingCalendar] = useState<string>("");
-  const [topFilter, setTopFilter] = useState<TimeFilter>("today");
-  const [topCalendar, setTopCalendar] = useState<string>("");
+
+  // Home feed pagination — render a compact initial batch (20) and reveal the
+  // rest via a "Load More" button. This is purely a client-side display cap
+  // over the already-fetched list: data, filters, odds and betting flow are
+  // unchanged; it just avoids rendering the whole feed at once so more matches
+  // fit the first view.
+  const HOME_PAGE_SIZE = 20;
+  const [upcomingVisible, setUpcomingVisible] = useState(HOME_PAGE_SIZE);
+  // Reset back to the first 20 whenever the active time filter changes so each
+  // filter view starts fresh.
+  useEffect(() => {
+    setUpcomingVisible(HOME_PAGE_SIZE);
+  }, [upcomingFilter, upcomingCalendar]);
 
   // Fetch upcoming matches from the backend (`status=upcoming` is a
   // spec alias for `scheduled`). Whatever the provider returns is exactly
@@ -436,62 +409,6 @@ function HomePageInner() {
   // working even when the API is offline. Real backend rows already
   // come with the live `starts_at` so we leave them alone.
   const upcomingMatches = useMemo(() => matches, [matches]);
-
-  // Admin-configured Top Leagues (Settings → General → Top Leagues) replace
-  // the built-in defaults; failures or an empty configuration keep the
-  // defaults so behaviour is unchanged until the admin saves a list.
-  const [topLeagueRefs, setTopLeagueRefs] = useState<TopLeagueRef[]>(TOP_LEAGUES);
-  useEffect(() => {
-    let cancelled = false;
-    publicConfigApi
-      .listTopBets()
-      .then(({ items }) => {
-        if (cancelled) return;
-        const rows = (items ?? []).filter((e) => (e.league ?? "").trim());
-        if (rows.length > 0) setTopLeagueRefs(rows.map(configEntryToRef));
-      })
-      .catch(() => {
-        /* keep defaults */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Real matches for the headline "TOP LEAGUES" tab. Fetched per configured
-  // league so the tab shows the same fixtures the rest of the world sees.
-  const [topLeagueMatches, setTopLeagueMatches] = useState<HomeMatch[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all(
-      topLeagueRefs.map((l) =>
-        sportsApi
-          .listSportsMatches({
-            league: l.country ? `${l.country} - ${l.league}` : l.league,
-            status: "upcoming",
-            limit: 25,
-          })
-          .then((res) => res.items ?? [])
-          .catch(() => []),
-      ),
-    ).then((batches) => {
-      if (cancelled) return;
-      const rows = batches.flat();
-      if (rows.length > 0) {
-        const mapped = rows
-          .map(backendMatchToHome)
-          .sort(
-            (a, b) =>
-              new Date(a.startsAt ?? 0).getTime() -
-              new Date(b.startsAt ?? 0).getTime(),
-          );
-        setTopLeagueMatches(mapped);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [topLeagueRefs]);
 
   // Load the REAL market book for the opened fixture (all synced markets +
   // odds), refreshing periodically so live prices track the provider. Cleared
@@ -635,14 +552,6 @@ function HomePageInner() {
         : upcomingMatches,
     [mounted, upcomingFilter, upcomingCalendar, upcomingMatches],
   );
-  const topFiltered = useMemo(
-    () =>
-      mounted
-        ? filterMatchesByTime(topLeagueMatches, topFilter, topCalendar)
-        : topLeagueMatches,
-    [mounted, topFilter, topCalendar, topLeagueMatches],
-  );
-
   // URL <-> drill-down sync. The detail view's open state lives in the URL
   // query (?sport=&country=&league=&l=&m=) so that any "HOME" link (href="/")
   // closes it: clearing the query makes this effect reset the view. Opening a
@@ -737,7 +646,7 @@ function HomePageInner() {
   // the single-match detail so tapping +N here still opens that match.
   if (leagueBoardName && !showDetailedView) {
     return (
-      <div className="flex min-h-[calc(100vh-180px)]">
+      <div className="flex min-h-[calc(100vh-120px)]">
         <LeftSidebarSports />
 
         <div className="flex-1 min-w-0 overflow-hidden" style={{ background: "var(--mezzo-bg-primary)" }}>
@@ -769,8 +678,7 @@ function HomePageInner() {
             style={{ background: "var(--mezzo-bg-secondary)" }}
           >
             <div className="flex-1">Match Result</div>
-            <div className="w-[140px] text-center">Double chance</div>
-            <div className="w-[100px] text-center">Both Score</div>
+            <div className="w-[140px] text-center"></div>
             <div className="w-24 text-right"></div>
           </div>
 
@@ -800,7 +708,7 @@ function HomePageInner() {
 
   if (showDetailedView && selectedMatch) {
     return (
-      <div className="flex flex-col md:flex-row min-h-[calc(100vh-180px)]">
+      <div className="flex flex-col md:flex-row min-h-[calc(100vh-120px)]">
         <LeftSidebarSports />
 
         {/* Middle Panel - League Matches
@@ -1129,11 +1037,19 @@ function HomePageInner() {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-180px)]">
+    <div className="flex min-h-[calc(100vh-120px)]">
       <LeftSidebarSports />
 
-      {/* Main Content */}
+      {/* Main Content — grows naturally so the PAGE scrolls the matches feed,
+          while the left sidebar and the betslip are sticky (see their own
+          components) and therefore stay visually fixed as you scroll. */}
       <div className="flex-1 min-w-0 overflow-hidden" style={{ background: "var(--mezzo-bg-primary)" }}>
+        {/* Mobile main nav tabs — rendered ABOVE the banner on phones/tablets
+            so the mobile layout mirrors the desktop header (whose primary nav
+            sits above the banner). Hidden on `lg+` so the desktop nav row in
+            `Header` stays the single source of truth on desktop. */}
+        <MobileMainNavTabs />
+
         {/* Banner Slider — dynamic when configured in admin, static fallback otherwise */}
         <div className="p-2 sm:p-4">
           {banners.length > 0 ? (
@@ -1220,99 +1136,66 @@ function HomePageInner() {
           )}
         </div>
 
-        {/* Mobile main nav tabs — appears directly under the banner on
-            phones/tablets and mirrors the desktop header's primary nav.
-            Hidden on `lg+` so the existing desktop nav row (rendered in
-            `Header`) remains the single source of truth on desktop. */}
-        <MobileMainNavTabs />
+        {/* Home game rail — replaces the old UPCOMING / TOP LEAGUES tab
+            toggle. A horizontally-scrollable rail of available games; tapping
+            one deep-launches it on the Games page (existing launch flow). */}
+        <HomeGamesStrip games={homeGames} loading={homeGamesLoading} />
 
-        {/* Tabs */}
-        <Tabs defaultValue="upcoming" className="w-full" onValueChange={setActiveTab}>
-          <div className="flex" style={{ background: "var(--mezzo-bg-secondary)" }}>
-            <TabsList className="flex w-full h-auto p-0 bg-transparent">
-              <TabsTrigger
-                value="upcoming"
-                className="flex-1 px-2 sm:px-4 md:px-8 py-3 sm:py-4 text-[11px] sm:text-sm font-bold tracking-wide transition-all rounded-none"
-                style={{
-                  background: activeTab === "upcoming" ? "#3a3a4a" : "#2a2a3a",
-                  color: activeTab === "upcoming" ? "#fff" : "#9ca3af"
-                }}
-              >
-                UPCOMING MATCHES
-              </TabsTrigger>
-              <TabsTrigger
-                value="top"
-                className="flex-1 px-2 sm:px-4 md:px-8 py-3 sm:py-4 text-[11px] sm:text-sm font-bold tracking-wide transition-all rounded-none"
-                style={{
-                  background: activeTab === "top" ? "var(--mezzo-accent-yellow)" : "#2a2a3a",
-                  color: activeTab === "top" ? "#000" : "#9ca3af"
-                }}
-              >
-                TOP LEAGUES
-              </TabsTrigger>
-            </TabsList>
-          </div>
+        {/* Upcoming matches feed — now always shown (no tab toggle). The
+            `upcoming` list already spans every league (top leagues included);
+            the time filters (1hr/2hr/3hr/6hr/Today/Calendar) and Load More
+            control are unchanged, so today's + weekly fixtures stay reachable. */}
+        {/* Column Headers — only shown when MatchCard renders its desktop
+            single-row layout (lg+). Below lg the stacked grid is used. */}
+        <div
+          className="hidden lg:flex items-center px-4 py-2 text-xs text-gray-500 font-medium"
+          style={{ background: "var(--mezzo-bg-secondary)" }}
+        >
+          <div className="flex-1">Match Result</div>
+          <div className="w-[140px] text-center"></div>
+          <div className="w-24 text-right"></div>
+        </div>
 
-          {/* Column Headers — only shown when MatchCard renders its desktop
-              single-row layout (lg+). Below lg the stacked grid is used. */}
-          <div
-            className="hidden lg:flex items-center px-4 py-2 text-xs text-gray-500 font-medium"
-            style={{ background: "var(--mezzo-bg-secondary)" }}
-          >
-            <div className="flex-1">Match Result</div>
-            <div className="w-[140px] text-center">Double chance</div>
-            <div className="w-[100px] text-center">Both Score</div>
-            <div className="w-24 text-right"></div>
-          </div>
-
-          <TabsContent value="upcoming" className="mt-0">
-            <TimeFilterBar
-              value={upcomingFilter}
-              calendarDate={upcomingCalendar}
-              onChange={setUpcomingFilter}
-              onCalendarChange={setUpcomingCalendar}
-              total={upcomingMatches.length}
-              visible={upcomingFiltered.length}
-            />
-            <div className="overflow-auto max-h-[calc(100vh-360px)] md:max-h-[calc(100vh-440px)]">
-              {upcomingFiltered.length === 0 ? (
-                <EmptyRow />
-              ) : (
-                upcomingFiltered.map((match, index) => (
-                  <MatchCard
-                    key={`${match.homeTeam}-${match.awayTeam}-${index}`}
-                    {...match}
-                    onSideBetsClick={() => handleSideBetsClick(match)}
-                  />
-                ))
+        <TimeFilterBar
+          value={upcomingFilter}
+          calendarDate={upcomingCalendar}
+          onChange={setUpcomingFilter}
+          onCalendarChange={setUpcomingCalendar}
+          total={upcomingMatches.length}
+          visible={upcomingFiltered.length}
+        />
+        <div>
+          {upcomingFiltered.length === 0 ? (
+            <EmptyRow />
+          ) : (
+            <>
+              {upcomingFiltered.slice(0, upcomingVisible).map((match, index) => (
+                <MatchCard
+                  key={`${match.homeTeam}-${match.awayTeam}-${index}`}
+                  {...match}
+                  onSideBetsClick={() => handleSideBetsClick(match)}
+                />
+              ))}
+              {upcomingFiltered.length > upcomingVisible && (
+                <div className="p-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setUpcomingVisible(upcomingFiltered.length)}
+                    className="px-6 py-2 rounded text-sm font-bold hover:opacity-80 transition-opacity"
+                    style={{ background: "var(--mezzo-accent-green)", color: "#000" }}
+                  >
+                    Load More
+                  </button>
+                </div>
               )}
-            </div>
-          </TabsContent>
+            </>
+          )}
 
-          <TabsContent value="top" className="mt-0">
-            <TimeFilterBar
-              value={topFilter}
-              calendarDate={topCalendar}
-              onChange={setTopFilter}
-              onCalendarChange={setTopCalendar}
-              total={topLeagueMatches.length}
-              visible={topFiltered.length}
-            />
-            <div className="overflow-auto max-h-[calc(100vh-360px)] md:max-h-[calc(100vh-440px)]">
-              {topFiltered.length === 0 ? (
-                <EmptyRow />
-              ) : (
-                topFiltered.map((match, index) => (
-                  <MatchCard
-                    key={`top-${match.homeTeam}-${match.awayTeam}-${index}`}
-                    {...match}
-                    onSideBetsClick={() => handleSideBetsClick(match)}
-                  />
-                ))
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+          {/* Popular Games — admin-curated grid (Settings → General → Popular
+              Games). Sits inside the feed's scroll area, below the matches /
+              Load More and above the footer, so it's always reachable. */}
+          <HomePopularGames popular={homePopular} loading={homeGamesLoading} />
+        </div>
       </div>
 
       <Betslip />

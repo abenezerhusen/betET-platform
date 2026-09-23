@@ -547,6 +547,31 @@ router.post('/game-thumbnails', writeListBlockHandler('general.game_thumbnails',
 router.put('/game-thumbnails', writeListBlockHandler('general.game_thumbnails', gameThumbnailsBodySchema));
 
 /* -------------------------------------------------------------------------- */
+/* Popular Games — admin-curated list of games shown in the user-panel home   */
+/* "Popular Games" section. Each entry references an existing lobby game by    */
+/* id; nothing about the underlying game/betting logic changes.               */
+/* -------------------------------------------------------------------------- */
+
+const popularGameSchema = z.object({
+  id: z.string().trim().max(120).optional(),
+  game_id: z.string().trim().min(1).max(160),
+  game_name: z.string().trim().max(240).optional(),
+  thumbnail_url: z.string().trim().optional(), // may be a base64 data URL
+  source: z.string().trim().max(40).optional(),
+  is_active: z.boolean().optional(),
+  display_order: z.number().int().nonnegative().optional(),
+});
+
+const popularGamesBodySchema = z.union([
+  z.array(popularGameSchema),
+  z.object({ items: z.array(popularGameSchema) }),
+]);
+
+router.get('/popular-games', listBlockHandler('general.popular_games'));
+router.post('/popular-games', writeListBlockHandler('general.popular_games', popularGamesBodySchema));
+router.put('/popular-games', writeListBlockHandler('general.popular_games', popularGamesBodySchema));
+
+/* -------------------------------------------------------------------------- */
 /* Navbar Settings — dynamic header/mobile menu items.                        */
 /* -------------------------------------------------------------------------- */
 

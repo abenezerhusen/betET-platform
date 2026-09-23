@@ -640,9 +640,9 @@ export function Betslip({ onClose }: BetslipProps = {}) {
           fixed inset-y-0 right-0 z-50 w-full sm:w-96 max-w-full
           transform transition-transform duration-300 ease-out
           ${mobileOpen ? "translate-x-0" : "translate-x-full"}
-          xl:static xl:z-auto xl:w-80 xl:max-w-none xl:translate-x-0 xl:transition-none
+          xl:z-auto xl:w-80 xl:max-w-none xl:translate-x-0 xl:transition-none
           flex-shrink-0 border-l flex flex-col min-h-0 h-dvh max-h-dvh
-          xl:h-full xl:max-h-none overflow-y-auto xl:overflow-hidden
+          xl:sticky xl:top-[120px] xl:self-start xl:h-[calc(100vh-120px)] xl:max-h-none overflow-y-auto xl:overflow-hidden
           overscroll-contain safe-area-inset
         `}
         style={{
