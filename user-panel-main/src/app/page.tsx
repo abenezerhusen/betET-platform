@@ -27,7 +27,7 @@ import type { PromotionBanner, PublicGeneral } from "@/lib/api/publicConfig";
 // Time filter helpers
 // ---------------------------------------------------------------------------
 
-type TimeFilter = "all" | "1h" | "2h" | "3h" | "6h" | "today" | "calendar";
+type TimeFilter = "today" | "tomorrow" | "week" | "calendar";
 
 /**
  * Parse a match's `date` (DD/MM) + `time` (HH:MM) into a real Date.
@@ -66,27 +66,40 @@ function filterMatchesByTime<T extends { date: string; time: string; startsAt?: 
   const now = new Date();
   // Never offer fixtures for betting once kickoff has passed.
   const bettable = list.filter((m) => isMatchBettable(m.startsAt, m.date, m.time));
-  if (filter === "all") return bettable;
-  const HOURS: Record<string, number> = { "1h": 1, "2h": 2, "3h": 3, "6h": 6 };
 
-  if (HOURS[filter] !== undefined) {
-    const end = now.getTime() + HOURS[filter] * 60 * 60 * 1000;
-    return bettable.filter((m) => {
-      const t = m.startsAt
-        ? new Date(m.startsAt).getTime()
-        : toMatchDate(m.date, m.time).getTime();
-      return t >= now.getTime() && t <= end;
-    });
-  }
+  // Resolve each match to a real kickoff timestamp once.
+  const kickoffMs = (m: T): number =>
+    m.startsAt ? new Date(m.startsAt).getTime() : toMatchDate(m.date, m.time).getTime();
+
   if (filter === "today") {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
     const end = new Date(now);
     end.setHours(23, 59, 59, 999);
     return bettable.filter((m) => {
-      const t = m.startsAt
-        ? new Date(m.startsAt).getTime()
-        : toMatchDate(m.date, m.time).getTime();
+      const t = kickoffMs(m);
+      return t >= now.getTime() && t <= end.getTime();
+    });
+  }
+  if (filter === "tomorrow") {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() + 1); // tomorrow 00:00
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999); // tomorrow 23:59
+    return bettable.filter((m) => {
+      const t = kickoffMs(m);
+      return t >= start.getTime() && t <= end.getTime();
+    });
+  }
+  if (filter === "week") {
+    // Current calendar week: from now through the end of the coming Sunday
+    // (week treated as Monday–Sunday). If today is Sunday, the window is today.
+    const day = now.getDay(); // 0 = Sun … 6 = Sat
+    const daysUntilSunday = day === 0 ? 0 : 7 - day;
+    const end = new Date(now);
+    end.setDate(now.getDate() + daysUntilSunday);
+    end.setHours(23, 59, 59, 999);
+    return bettable.filter((m) => {
+      const t = kickoffMs(m);
       return t >= now.getTime() && t <= end.getTime();
     });
   }
@@ -95,9 +108,7 @@ function filterMatchesByTime<T extends { date: string; time: string; startsAt?: 
     const start = new Date(y, (mo || 1) - 1, d || 1, 0, 0, 0, 0);
     const end = new Date(y, (mo || 1) - 1, d || 1, 23, 59, 59, 999);
     return bettable.filter((m) => {
-      const t = m.startsAt
-        ? new Date(m.startsAt).getTime()
-        : toMatchDate(m.date, m.time).getTime();
+      const t = kickoffMs(m);
       return t >= start.getTime() && t <= end.getTime();
     });
   }
@@ -335,7 +346,7 @@ function HomePageInner() {
   // Independent time filters for each tab so switching tabs doesn't lose
   // the user's current selection. Both tabs open on "today" because the main
   // feed is meant to show matches happening today by default.
-  const [upcomingFilter, setUpcomingFilter] = useState<TimeFilter>("today");
+  const [upcomingFilter, setUpcomingFilter] = useState<TimeFilter>("week");
   const [upcomingCalendar, setUpcomingCalendar] = useState<string>("");
 
   // Home feed pagination — render a compact initial batch (20) and reveal the
@@ -374,6 +385,10 @@ function HomePageInner() {
   const [banners, setBanners] = useState<PromotionBanner[]>([]);
   const [brandingCfg, setBrandingCfg] = useState<PublicGeneral | null>(null);
   const [bannerIdx, setBannerIdx] = useState(0);
+  // Whether the first banner fetch has resolved. Until it has we render a
+  // neutral placeholder instead of the static fallback, so the configured
+  // carousel banner doesn't get preceded by a flash of the default banner.
+  const [bannersLoaded, setBannersLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -386,7 +401,11 @@ function HomePageInner() {
         const active = (res.items ?? []).filter((b) => b.is_active !== false);
         setBanners(active.length > 0 ? active : []);
         if (cfg) setBrandingCfg(cfg);
-      }).catch(() => { /* keep static fallback */ });
+        setBannersLoaded(true);
+      }).catch(() => {
+        // On failure fall back to the static banner (mark as loaded so it shows).
+        if (!cancelled) setBannersLoaded(true);
+      });
     };
     fetchBanners();
     const onVisible = () => { if (document.visibilityState === 'visible') fetchBanners(); };
@@ -405,7 +424,7 @@ function HomePageInner() {
   }, [banners.length]);
 
   // The hardcoded fallback uses an old DD/MM snapshot; rewrite those
-  // entries so the time filters (1hr/2hr/3hr/6hr/Today/Calendar) keep
+  // entries so the time filters (Today/Tomorrow/This Week/Calendar) keep
   // working even when the API is offline. Real backend rows already
   // come with the live `starts_at` so we leave them alone.
   const upcomingMatches = useMemo(() => matches, [matches]);
@@ -552,6 +571,21 @@ function HomePageInner() {
         : upcomingMatches,
     [mounted, upcomingFilter, upcomingCalendar, upcomingMatches],
   );
+  // All still-bettable upcoming fixtures (no time window). Used as a fallback
+  // so the feed is never empty when the selected time filter has no matches —
+  // we then show every upcoming match instead of an empty state.
+  const upcomingBettable = useMemo(
+    () =>
+      mounted
+        ? upcomingMatches.filter((m) => isMatchBettable(m.startsAt, m.date, m.time))
+        : upcomingMatches,
+    [mounted, upcomingMatches],
+  );
+  // When the chosen filter has zero fixtures but games do exist, fall back to
+  // showing all upcoming matches.
+  const upcomingIsFallback =
+    upcomingFiltered.length === 0 && upcomingBettable.length > 0;
+  const upcomingFeed = upcomingIsFallback ? upcomingBettable : upcomingFiltered;
   // URL <-> drill-down sync. The detail view's open state lives in the URL
   // query (?sport=&country=&league=&l=&m=) so that any "HOME" link (href="/")
   // closes it: clearing the query makes this effect reset the view. Opening a
@@ -1052,7 +1086,15 @@ function HomePageInner() {
 
         {/* Banner Slider — dynamic when configured in admin, static fallback otherwise */}
         <div className="p-2 sm:p-4">
-          {banners.length > 0 ? (
+          {!bannersLoaded ? (
+            // Neutral placeholder (same dimensions) shown until the banner fetch
+            // resolves — prevents the static fallback from flashing before the
+            // configured carousel banner appears.
+            <div
+              className="h-24 sm:h-32 md:h-40 rounded-lg animate-pulse"
+              style={{ background: "var(--mezzo-bg-secondary)" }}
+            />
+          ) : banners.length > 0 ? (
             <div className="relative h-24 sm:h-32 md:h-40 rounded-lg overflow-hidden">
               {banners.map((banner, idx) => (
                 <div
@@ -1143,7 +1185,7 @@ function HomePageInner() {
 
         {/* Upcoming matches feed — now always shown (no tab toggle). The
             `upcoming` list already spans every league (top leagues included);
-            the time filters (1hr/2hr/3hr/6hr/Today/Calendar) and Load More
+            the time filters (Today/Tomorrow/This Week/Calendar) and Load More
             control are unchanged, so today's + weekly fixtures stay reachable. */}
         {/* Column Headers — only shown when MatchCard renders its desktop
             single-row layout (lg+). Below lg the stacked grid is used. */}
@@ -1162,25 +1204,31 @@ function HomePageInner() {
           onChange={setUpcomingFilter}
           onCalendarChange={setUpcomingCalendar}
           total={upcomingMatches.length}
-          visible={upcomingFiltered.length}
+          visible={upcomingFeed.length}
         />
         <div>
-          {upcomingFiltered.length === 0 ? (
+          {upcomingFeed.length === 0 ? (
             <EmptyRow />
           ) : (
             <>
-              {upcomingFiltered.slice(0, upcomingVisible).map((match, index) => (
+              {upcomingIsFallback && (
+                <div className="px-4 py-2 text-xs text-gray-400">
+                  No matches for the selected filter — showing all upcoming
+                  matches.
+                </div>
+              )}
+              {upcomingFeed.slice(0, upcomingVisible).map((match, index) => (
                 <MatchCard
                   key={`${match.homeTeam}-${match.awayTeam}-${index}`}
                   {...match}
                   onSideBetsClick={() => handleSideBetsClick(match)}
                 />
               ))}
-              {upcomingFiltered.length > upcomingVisible && (
+              {upcomingFeed.length > upcomingVisible && (
                 <div className="p-3 text-center">
                   <button
                     type="button"
-                    onClick={() => setUpcomingVisible(upcomingFiltered.length)}
+                    onClick={() => setUpcomingVisible(upcomingFeed.length)}
                     className="px-6 py-2 rounded text-sm font-bold hover:opacity-80 transition-opacity"
                     style={{ background: "var(--mezzo-accent-green)", color: "#000" }}
                   >
@@ -1224,12 +1272,10 @@ function TimeFilterBar({
   total,
   visible,
 }: TimeFilterBarProps) {
-  const hourOptions: { key: TimeFilter; label: string }[] = [
-    { key: "1h", label: "1hr" },
-    { key: "2h", label: "2hr" },
-    { key: "3h", label: "3hr" },
-    { key: "6h", label: "6hr" },
+  const filterOptions: { key: TimeFilter; label: string }[] = [
     { key: "today", label: "Today" },
+    { key: "tomorrow", label: "Tomorrow" },
+    { key: "week", label: "This Week" },
   ];
 
   const dateInputRef = useRef<HTMLInputElement | null>(null);
@@ -1262,13 +1308,13 @@ function TimeFilterBar({
         borderColor: "var(--mezzo-border)",
       }}
     >
-      {hourOptions.map((opt) => {
+      {filterOptions.map((opt) => {
         const active = value === opt.key;
         return (
           <button
             key={opt.key}
             type="button"
-            onClick={() => onChange(active ? "all" : opt.key)}
+            onClick={() => onChange(opt.key)}
             className="shrink-0 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
             style={{
               background: active
@@ -1316,7 +1362,7 @@ function TimeFilterBar({
         value={calendarDate}
         onChange={(e) => {
           onCalendarChange(e.target.value);
-          onChange(e.target.value ? "calendar" : "all");
+          onChange(e.target.value ? "calendar" : "week");
         }}
         aria-hidden="true"
         tabIndex={-1}
@@ -1334,20 +1380,6 @@ function TimeFilterBar({
           pointerEvents: "none",
         }}
       />
-
-      {value !== "all" && (
-        <button
-          type="button"
-          onClick={() => {
-            onChange("all");
-            onCalendarChange("");
-          }}
-          className="shrink-0 px-3 py-1.5 rounded text-xs font-semibold text-gray-400 hover:text-white"
-          style={{ background: "transparent" }}
-        >
-          Clear
-        </button>
-      )}
 
       <div className="ml-auto shrink-0 text-[11px] text-gray-400 pl-2">
         {visible} of {total}
